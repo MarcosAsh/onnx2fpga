@@ -1,0 +1,26 @@
+# Generated build directories, one per compiled design.
+build/
+runtime/bin/
+obj_dir/
+
+# Models are produced by `make models` and are reproducible from the factory.
+examples/models/*.onnx
+
+# Vivado leavings.
+*.jou
+*.log
+.Xil/
+vivado*.str
+
+# Local notes, not part of the project.
+HANDOFF.md
+PLAN.md
+
+# Staged by `make assets` for packaging; the originals live at the top level.
+compiler/onnx2fpga/assets/
+dist/
+*.egg-info/
+
+__pycache__/
+*.py[cod]
+.idea/
