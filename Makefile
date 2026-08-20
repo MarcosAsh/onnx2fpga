@@ -59,14 +59,11 @@ runtime:
 # Stage the RTL and C++ runtime inside the package so a wheel carries them.
 # A checkout does not need this: the locator finds them one level up.
 assets:
-	rm -rf compiler/onnx2fpga/assets
-	mkdir -p compiler/onnx2fpga/assets/hardware
-	cp -r hardware/rtl hardware/synth compiler/onnx2fpga/assets/hardware/
-	cp -r runtime compiler/onnx2fpga/assets/runtime
-	rm -rf compiler/onnx2fpga/assets/runtime/bin
-	@echo "staged $$(find compiler/onnx2fpga/assets -type f | wc -l) files"
+	$(PYTHON) tools/build_wheel.py --stage-only
 
-wheel: assets
+# build_wheel.py stages the assets itself, so a wheel is correct even from a
+# checkout that has never run `make assets`.
+wheel:
 	$(PYTHON) tools/build_wheel.py
 
 lint:

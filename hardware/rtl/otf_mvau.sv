@@ -80,7 +80,7 @@ module otf_mvau #(
     genvar p;
     generate
         for (p = 0; p < PE; p = p + 1) begin : g_lane
-            wire [W_ADDR-1:0] waddr = W_ADDR'(nf * SF + sf);
+            wire [W_ADDR-1:0] waddr = W_ADDR'(int'(nf) * SF + int'(sf));
             wire [SIMD*WGT_BITS-1:0] weight_word = weight_mem[p*SF*NF + int'(waddr)];
 
             logic signed [ACC_BITS-1:0] dot;
