@@ -42,7 +42,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install "numpy>=1.20"
+      # setuptools builds the wheel and is no longer bundled from 3.12 on.
+      - run: pip install "numpy>=1.20" setuptools
       - name: install tcl
         # The Vivado script is executed under stubs by tclsh, so without this
         # those tests skip silently rather than run.
@@ -99,8 +100,10 @@ jobs:
       - name: build the wheel and run it from outside the checkout
         run: python -m unittest discover -s tests -p "test_packaging.py" -v
       - name: the console command works once installed
+        env:
+          PYTHONPATH: ""
         run: |
-          pip install dist/onnx2fpga-*.whl
+          pip install --force-reinstall --no-deps dist/onnx2fpga-*.whl
           cd "$(mktemp -d)"
           onnx2fpga doctor
           onnx2fpga devices
