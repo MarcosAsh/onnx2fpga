@@ -1,0 +1,5 @@
+#!/bin/sh
+# Run the tool straight from a checkout, with nothing installed.
+# `pip install .` provides the same command on PATH.
+here=$(cd "$(dirname "$0")" && pwd)
+PYTHONPATH="$here/compiler:$PYTHONPATH" exec "${PYTHON:-python3}" -m onnx2fpga "$@"

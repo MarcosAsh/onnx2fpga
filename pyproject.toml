@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onnx2fpga"
+version = "0.1.0"
+description = "Compile ONNX models into streaming dataflow FPGA accelerators"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = ["numpy>=1.20"]
+keywords = ["onnx", "fpga", "compiler", "systemverilog", "quantization"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Compilers",
+]
+
+[project.optional-dependencies]
+# Only needed to cross check against the reference implementation of ONNX.
+# The compiler reads and writes .onnx files without it.
+onnx = ["onnx>=1.14"]
+
+[project.scripts]
+onnx2fpga = "onnx2fpga.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["compiler"]
+
+# The RTL library, the C++ runtime and the synthesis script are data the tool
+# needs at run time, not just sources. `make assets` stages them into the
+# package so a wheel carries them; a checkout finds them one level up instead.
+# See compiler/onnx2fpga/assets.py.
+[tool.setuptools.package-data]
+onnx2fpga = [
+    "assets/hardware/rtl/*.sv",
+    "assets/hardware/synth/*.tcl",
+    "assets/runtime/include/otf/*.hpp",
+    "assets/runtime/sim/*.cpp",
+    "assets/runtime/kernels/*.cpp",
+    "assets/runtime/host/*.cpp",
+    "assets/runtime/Makefile",
+]
