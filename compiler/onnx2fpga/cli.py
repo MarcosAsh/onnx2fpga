@@ -131,7 +131,7 @@ class SimulateCommand(ModelCommand):
             return 1
 
         first = runner.once()
-        print(first.output.strip())
+        print(first.annotated_output().strip())
         if not first.ok:
             return 1
         if not args.sweep:
@@ -143,6 +143,10 @@ class SimulateCommand(ModelCommand):
             print(entry.render())
         failed = [entry for entry in results if not entry.ok]
         print("\n%d of %d settings passed" % (len(results) - len(failed), len(results)))
+        summary = runner.summarise(results)
+        if summary:
+            print()
+            print(summary.render())
         return 1 if failed else 0
 
 
