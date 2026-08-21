@@ -99,6 +99,10 @@ synth-impl: models
 synth-dry: models
 	$(PYTHON) -m onnx2fpga synth $(MODEL) --device $(DEVICE) --dry-run
 
+# compiler/onnx2fpga/assets is staged build output, and a stale one shadows the
+# checkout it was copied from: the locator prefers it, so the suite would test
+# yesterday's RTL and runtime without saying so. It belongs here with the rest
+# of the artifacts.
 clean:
-	rm -rf build runtime/bin
+	rm -rf build runtime/bin compiler/onnx2fpga/assets
 	find . -name __pycache__ -type d -exec rm -rf {} +
