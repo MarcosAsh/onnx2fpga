@@ -49,6 +49,14 @@ class SynthesisResultTest(unittest.TestCase):
         self.assertEqual(SUMMARY["bram36"],
                          SUMMARY["ramb36"] + 0.5 * SUMMARY["ramb18"])
 
+    def test_an_unconstrained_unit_reads_back_as_no_fmax_at_all(self):
+        path = Fixtures.build_dir("characterize") / "unconstrained.json"
+        path.write_text(json.dumps(
+            dict(SUMMARY, timed=False, wns_ns=None, fmax_mhz=None)))
+        result = SynthesisResult.load(path)
+        self.assertIsNone(result.fmax_mhz)
+        self.assertEqual(result.measured.lut, 412)
+
 
 class ComparisonTest(unittest.TestCase):
     def setUp(self):

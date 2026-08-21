@@ -76,10 +76,27 @@ set ramb36 [count_ref "RAMB36*"]
 set ramb18 [count_ref "RAMB18*"]
 set uram   [count_ref "URAM*"]
 
-set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
-if {$wns eq ""} { set wns 0 }
-set achieved [expr {$period - $wns}]
-if {$achieved <= 0} { set fmax 0 } else { set fmax [expr {1000.0 / $achieved}] }
+# A purely combinational unit, or one the clock constraint never reached, has
+# no setup path to report. Calling that slack 0 makes fmax come out at exactly
+# the target period, which reads as a design that just met timing rather than
+# one that was never timed at all. Say unconstrained and let the caller decide.
+set paths [get_timing_paths -max_paths 1 -nworst 1 -setup]
+set wns ""
+if {[llength $paths] > 0} { set wns [get_property SLACK [lindex $paths 0]] }
+
+if {$wns eq ""} {
+    set timed false
+    set wns   null
+    set fmax  null
+} else {
+    set timed true
+    set achieved [expr {$period - $wns}]
+    if {$achieved <= 0} {
+        set fmax 0.00
+    } else {
+        set fmax [format %.2f [expr {1000.0 / $achieved}]]
+    }
+}
 
 set handle [open [file join $outdir summary.json] w]
 puts $handle "{"
@@ -88,8 +105,9 @@ puts $handle "  \"part\": \"$part\","
 puts $handle "  \"stage\": \"$stage\","
 puts $handle "  \"generics\": \"$generics\","
 puts $handle "  \"period_ns\": $period,"
+puts $handle "  \"timed\": $timed,"
 puts $handle "  \"wns_ns\": $wns,"
-puts $handle "  \"fmax_mhz\": [format %.2f $fmax],"
+puts $handle "  \"fmax_mhz\": $fmax,"
 puts $handle "  \"lut\": $lut,"
 puts $handle "  \"ff\": $ff,"
 puts $handle "  \"dsp\": $dsp,"

@@ -25,12 +25,16 @@ SLACK = 0.842
 
 @unittest.skipIf(shutil.which("tclsh") is None, "tclsh not installed")
 class SynthScriptTest(unittest.TestCase):
-    def _run(self, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4"):
+    def _run(self, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4",
+             timing_paths=True):
         work = Fixtures.build_dir("synth_stub_%s" % ("impl" if implement else "synth"))
         out = work / "synth" / "unit"
         if out.exists():
             shutil.rmtree(out)
         environment = dict(os.environ)
+        environment.pop("OTF_STUB_NO_PATHS", None)
+        if not timing_paths:
+            environment["OTF_STUB_NO_PATHS"] = "1"
         environment.update({
             "OTF_PART": "xc7z020-clg400-1",
             "OTF_TOP": "otf_mvau",
@@ -79,6 +83,24 @@ class SynthScriptTest(unittest.TestCase):
         result = SynthesisResult.load(out / "summary.json")
         expected = 1000.0 / (PERIOD - SLACK)
         self.assertAlmostEqual(result.fmax_mhz, round(expected, 2), places=2)
+        self.assertIs(json.loads((out / "summary.json").read_text())["timed"], True)
+
+    def test_a_unit_with_no_setup_path_is_unconstrained_not_zero_slack(self):
+        """Reporting slack 0 would put fmax at exactly 1000/period, which reads
+        as a unit that just met timing rather than one that was never timed."""
+        out, _ = self._run(timing_paths=False)
+        payload = json.loads((out / "summary.json").read_text())
+        self.assertIs(payload["timed"], False)
+        self.assertIsNone(payload["wns_ns"])
+        self.assertIsNone(payload["fmax_mhz"])
+        self.assertIsNone(SynthesisResult.load(out / "summary.json").fmax_mhz)
+        self.assertNotEqual(payload["fmax_mhz"], 1000.0 / PERIOD)
+
+    def test_an_unconstrained_unit_still_reports_its_resources(self):
+        out, _ = self._run(timing_paths=False)
+        result = SynthesisResult.load(out / "summary.json")
+        self.assertEqual(result.measured.lut, 412)
+        self.assertEqual(result.measured.dsp, 6)
 
     def test_clock_constraint_is_written_before_synthesis(self):
         out, _ = self._run()

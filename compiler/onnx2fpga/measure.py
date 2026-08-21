@@ -72,7 +72,11 @@ class SynthesisResult:
 
     @property
     def fmax_mhz(self):
-        return float(self.payload.get("fmax_mhz", 0.0))
+        """None when the unit reported no setup path at all, which is not the
+        same as zero slack. An unconstrained unit was never timed, and saying
+        so beats quoting a number that only looks like it met the target."""
+        value = self.payload.get("fmax_mhz")
+        return None if value is None else float(value)
 
     @property
     def stage(self):
@@ -145,9 +149,10 @@ class Comparison:
             marker = "  n/a" if ratio is None else (
                 " inf" if ratio == float("inf") else "%+5.0f%%" % (100 * ratio))
             cells.append("%7.0f %7.0f %6s" % (predicted, measured, marker))
-        return "%-24s %-14s %s  %7.1f" % (
+        fmax = self.result.fmax_mhz
+        return "%-24s %-14s %s  %7s" % (
             self.subject.name, self.subject.module, " ".join(cells),
-            self.result.fmax_mhz)
+            "-" if fmax is None else "%.1f" % fmax)
 
 
 class Characterizer:
@@ -212,8 +217,15 @@ def render(comparisons):
     lines = [header, "-" * len(header)]
     lines.extend(c.row() for c in comparisons)
     if comparisons:
-        worst = min(c.result.fmax_mhz for c in comparisons)
+        timed = [c.result.fmax_mhz for c in comparisons
+                 if c.result.fmax_mhz is not None]
         lines.append("")
-        lines.append("slowest unit runs at %.1f MHz, which is the honest fmax "
-                     "for this design" % worst)
+        if timed:
+            lines.append("slowest unit runs at %.1f MHz, which is the honest fmax "
+                         "for this design" % min(timed))
+        untimed = [c.subject.name for c in comparisons
+                   if c.result.fmax_mhz is None]
+        if untimed:
+            lines.append("unconstrained, no setup path to report: %s"
+                         % ", ".join(untimed))
     return "\n".join(lines)

@@ -57,7 +57,12 @@ proc get_cells {args} {
     return $cells
 }
 
-proc get_timing_paths {args} { record get_timing_paths $args; return "worst_path" }
+# A unit with no setup path is what an unconstrained or purely combinational
+# design looks like, and the script has to tell it apart from zero slack.
+set ::stub_paths "worst_path"
+if {[info exists ::env(OTF_STUB_NO_PATHS)]} { set ::stub_paths {} }
+
+proc get_timing_paths {args} { record get_timing_paths $args; return $::stub_paths }
 proc get_property {property object} { return $::stub_slack }
 proc get_ports {args} { return "clk" }
 
