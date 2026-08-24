@@ -8,6 +8,7 @@ import numpy as np
 from support import Fixtures
 
 from onnx2fpga.compile import Compiler
+from onnx2fpga.p2_graph.datatype import INT8, INT16, INT32
 from onnx2fpga.p2_graph.graph import GraphError
 from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
 from onnx2fpga.p3_ops.hardware_ops import (MatVecUnit, PoolUnit, SlidingWindowUnit,
@@ -263,6 +264,45 @@ class CommandLineUnrollTest(unittest.TestCase):
         self.assertIn("onnx2fpga:", err.getvalue())
         self.assertIn("z7020", err.getvalue())
         self.assertNotIn("Traceback", err.getvalue())
+
+
+class OutputWidthTest(unittest.TestCase):
+    """A graph output is the one tensor nothing downstream consumes, so it is
+    the one that can be widened without widening anything else."""
+
+    def compiled(self, bits):
+        return Compiler(device="vu9p", target_cycles=64, output_bits=bits).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            Fixtures.build_dir("mlp_outw_%s" % bits))
+
+    def test_it_defaults_to_the_activation_width(self):
+        graph = self.compiled(None).hardware_graph
+        self.assertEqual(graph.tensor(graph.outputs[0]).dtype, INT8)
+
+    def test_the_output_widens_on_request(self):
+        for bits, dtype in ((16, INT16), (32, INT32)):
+            with self.subTest(bits=bits):
+                graph = self.compiled(bits).hardware_graph
+                self.assertEqual(graph.tensor(graph.outputs[0]).dtype, dtype)
+
+    def test_widening_widens_the_clamp_the_scores_hit(self):
+        """The point of the change: an int8 score saturates at 127."""
+        narrow = self.compiled(None).hardware_graph
+        wide = self.compiled(16).hardware_graph
+        self.assertEqual(narrow.producer(narrow.outputs[0]).requant.upper_clamp, 127)
+        self.assertEqual(wide.producer(wide.outputs[0]).requant.upper_clamp, 32767)
+
+    def test_only_the_output_widens_and_the_activations_do_not(self):
+        """Widening an intermediate would widen everything downstream of it,
+        which is the cost this avoids."""
+        graph = self.compiled(32).hardware_graph
+        output = graph.outputs[0]
+        for node in graph.nodes:
+            for name in node.outputs:
+                if name != output and graph.has_tensor(name):
+                    tensor = graph.tensor(name)
+                    if tensor.dtype in (INT8, INT16, INT32):
+                        self.assertEqual(tensor.dtype, INT8, name)
 
 
 if __name__ == "__main__":

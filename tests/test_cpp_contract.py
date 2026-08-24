@@ -14,7 +14,7 @@ import numpy as np
 
 from support import ROOT, Fixtures, run
 
-from onnx2fpga.p2_graph.datatype import INT8
+from onnx2fpga.p2_graph.datatype import INT8, INT16, INT32
 from onnx2fpga.p2_graph.graph import Graph
 from onnx2fpga.p2_graph.tensor import Tensor
 from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
@@ -24,14 +24,16 @@ from onnx2fpga.p4_quantize.requantize import Requantizer
 class MatVecFixture:
     """Writes a layer and its expected integer output for the C++ checker."""
 
-    def __init__(self, mw, mh, vectors, seed, zero_point=0):
+    def __init__(self, mw, mh, vectors, seed, zero_point=0, out_dtype=INT8):
         rng = np.random.default_rng(seed)
         self.mw, self.mh, self.vectors = mw, mh, vectors
         self.zero_point = zero_point
+        self.out_dtype = out_dtype
         self.weights = rng.integers(-127, 128, (mw, mh), dtype=np.int64)
         self.bias = rng.integers(-2000, 2000, mh, dtype=np.int64)
         self.requant = Requantizer.from_real_multipliers(
-            rng.uniform(1e-3, 4e-2, mh), INT8, mult_bits=18, zero_point=zero_point)
+            rng.uniform(1e-3, 4e-2, mh), out_dtype, mult_bits=18,
+            zero_point=zero_point)
         self.input = rng.integers(-128, 128, (vectors, mw), dtype=np.int64)
         self.expected = self._expected()
 
@@ -40,7 +42,7 @@ class MatVecFixture:
         graph.add_tensor(Tensor("x", (self.vectors, self.mw), INT8))
         graph.inputs.append("x")
         unit = MatVecUnit("m", ["x"], ["y"], self.weights, self.bias, self.requant,
-                          INT8, INT8, INT8, vectors=self.vectors)
+                          INT8, self.out_dtype, INT8, vectors=self.vectors)
         graph.ensure_tensor("y")
         graph.add_node(unit)
         unit.infer(graph)
@@ -84,6 +86,31 @@ class CppContractTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0,
                                  result.stdout + result.stderr)
                 self.assertIn("PASS", result.stdout)
+
+    def test_kernels_agree_at_a_wider_output(self):
+        """A graph output need not be as narrow as the activations between
+        layers, and int8 scores saturate where int16 ones do not. The C++ has
+        to follow the Python out to the wider type, or the wide path is only
+        checked against itself."""
+        for dtype in (INT16, INT32):
+            for mw, mh, vectors, seed in ((32, 16, 4, 11), (64, 10, 2, 12)):
+                with self.subTest(dtype=dtype.name, mw=mw, mh=mh):
+                    fixture = MatVecFixture(mw, mh, vectors, seed,
+                                            out_dtype=dtype)
+                    path = fixture.write(
+                        Fixtures.build_dir("cpp")
+                        / ("matvec_%s_%d.txt" % (dtype.name, seed)))
+                    result = run([str(self.checker), str(path)])
+                    self.assertEqual(result.returncode, 0,
+                                     result.stdout + result.stderr)
+                    self.assertIn("PASS", result.stdout)
+
+    def test_the_wider_output_actually_uses_the_range(self):
+        """If every value still fit in an int8 the test above would pass
+        without exercising anything."""
+        wide = MatVecFixture(64, 10, 2, 12, out_dtype=INT16)
+        self.assertTrue((np.abs(np.asarray(wide.expected)) > 127).any(),
+                        "no value exceeded int8, so the width is untested")
 
     def test_a_deliberate_mismatch_is_caught(self):
         """The checker has to be able to fail, or it proves nothing."""

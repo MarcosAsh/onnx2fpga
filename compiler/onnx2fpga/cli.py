@@ -52,6 +52,10 @@ class CompileCommand(Command):
         parser.add_argument("--unroll", action="store_true",
                             help="do not fold at all: every unit at its widest, "
                                  "for the lowest latency the device will hold")
+        parser.add_argument("--output-bits", type=int, default=None,
+                            choices=(8, 16, 32),
+                            help="width of the graph's output; wider keeps "
+                                 "scores int8 would saturate")
         parser.add_argument("--utilisation", type=float, default=0.80,
                             help="fraction of the device the design may occupy")
         parser.add_argument("--mult-bits", type=int, default=18,
@@ -69,7 +73,8 @@ class CompileCommand(Command):
         compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
                             utilisation_limit=args.utilisation,
                             mult_bits=args.mult_bits, top_name=args.top,
-                            verbose=not args.quiet, unroll=args.unroll)
+                            verbose=not args.quiet, unroll=args.unroll,
+                            output_bits=args.output_bits)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()

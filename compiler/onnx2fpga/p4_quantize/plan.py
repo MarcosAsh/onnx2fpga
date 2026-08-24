@@ -20,24 +20,36 @@ TINY = 1e-12
 
 
 class QuantizationPlan:
-    def __init__(self, act_dtype=INT8, weight_dtype=INT8, mult_bits=18):
+    def __init__(self, act_dtype=INT8, weight_dtype=INT8, mult_bits=18,
+                 out_dtype=None):
         self.act_dtype = act_dtype
         self.weight_dtype = weight_dtype
         self.mult_bits = mult_bits
+        # What the graph's own outputs are carried in. Activations between
+        # layers stay narrow because the next layer has to consume them, but
+        # nothing consumes the last one, so it is free to be wider. None means
+        # the same as the activations, which is what every model got before
+        # this was a choice.
+        self._out_dtype = out_dtype
         self.specs = {}
         self.from_model = False
 
+    @property
+    def out_dtype(self):
+        return self._out_dtype or self.act_dtype
+
     @classmethod
-    def from_peaks(cls, peaks, act_dtype=INT8, weight_dtype=INT8, mult_bits=18):
-        plan = cls(act_dtype, weight_dtype, mult_bits)
+    def from_peaks(cls, peaks, act_dtype=INT8, weight_dtype=INT8, mult_bits=18,
+                   out_dtype=None):
+        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype)
         for name, peak in peaks.items():
             plan.annotate(name, QuantSpec(max(peak, TINY) / act_dtype.max, 0))
         return plan
 
     @classmethod
     def from_annotations(cls, annotations, act_dtype=INT8, weight_dtype=INT8,
-                         mult_bits=18):
-        plan = cls(act_dtype, weight_dtype, mult_bits)
+                         mult_bits=18, out_dtype=None):
+        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype)
         for name, spec in annotations.items():
             plan.annotate(name, spec)
         plan.from_model = True

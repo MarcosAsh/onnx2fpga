@@ -8,6 +8,7 @@ import copy
 
 import numpy as np
 
+from .p2_graph.datatype import IntType
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
 from .p4_quantize.plan import QuantizationPlan
@@ -48,10 +49,11 @@ class CompilationResult:
 class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
-                 unroll=False):
+                 unroll=False, output_bits=None):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.unroll = unroll
+        self.output_dtype = IntType(output_bits, True) if output_bits else None
         self.utilisation_limit = utilisation_limit
         self.mult_bits = mult_bits
         self.top_name = top_name
@@ -95,11 +97,13 @@ class Compiler:
             context.note("plan: read %d grids from the model's quantize nodes"
                          % len(graph.annotations))
             return QuantizationPlan.from_annotations(
-                graph.annotations, mult_bits=self.mult_bits)
+                graph.annotations, mult_bits=self.mult_bits,
+                out_dtype=self.output_dtype)
         if not samples:
             raise ValueError("a float model needs calibration samples")
         context.note("plan: calibrated on %d samples" % len(samples))
-        return Calibrator(graph).plan(samples, mult_bits=self.mult_bits)
+        return Calibrator(graph).plan(samples, mult_bits=self.mult_bits,
+                                     out_dtype=self.output_dtype)
 
     @staticmethod
     def _stimulus(graph, samples, plan):

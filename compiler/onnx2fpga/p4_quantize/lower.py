@@ -78,10 +78,17 @@ class LoweringContext:
         self.graph.add_tensor(Tensor(name, shape, dtype))
         return name
 
+    def out_dtype(self, name):
+        """What a tensor is carried in. Everything the pipeline consumes stays
+        at the activation width; a tensor nobody consumes is a graph output and
+        may be wider, because the only cost of widening it is the port."""
+        return (self.plan.out_dtype if name in self.graph.outputs
+                else self.plan.act_dtype)
+
     def matvec_requant(self, out_name, in_scale, weight_scales, relu):
         reals = in_scale * weight_scales / self.scale(out_name)
         return Requantizer.from_real_multipliers(
-            reals, self.plan.act_dtype, self.plan.mult_bits, relu=relu,
+            reals, self.out_dtype(out_name), self.plan.mult_bits, relu=relu,
             zero_point=self.zero_point(out_name))
 
     def quantize_bias(self, node, index, unit_scale, channels, weights, in_zero):
@@ -115,7 +122,8 @@ class GemmLowering(Lowering):
                                      bool(node.attrs.get("relu")))
         vectors = source.numel // weights.shape[0]
         return [MatVecUnit(node.name, [node.inputs[0]], node.outputs, quantized,
-                           bias, requant, ctx.plan.act_dtype, ctx.plan.act_dtype,
+                           bias, requant, ctx.plan.act_dtype,
+                           ctx.out_dtype(node.outputs[0]),
                            ctx.plan.weight_dtype, vectors=vectors)]
 
 
@@ -144,7 +152,8 @@ class ConvLowering(Lowering):
             pad_value=in_zero)
         out_h, out_w = window.ofm_dim
         matvec = MatVecUnit(node.name, window.outputs, node.outputs, quantized,
-                            bias, requant, ctx.plan.act_dtype, ctx.plan.act_dtype,
+                            bias, requant, ctx.plan.act_dtype,
+                            ctx.out_dtype(node.outputs[0]),
                             ctx.plan.weight_dtype, vectors=out_h * out_w)
         return [window, matvec]
 
