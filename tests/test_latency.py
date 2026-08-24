@@ -34,11 +34,13 @@ class MlpLatencyTest(unittest.TestCase):
 
     def test_matvec_is_late_by_its_synapse_fold(self):
         """It cannot emit until the last partial product is accumulated, so
-        folding the synapses deeper costs latency even though it saves DSPs."""
+        folding the synapses deeper costs latency even though it saves DSPs.
+        Plus the one cycle its output register costs."""
         units = self.units(MatVecUnit)
         self.assertTrue(units)
         for unit in units:
-            self.assertEqual(unit.latency(self.graph), unit.synapse_fold - 1,
+            self.assertEqual(unit.latency(self.graph),
+                             unit.synapse_fold - 1 + unit.REGISTER_STAGES,
                              unit.name)
 
     def test_latency_is_not_the_initiation_interval(self):
@@ -48,21 +50,26 @@ class MlpLatencyTest(unittest.TestCase):
         self.assertNotEqual(matvec.latency(self.graph), matvec.cycles)
         self.assertLess(matvec.latency(self.graph), matvec.cycles)
 
-    def test_a_fifo_costs_nothing_to_pass_through(self):
+    def test_a_fifo_still_costs_its_register(self):
+        """It reorders nothing, but it writes on a clock edge and reads the
+        cell combinationally, so a beat through it is one cycle late."""
         for fifo in self.units(StreamFifo):
-            self.assertEqual(fifo.latency(self.graph), 0, fifo.name)
+            self.assertEqual(fifo.latency(self.graph), fifo.REGISTER_STAGES,
+                             fifo.name)
 
     def test_a_widening_converter_waits_for_a_full_wide_beat(self):
         widening = [c for c in self.units(WidthConverter)
                     if c.out_elems > c.in_elems]
         self.assertTrue(widening)
         for conv in widening:
-            self.assertEqual(conv.latency(self.graph), conv.ratio - 1, conv.name)
+            self.assertEqual(conv.latency(self.graph),
+                             conv.ratio - 1 + conv.REGISTER_STAGES, conv.name)
 
     def test_a_narrowing_converter_can_emit_immediately(self):
         for conv in self.units(WidthConverter):
             if conv.in_elems > conv.out_elems:
-                self.assertEqual(conv.latency(self.graph), 0, conv.name)
+                self.assertEqual(conv.latency(self.graph),
+                                 conv.REGISTER_STAGES, conv.name)
 
 
 class CnnLatencyTest(unittest.TestCase):
@@ -79,17 +86,19 @@ class CnnLatencyTest(unittest.TestCase):
         for pool in pools:
             folds = pool.channels // pool.pe
             self.assertEqual(pool.latency(self.graph),
-                             (pool.window_size - 1) * folds, pool.name)
+                             (pool.window_size - 1) * folds + pool.REGISTER_STAGES,
+                             pool.name)
 
 
 class UniformDefaultTest(unittest.TestCase):
     """A unit that has not stated a beat schedule inherits the uniform
-    approximation, and reports zero latency. That is right for the elementwise
-    units and wrong for the sliding window generator, which buffers rows before
-    it can emit anything. Pinned deliberately: the day the generator reports a
-    real schedule this test should be the one that notices."""
+    approximation, so it looks instantaneous and reports only its register
+    cycle. That is very nearly right for the elementwise units and wrong for
+    the sliding window generator, which buffers rows before it can emit
+    anything. Pinned deliberately: the day the generator reports a real
+    schedule this test should be the one that notices."""
 
-    def test_the_uniform_default_reports_no_latency(self):
+    def test_the_uniform_default_reports_only_its_register(self):
         result = Compiler(device="vu9p", target_cycles=64).compile(
             Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
             Fixtures.build_dir("mlp_uniform"))
@@ -99,7 +108,7 @@ class UniformDefaultTest(unittest.TestCase):
                     and type(n).output_schedule is StreamingNode.output_schedule]
         self.assertTrue(defaults)
         for node in defaults:
-            self.assertEqual(node.latency(graph), 0, node.name)
+            self.assertEqual(node.latency(graph), node.REGISTER_STAGES, node.name)
 
 
 if __name__ == "__main__":

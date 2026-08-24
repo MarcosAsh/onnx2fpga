@@ -28,6 +28,13 @@ class StreamingNode(HwNode):
     which a cycle count alone cannot express.
     """
 
+    #: Every module registers its output, so a beat presented to it is visible
+    #: to the next unit one cycle later. The FIFO is the clearest case: it
+    #: writes mem[wptr] on a clock edge and reads mem[rptr] combinationally, so
+    #: even a pass-through costs a cycle. The schedules describe beat order,
+    #: not this, so latency has to add it back.
+    REGISTER_STAGES = 1
+
     @property
     def frames(self):
         return int(self.attrs.get("frames", 1))
@@ -79,7 +86,7 @@ class StreamingNode(HwNode):
             return 0
         inputs = self.input_schedule(graph, index)
         first_input = inputs[0] if inputs else 0
-        return max(0, outputs[0] - first_input)
+        return max(0, outputs[0] - first_input) + self.REGISTER_STAGES
 
     def throughput_cycles(self):
         return self.cycles
