@@ -53,6 +53,34 @@ class StreamingNode(HwNode):
     def output_schedule(self, graph, index=0):
         return self._uniform(self.output_beats(graph, index))
 
+    def latency(self, graph, index=0, output_index=0):
+        """Cycles from this unit's first input beat to its first output beat.
+
+        This is the unit's contribution to end-to-end latency, and it is not
+        `cycles`. `cycles` is the initiation interval, how long one frame
+        occupies the unit; latency is how long the first answer takes to
+        appear. A matrix vector unit folded over four synapse groups has to
+        accumulate all four before it can emit anything, so it is late by
+        three cycles no matter how many vectors follow.
+
+        It is read straight off the schedules rather than stated separately,
+        so a unit cannot report a latency that disagrees with the beat timing
+        the buffer sizing already believes. The cost is that a unit on the
+        uniform default inherits that approximation here too, and reports
+        zero. For the elementwise units that is very nearly true. For the
+        sliding window generator it is not: it buffers rows before it can
+        emit a window, and until it reports a real schedule its latency is
+        understated. That is the same soft spot tokens.py already has, and it
+        is why the graph total is checked against the harness rather than
+        trusted.
+        """
+        outputs = self.output_schedule(graph, output_index)
+        if not outputs:
+            return 0
+        inputs = self.input_schedule(graph, index)
+        first_input = inputs[0] if inputs else 0
+        return max(0, outputs[0] - first_input)
+
     def throughput_cycles(self):
         return self.cycles
 
