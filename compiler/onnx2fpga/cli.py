@@ -22,6 +22,7 @@ from .compile import Compiler
 from .doctor import Doctor
 from .measure import Characterizer, VivadoRunner, calibration_samples, render
 from .p1_ingest import OnnxModel
+from .p2_graph.graph import GraphError
 from .p2_graph.onnx_importer import OnnxImporter
 from .simulate import SimulationRunner
 from .targets.device import Device
@@ -48,6 +49,9 @@ class CompileCommand(Command):
         parser.add_argument("--device", default="vu9p", choices=Device.names())
         parser.add_argument("--target-cycles", type=int, default=None,
                             help="stop folding once every stage is this fast")
+        parser.add_argument("--unroll", action="store_true",
+                            help="do not fold at all: every unit at its widest, "
+                                 "for the lowest latency the device will hold")
         parser.add_argument("--utilisation", type=float, default=0.80,
                             help="fraction of the device the design may occupy")
         parser.add_argument("--mult-bits", type=int, default=18,
@@ -65,7 +69,7 @@ class CompileCommand(Command):
         compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
                             utilisation_limit=args.utilisation,
                             mult_bits=args.mult_bits, top_name=args.top,
-                            verbose=not args.quiet)
+                            verbose=not args.quiet, unroll=args.unroll)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()
@@ -92,6 +96,8 @@ class ModelCommand(Command):
         parser.add_argument("--out", type=pathlib.Path, default=None)
         parser.add_argument("--device", default="vu9p", choices=Device.names())
         parser.add_argument("--target-cycles", type=int, default=None)
+        parser.add_argument("--unroll", action="store_true",
+                            help="do not fold at all: every unit at its widest")
         parser.add_argument("--samples", type=int, default=32)
         parser.add_argument("--seed", type=int, default=0)
         parser.add_argument("--quiet", action="store_true")
@@ -100,7 +106,7 @@ class ModelCommand(Command):
         model = OnnxModel.load(args.model)
         out = args.out or pathlib.Path("build") / default_out
         compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
-                            verbose=not args.quiet)
+                            verbose=not args.quiet, unroll=args.unroll)
         result = compiler.compile(model, calibration_samples(
             model, args.samples, args.seed), out)
         return result, out
@@ -269,7 +275,15 @@ class CommandLine:
 
     def main(self, argv=None):
         args = self.build_parser().parse_args(argv)
-        return args.handler.run(args)
+        try:
+            return args.handler.run(args)
+        except GraphError as refused:
+            # A refused graph is an answer, not a crash. The passes raise it
+            # when they can prove the design is not buildable as asked, and the
+            # message already says what to change, so a traceback here would
+            # bury it under frames nobody outside this repo can read.
+            print("onnx2fpga: %s" % refused, file=sys.stderr)
+            return 1
 
 
 SYNTH_FIELDS = ("lut", "ff", "dsp", "bram36", "uram")

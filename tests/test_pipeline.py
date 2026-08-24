@@ -247,5 +247,23 @@ class UnrollRefusalTest(unittest.TestCase):
         self.assertIn("%", message)
 
 
+class CommandLineUnrollTest(unittest.TestCase):
+    """A refused graph is an answer, and the CLI has to say it like one."""
+
+    def test_a_refusal_is_a_message_and_an_exit_code_not_a_traceback(self):
+        from onnx2fpga.cli import CommandLine
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = CommandLine().main([
+                "compile", "examples/models/mlp.onnx", "--unroll",
+                "--device", "z7020", "--quiet",
+                "--out", str(Fixtures.build_dir("cli_unroll_refused"))])
+        self.assertEqual(code, 1)
+        self.assertIn("onnx2fpga:", err.getvalue())
+        self.assertIn("z7020", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
