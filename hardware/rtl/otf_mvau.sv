@@ -6,6 +6,13 @@
 //
 // SIMD input elements are consumed per cycle and PE output channels are
 // produced in parallel, so one input vector costs (MW/SIMD)*(MH/PE) cycles.
+//
+// The SIMD products are summed by a balanced tree rather than a running total.
+// Both compute the same integer, since addition is associative, but a running
+// total is a chain SIMD adders deep and the tree is ceil(log2(SIMD)). That
+// costs nothing in area and is the difference between a usable critical path
+// and an unusable one once SIMD is wide, which it now is: an unrolled build
+// sets SIMD to the full input width.
 // Weights sit in PE independent memories addressed by {neuron fold, synapse
 // fold}; each word holds the SIMD weights one lane needs that cycle. When the
 // output is folded (NF > 1) the input vector is held locally and replayed for
@@ -44,6 +51,19 @@ module otf_mvau #(
     localparam int SF_W   = (SF <= 1) ? 1 : $clog2(SF);
     localparam int NF_W   = (NF <= 1) ? 1 : $clog2(NF);
     localparam int W_ADDR = (SF*NF <= 1) ? 1 : $clog2(SF*NF);
+    // Depth of the balanced reduction over the SIMD products. Pairwise, so
+    // ceil(log2(SIMD)) levels, and at least one so SIMD=1 still has a node to
+    // read the answer out of.
+    localparam int TREE_LEVELS = (SIMD <= 1) ? 1 : $clog2(SIMD);
+
+    // How many live nodes a level of that tree holds. Halving with a round up
+    // means an odd node is carried to the next level rather than dropped.
+    function automatic int level_width(input int level);
+        int width;
+        width = SIMD;
+        for (int l = 0; l < level; l = l + 1) width = (width + 1) / 2;
+        return width;
+    endfunction
 
     logic [SIMD*WGT_BITS-1:0] weight_mem [0:PE*SF*NF-1];
     logic [ACC_BITS-1:0]      bias_mem   [0:PE*NF-1];
@@ -84,12 +104,25 @@ module otf_mvau #(
             wire [SIMD*WGT_BITS-1:0] weight_word = weight_mem[p*SF*NF + int'(waddr)];
 
             logic signed [ACC_BITS-1:0] dot;
+            logic signed [ACC_BITS-1:0] tree [0:TREE_LEVELS][0:SIMD-1];
             always_comb begin
-                dot = '0;
-                for (int k = 0; k < SIMD; k = k + 1) begin
-                    dot = dot + ACC_BITS'($signed(act_word[k*ACT_BITS +: ACT_BITS]))
-                              * ACC_BITS'($signed(weight_word[k*WGT_BITS +: WGT_BITS]));
+                for (int l = 0; l <= TREE_LEVELS; l = l + 1) begin
+                    for (int i = 0; i < SIMD; i = i + 1) tree[l][i] = '0;
                 end
+                for (int k = 0; k < SIMD; k = k + 1) begin
+                    tree[0][k] = ACC_BITS'($signed(act_word[k*ACT_BITS +: ACT_BITS]))
+                               * ACC_BITS'($signed(weight_word[k*WGT_BITS +: WGT_BITS]));
+                end
+                for (int l = 1; l <= TREE_LEVELS; l = l + 1) begin
+                    for (int i = 0; i < SIMD; i = i + 1) begin
+                        if (i < level_width(l)) begin
+                            tree[l][i] = (2*i + 1 < level_width(l - 1))
+                                       ? tree[l-1][2*i] + tree[l-1][2*i + 1]
+                                       : tree[l-1][2*i];
+                        end
+                    end
+                end
+                dot = tree[TREE_LEVELS][0];
             end
 
             wire signed [ACC_BITS-1:0] seed =
