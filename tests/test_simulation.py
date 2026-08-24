@@ -176,5 +176,56 @@ class LatencyReportTest(unittest.TestCase):
         self.assertIn("no run reported one", summary.render())
 
 
+@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+class UnrolledSimulationTest(unittest.TestCase):
+    """An unrolled build is the one place SIMD and PE reach the full matrix
+    dimensions, so it instantiates parameter values no folded build ever has.
+    Bit exactness there is a separate claim from bit exactness folded."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.build = Fixtures.build_dir("sim_mlp_unrolled")
+        Compiler(device="vu9p", unroll=True).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            cls.build)
+        built = run(["make", "-s"], cwd=cls.build)
+        assert built.returncode == 0, built.stderr[-4000:]
+
+    def test_lints_clean(self):
+        result = run(["make", "-s", "lint"], cwd=self.build)
+        self.assertEqual(result.returncode, 0, result.stderr[-4000:])
+
+    def test_matches_golden_model(self):
+        result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
+                      "--expected", "golden/expected.hex"], cwd=self.build)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS", result.stdout)
+
+    def test_survives_randomised_backpressure(self):
+        for input_duty, output_duty in BACKPRESSURE:
+            with self.subTest(duty=(input_duty, output_duty)):
+                result = run(["./obj_dir/Votf_top",
+                              "--input", "golden/input.hex",
+                              "--expected", "golden/expected.hex",
+                              "--input-duty", str(input_duty),
+                              "--output-duty", str(output_duty)], cwd=self.build)
+                self.assertEqual(result.returncode, 0,
+                                 result.stdout + result.stderr)
+                self.assertIn("PASS", result.stdout)
+
+    def test_the_model_predicted_the_measured_latency(self):
+        """Unfolded, every unit publishes an exact schedule, so the model has
+        no approximation to hide behind here."""
+        result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
+                      "--expected", "golden/expected.hex"], cwd=self.build)
+        measured = next(int(line.split()[1]) for line in result.stdout.splitlines()
+                        if line.startswith("latency"))
+        graph = Compiler(device="vu9p", unroll=True).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            Fixtures.build_dir("sim_mlp_unrolled_model")).hardware_graph
+        self.assertEqual(LatencyModel(graph).cycles, measured)
+        self.assertLess(measured, 10)
+
+
 if __name__ == "__main__":
     unittest.main()
