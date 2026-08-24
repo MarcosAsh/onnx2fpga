@@ -90,6 +90,15 @@ Device.register(Device(
     provenance="vendor", notes="ZCU104 class board"))
 
 Device.register(Device(
+    name="zu5ev", part="xck26-sfvc784-2lv-c",
+    budget=Resources(lut=117120, ff=234240, dsp=1248, bram36=144, uram=64),
+    fmax_mhz=250.0, dsp_generation="DSP48E2", external_bandwidth_gbps=19.2,
+    provenance="vendor",
+    notes="Kria K26 SOM. A production module rather than a development board, and "
+          "the cheapest DSP48E2 part inside the free Vivado tier, so the int8 DSP "
+          "packing rule can be checked without a paid licence."))
+
+Device.register(Device(
     name="z7020", part="xc7z020-clg400-1",
     budget=Resources(lut=53200, ff=106400, dsp=220, bram36=140, uram=0),
     fmax_mhz=100.0, dsp_generation="DSP48E1", external_bandwidth_gbps=4.2,

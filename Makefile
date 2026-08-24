@@ -31,6 +31,7 @@ test: test-unit test-cpp test-sim
 
 test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_devices.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_numerics.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_determinism.py" -v
