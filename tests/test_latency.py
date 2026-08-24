@@ -1,7 +1,8 @@
 """End-to-end latency in the IR: what each unit contributes to first output.
 
 `cycles` is the initiation interval and says nothing about latency. These pin
-the distinction, and pin the places where the model is known to understate.
+the distinction, the composition that turns per-unit latencies into a frame
+latency, and the one place the model is known to be loose.
 """
 
 import unittest
@@ -11,6 +12,7 @@ from support import Fixtures
 from onnx2fpga.compile import Compiler
 from onnx2fpga.p3_ops.hardware_ops import (MatVecUnit, PoolUnit, StreamingNode,
                                            StreamFifo, WidthConverter)
+from onnx2fpga.p5_schedule.latency import LatencyModel, graph_latency
 
 
 class MlpLatencyTest(unittest.TestCase):
@@ -109,6 +111,46 @@ class UniformDefaultTest(unittest.TestCase):
         self.assertTrue(defaults)
         for node in defaults:
             self.assertEqual(node.latency(graph), node.REGISTER_STAGES, node.name)
+
+
+class CompositionTest(unittest.TestCase):
+    """The graph total is not the sum, and the gap is the whole reason this
+    needed a model rather than a loop over the nodes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = Compiler(device="vu9p", target_cycles=64).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            Fixtures.build_dir("mlp_composed"))
+        cls.graph = cls.result.hardware_graph
+        cls.model = LatencyModel(cls.graph)
+
+    def test_the_total_far_exceeds_the_sum_of_the_units(self):
+        """A unit waits for enough beats at the rate its producer emits them,
+        not for the producer's first beat. On this model that is the difference
+        between a 26 cycle sum and a 132 cycle frame."""
+        naive = sum(n.latency(self.graph) for n in self.graph.nodes
+                    if isinstance(n, StreamingNode))
+        self.assertGreater(self.model.cycles, naive * 4)
+
+    def test_units_are_placed_in_topological_order(self):
+        starts = [self.model.start_of(n) for n in self.model.units]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_the_first_unit_starts_at_zero(self):
+        self.assertEqual(self.model.start_of(self.model.units[0]), 0)
+
+    def test_the_total_is_the_last_units_first_output(self):
+        last = self.model.units[-1]
+        self.assertEqual(self.model.cycles, self.model.first_output_of(last))
+
+    def test_the_critical_path_names_every_unit_and_rises(self):
+        path = self.model.critical_path
+        self.assertEqual(len(path), len(self.model.units))
+        self.assertEqual([c for _, c in path], sorted(c for _, c in path))
+
+    def test_the_helper_agrees_with_the_model(self):
+        self.assertEqual(graph_latency(self.graph), self.model.cycles)
 
 
 if __name__ == "__main__":

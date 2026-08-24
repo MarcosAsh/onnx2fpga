@@ -11,6 +11,7 @@ import unittest
 from support import Fixtures, run
 
 from onnx2fpga.compile import Compiler
+from onnx2fpga.p5_schedule.latency import LatencyModel
 from onnx2fpga.simulate import (LatencySummary, SimulationResult,
                                 SimulationRunner, nanoseconds)
 
@@ -27,15 +28,17 @@ class SimulationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.builds = {}
+        cls.graphs = {}
         factory = Fixtures.factory()
         for name, (shape, target) in cls.MODELS.items():
             model = getattr(factory, name)()
             build = Fixtures.build_dir("sim_" + name)
-            Compiler(device="vu9p", target_cycles=target).compile(
+            result = Compiler(device="vu9p", target_cycles=target).compile(
                 model, Fixtures.samples(shape), build)
             built = run(["make", "-s"], cwd=build)
             assert built.returncode == 0, built.stderr[-4000:]
             cls.builds[name] = build
+            cls.graphs[name] = result.hardware_graph
 
     def test_lints_clean(self):
         for name, build in self.builds.items():
@@ -50,6 +53,34 @@ class SimulationTest(unittest.TestCase):
                               "--expected", "golden/expected.hex"], cwd=build)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("PASS", result.stdout)
+
+    def measured_latency(self, build):
+        result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
+                      "--expected", "golden/expected.hex"], cwd=build)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for line in result.stdout.splitlines():
+            if line.startswith("latency"):
+                return int(line.split()[1])
+        self.fail("harness reported no latency line")
+
+    def test_the_latency_model_matches_the_harness_on_the_mlp(self):
+        """Every unit in the MLP publishes an exact beat schedule, so composing
+        them along the path should land on the measured cycle and not near it.
+        This is the check that keeps the model honest; without it the model is
+        just arithmetic nobody has compared to hardware."""
+        model = LatencyModel(self.graphs["mlp"])
+        self.assertEqual(model.cycles, self.measured_latency(self.builds["mlp"]))
+
+    def test_the_model_never_promises_a_latency_it_cannot_meet(self):
+        """Where a unit is on the uniform default the model spreads its output
+        evenly across the frame, which is slower than a unit that bursts. So
+        the total errs late, which is the safe direction for a latency claim.
+        The CNN is the case: its sliding window generator has no real schedule,
+        and the whole of the gap is that one unit."""
+        for name, build in self.builds.items():
+            with self.subTest(model=name):
+                self.assertGreaterEqual(LatencyModel(self.graphs[name]).cycles,
+                                        self.measured_latency(build))
 
     def test_survives_randomised_backpressure(self):
         """A stream design that only ever sees tready high can pass its tests
