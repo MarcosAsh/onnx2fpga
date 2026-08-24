@@ -240,5 +240,47 @@ def main():
         print("wrote %s (%d bytes)" % (path, path.stat().st_size))
 
 
+class QOperatorModelFactory(QdqModelFactory):
+    """Builds models in the QOperator form, where the quantization is folded
+    into the operator rather than stated beside the tensor.
+
+    A static quantizer emits this instead of QDQ when asked for it, and the
+    two carry the same information. The float boundary is still QuantizeLinear
+    in and DequantizeLinear out; what changes is that the layer in between is
+    a QLinearMatMul rather than a Gemm surrounded by grids.
+    """
+
+    def mlp(self, widths=(16, 8), samples=32):
+        weights = self.dense(widths[0], widths[1])
+        probe = self.rng.normal(0, 1, (samples, widths[0])).astype(np.float32)
+        x_grid = Grid.for_activation(probe, self.activation_dtype)
+        w_grid = Grid.for_weights(weights, 1)
+        y_grid = Grid.for_activation(x_grid.fake(probe) @ w_grid.fake(weights, 1),
+                                     self.activation_dtype)
+        self._reference = (weights, x_grid, w_grid, y_grid)
+
+        builder = ModelBuilder("qoperator_mlp").add_input("x", (1, widths[0]))
+        for stem, grid in (("x", x_grid), ("w", w_grid), ("y", y_grid)):
+            builder.add_initializer(stem + "_scale", grid.scale)
+            builder.add_initializer(stem + "_zp", grid.zero_point)
+        builder.add_initializer("w_i", w_grid.quantize(weights, 1))
+
+        builder.add_node("QuantizeLinear", ["x", "x_scale", "x_zp"], ["x_i"],
+                         name="quant_in")
+        builder.add_node("QLinearMatMul",
+                         ["x_i", "x_scale", "x_zp", "w_i", "w_scale", "w_zp",
+                          "y_scale", "y_zp"], ["y_i"], name="qmm")
+        builder.add_node("DequantizeLinear", ["y_i", "y_scale", "y_zp"], ["y"],
+                         name="dequant_out")
+        return builder.add_output("y", (1, widths[1])).build()
+
+    def reference(self, values):
+        """What the model means: the same fake-quantized arithmetic a runtime
+        would do, which is the specification the integer pipeline must match."""
+        weights, x_grid, w_grid, y_grid = self._reference
+        cursor = x_grid.fake(np.asarray(values, dtype=np.float64))
+        return y_grid.fake(cursor @ w_grid.fake(weights, 1))
+
+
 if __name__ == "__main__":
     main()
