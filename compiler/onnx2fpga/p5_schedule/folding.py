@@ -7,6 +7,7 @@ and stops when the budget is gone or the target is met. That is what keeps the
 stages balanced instead of merely fast in one place.
 """
 
+from ..p2_graph.graph import GraphError
 from ..pipeline import Pass
 from ..targets.resources import Resources
 
@@ -56,11 +57,14 @@ class FoldingReport:
 class FoldingAllocator(Pass):
     name = "fold"
 
-    def __init__(self, target_cycles=None, utilisation_limit=0.80):
+    def __init__(self, target_cycles=None, utilisation_limit=0.80, unroll=False):
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
+        self.unroll = unroll
 
     def run(self, graph, context):
+        if self.unroll:
+            return self._run_unrolled(graph, context)
         device = context.device
         nodes = [n for n in graph.topological_order() if n.folding_options() != [{}]]
         for node in nodes:
@@ -90,6 +94,48 @@ class FoldingAllocator(Pass):
         context.note("fold: bottleneck %d cycles, %.1f frames/s, dsp %.0f"
                      % (report.bottleneck_cycles, report.frames_per_second,
                         report.total.dsp))
+        return graph
+
+
+    def _run_unrolled(self, graph, context):
+        """Give every unit its widest folding and do no balancing at all.
+
+        The balanced allocator exists because resources are scarce: it equalises
+        the stages so nothing is faster than the slowest one, since throughput
+        cannot benefit from that. For a small model on a large device that
+        reasoning inverts. A matvec at SIMD=MW, PE=MH retires a whole vector per
+        cycle, and a network of them is a pipeline whose depth is the layer
+        count rather than a schedule. That is the shape worth having when the
+        thing being minimised is the wait for one answer.
+
+        This deliberately does not fall back. Asking for an unrolled design and
+        quietly being handed a folded one is the kind of help that costs a day
+        to notice, so a model that does not fit is refused and told what did not
+        fit.
+        """
+        device = context.device
+        nodes = [n for n in graph.topological_order() if n.folding_options() != [{}]]
+        for node in nodes:
+            node.apply_folding(node.folding_options()[-1])
+
+        report = FoldingReport(device).record(graph)
+        worst = report.total.worst_utilisation(device.budget)
+        if worst > self.utilisation_limit:
+            used = report.total.utilisation(device.budget)
+            over = sorted(((v, k) for k, v in used.items()), reverse=True)
+            raise GraphError(
+                "unrolled, this model needs %s of %s, over the %.0f%% limit. "
+                "Worst is %s at %.0f%%. Either give it a larger device, raise "
+                "the utilisation limit, or compile it folded with a cycle or "
+                "latency target instead."
+                % (report.total, device.name, 100 * self.utilisation_limit,
+                   over[0][1], 100 * over[0][0]))
+
+        context.artifacts["folding"] = report
+        context.note("fold: unrolled, %d cycles at the slowest unit, dsp %.0f, "
+                     "%.0f%% of %s"
+                     % (report.bottleneck_cycles, report.total.dsp,
+                        100 * worst, device.name))
         return graph
 
     def _effective_target(self, frozen):

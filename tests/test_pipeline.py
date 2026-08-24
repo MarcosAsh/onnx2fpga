@@ -8,11 +8,13 @@ import numpy as np
 from support import Fixtures
 
 from onnx2fpga.compile import Compiler
+from onnx2fpga.p2_graph.graph import GraphError
 from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
 from onnx2fpga.p3_ops.hardware_ops import (MatVecUnit, PoolUnit, SlidingWindowUnit,
                                            StreamFifo, WidthConverter)
 from onnx2fpga.p3_ops.onnx_ops import ConvOp, GemmOp, ReluOp
 from onnx2fpga.p4_quantize.lower import FuseRelu
+from onnx2fpga.p5_schedule.latency import graph_latency
 from onnx2fpga.p5_schedule.streams import InsertWidthConverters, compatible_widths
 from onnx2fpga.pipeline import CompilerContext
 from onnx2fpga.targets.device import Device
@@ -177,6 +179,72 @@ class EmissionTest(unittest.TestCase):
         self.assertEqual(len(words),
                          unit.pe * unit.neuron_fold * unit.synapse_fold)
         self.assertEqual(len(words[0]) * 4, unit.simd * unit.weight_dtype.bits)
+
+
+class UnrollTest(unittest.TestCase):
+    """Fully unrolled: every unit at its widest folding, no balancing.
+
+    The balanced allocator equalises stages because throughput cannot use a
+    stage faster than its slowest neighbour. Minimising the wait for one answer
+    inverts that, and on a small model against a large device the pipeline
+    depth becomes the layer count."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.result = Compiler(device="vu9p", unroll=True).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            Fixtures.build_dir("mlp_unrolled"))
+        cls.graph = cls.result.hardware_graph
+
+    def matvecs(self):
+        return [n for n in self.graph.nodes if isinstance(n, MatVecUnit)]
+
+    def test_every_matvec_is_fully_parallel(self):
+        units = self.matvecs()
+        self.assertTrue(units)
+        for unit in units:
+            self.assertEqual(unit.simd, unit.mw, unit.name)
+            self.assertEqual(unit.pe, unit.mh, unit.name)
+            self.assertEqual(unit.synapse_fold, 1, unit.name)
+            self.assertEqual(unit.neuron_fold, 1, unit.name)
+
+    def test_a_layer_costs_a_cycle_per_vector(self):
+        for unit in self.matvecs():
+            self.assertEqual(unit.cycles, unit.vectors, unit.name)
+
+    def test_the_pipeline_is_single_digit_per_layer(self):
+        """The item's own Done-when."""
+        for unit in self.matvecs():
+            self.assertLess(unit.cycles, 10, unit.name)
+
+    def test_it_beats_the_folded_build_by_an_order_of_magnitude(self):
+        folded = Compiler(device="vu9p", target_cycles=64).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            Fixtures.build_dir("mlp_unrolled_ref"))
+        self.assertLess(graph_latency(self.graph),
+                        graph_latency(folded.hardware_graph) / 10)
+
+    def test_it_costs_what_that_speed_costs(self):
+        """Unrolling is not free and the report should not pretend it is."""
+        folded = Compiler(device="vu9p", target_cycles=64).compile(
+            Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+            Fixtures.build_dir("mlp_unrolled_ref2"))
+        self.assertGreater(self.result.folding.total.dsp,
+                           folded.folding.total.dsp * 10)
+
+
+class UnrollRefusalTest(unittest.TestCase):
+    def test_a_model_that_does_not_fit_is_refused_not_quietly_folded(self):
+        """Asking for unrolled and being handed a folded design without being
+        told is the kind of help that costs a day to notice."""
+        with self.assertRaises(GraphError) as caught:
+            Compiler(device="z7020", unroll=True).compile(
+                Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+                Fixtures.build_dir("mlp_unrolled_toobig"))
+        message = str(caught.exception)
+        self.assertIn("z7020", message)
+        self.assertIn("dsp", message)
+        self.assertIn("%", message)
 
 
 if __name__ == "__main__":

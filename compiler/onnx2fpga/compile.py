@@ -47,9 +47,11 @@ class CompilationResult:
 
 class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
-                 mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None):
+                 mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
+                 unroll=False):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
+        self.unroll = unroll
         self.utilisation_limit = utilisation_limit
         self.mult_bits = mult_bits
         self.top_name = top_name
@@ -73,7 +75,8 @@ class Compiler:
         graph = PassManager([
             LowerToHardware(plan),
             InsertDuplicates(),
-            FoldingAllocator(self.target_cycles, self.utilisation_limit),
+            FoldingAllocator(self.target_cycles, self.utilisation_limit,
+                             unroll=self.unroll),
             AlignBeatWidths(),
             InsertWidthConverters(),
             InsertFifos(cap=self.fifo_cap),
