@@ -4,6 +4,7 @@
 
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -17,9 +18,30 @@ struct PortSpec {
     int elem_bits = 8;
     int elems_per_beat = 1;
     int beats = 0;
-    double scale = 1.0;
+    // One scale per feature. A port on a single grid has exactly one entry,
+    // which is the ordinary case; a per-feature input has one per column,
+    // because a feature vector's columns can differ by decades and a single
+    // scale fitted to the loudest of them leaves the rest with nothing.
+    std::vector<double> scales{1.0};
     int zero_point = 0;
     std::string source_layout = "channel-last";
+
+    bool per_feature() const { return scales.size() > 1; }
+
+    double scale() const {
+        if (per_feature()) {
+            throw std::runtime_error(
+                "port " + tensor + " is quantized per feature (" +
+                std::to_string(scales.size()) +
+                " scales); use scale_at(index), not scale()");
+        }
+        return scales.front();
+    }
+
+    double scale_at(size_t index) const {
+        return scales.size() == 1 ? scales.front()
+                                  : scales.at(index % scales.size());
+    }
 
     size_t elements() const {
         size_t count = 1;
@@ -73,7 +95,17 @@ private:
         port.elem_bits = node["elem_bits"].as_int();
         port.elems_per_beat = node["elems_per_beat"].as_int();
         port.beats = node["beats"].as_int();
-        if (node.has("scale")) port.scale = node["scale"].number();
+        if (node.has("scale")) {
+            const JsonValue& scale = node["scale"];
+            port.scales.clear();
+            if (scale.kind() == JsonValue::Kind::Array) {
+                for (const JsonValue& entry : scale.array()) {
+                    port.scales.push_back(entry.number());
+                }
+            } else {
+                port.scales.push_back(scale.number());
+            }
+        }
         if (node.has("zero_point")) port.zero_point = node["zero_point"].as_int();
         if (node.has("source_layout")) port.source_layout = node["source_layout"].string();
         return port;

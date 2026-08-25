@@ -49,6 +49,7 @@ test-unit:
 
 test-cpp: runtime
 	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_host_driver.py" -v
 
 test-flaky:
 	$(PYTHON) tools/flakecheck.py --repeat 5 --fast
