@@ -122,7 +122,8 @@ class LoweringContext:
         reals = in_scale * weight_scales / self.scale(out_name)
         return Requantizer.from_real_multipliers(
             reals, self.out_dtype(out_name), self.plan.mult_bits, relu=relu,
-            zero_point=self.zero_point(out_name))
+            zero_point=self.zero_point(out_name),
+            shift=self.plan.fixed_shift)
 
     def quantize_bias(self, node, index, unit_scale, channels, weights, in_zero):
         """The model's own bias plus the correction an asymmetric input needs.

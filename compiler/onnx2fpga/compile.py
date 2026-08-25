@@ -56,7 +56,7 @@ class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
                  unroll=False, output_bits=None, act_bits=8, weight_bits=8,
-                 per_feature_input=False):
+                 per_feature_input=False, fixed_shift=None):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.unroll = unroll
@@ -70,6 +70,7 @@ class Compiler:
         # because what is lost is mostly in the weights.
         self.weight_dtype = IntType(weight_bits, True)
         self.per_feature_input = per_feature_input
+        self.fixed_shift = fixed_shift
         self.utilisation_limit = utilisation_limit
         self.mult_bits = mult_bits
         self.top_name = top_name
@@ -132,7 +133,7 @@ class Compiler:
                          % len(graph.annotations))
             return QuantizationPlan.from_annotations(
                 graph.annotations, mult_bits=self.mult_bits,
-                out_dtype=self.output_dtype)
+                out_dtype=self.output_dtype, fixed_shift=self.fixed_shift)
         if not samples:
             raise ValueError(
                 "this model states no quantization grids, so it has to be "
@@ -146,7 +147,8 @@ class Compiler:
                                      samples, mult_bits=self.mult_bits,
                                      out_dtype=self.output_dtype,
                                      act_dtype=self.act_dtype,
-                                     weight_dtype=self.weight_dtype)
+                                     weight_dtype=self.weight_dtype,
+                                     fixed_shift=self.fixed_shift)
 
     @staticmethod
     def _stimulus(graph, samples, plan):

@@ -63,6 +63,11 @@ class CompileCommand(Command):
         parser.add_argument("--weight-bits", type=int, default=8, choices=(8, 16),
                             help="width the weights are quantized to; widen it "
                                  "with --act-bits, not on its own")
+        parser.add_argument("--fixed-shift", type=int, default=None,
+                            help="pin the requantiser shift so a retrained "
+                                 "model of the same shape reuses this netlist; "
+                                 "pin it at or below the value a free build "
+                                 "chooses, never above")
         parser.add_argument("--per-feature-input", action="store_true",
                             help="fit a scale per input column instead of one "
                                  "for the whole vector; for feature vectors "
@@ -88,7 +93,8 @@ class CompileCommand(Command):
                             output_bits=args.output_bits,
                             act_bits=args.act_bits,
                             weight_bits=args.weight_bits,
-                            per_feature_input=args.per_feature_input)
+                            per_feature_input=args.per_feature_input,
+                            fixed_shift=args.fixed_shift)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()

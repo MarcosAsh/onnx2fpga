@@ -21,7 +21,7 @@ TINY = 1e-12
 
 class QuantizationPlan:
     def __init__(self, act_dtype=INT8, weight_dtype=INT8, mult_bits=18,
-                 out_dtype=None):
+                 out_dtype=None, fixed_shift=None):
         self.act_dtype = act_dtype
         self.weight_dtype = weight_dtype
         self.mult_bits = mult_bits
@@ -31,6 +31,10 @@ class QuantizationPlan:
         # the same as the activations, which is what every model got before
         # this was a choice.
         self._out_dtype = out_dtype
+        # Pinning the requantiser shift makes the generated RTL independent of
+        # the weights, which is what lets a retrained model of the same shape
+        # reuse a netlist instead of rebuilding one.
+        self.fixed_shift = fixed_shift
         self.specs = {}
         self.from_model = False
 
@@ -40,8 +44,8 @@ class QuantizationPlan:
 
     @classmethod
     def from_peaks(cls, peaks, act_dtype=INT8, weight_dtype=INT8, mult_bits=18,
-                   out_dtype=None):
-        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype)
+                   out_dtype=None, fixed_shift=None):
+        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype, fixed_shift)
         for name, peak in peaks.items():
             values = np.atleast_1d(np.asarray(peak, dtype=np.float64))
             scale = np.maximum(values, TINY) / act_dtype.max
@@ -51,8 +55,8 @@ class QuantizationPlan:
 
     @classmethod
     def from_annotations(cls, annotations, act_dtype=INT8, weight_dtype=INT8,
-                         mult_bits=18, out_dtype=None):
-        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype)
+                         mult_bits=18, out_dtype=None, fixed_shift=None):
+        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype, fixed_shift)
         for name, spec in annotations.items():
             plan.annotate(name, spec)
         plan.from_model = True

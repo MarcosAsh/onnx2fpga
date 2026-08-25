@@ -256,6 +256,11 @@ class MatVecUnit(StreamingNode):
 
     @property
     def mult_bits(self):
+        """Narrowed to the values it has to carry, unless the representation
+        was pinned, in which case it is the width that was pinned: a fitted
+        width follows the weights and takes the netlist with it."""
+        if self.requant.width is not None:
+            return int(self.requant.width)
         return int(max(2, int(np.abs(self.requant.multipliers).max()).bit_length() + 1))
 
     def sv_params(self, graph):
@@ -489,6 +494,11 @@ class ActivationUnit(StreamingNode):
 
     @property
     def mult_bits(self):
+        """Narrowed to the values it has to carry, unless the representation
+        was pinned, in which case it is the width that was pinned: a fitted
+        width follows the weights and takes the netlist with it."""
+        if self.requant.width is not None:
+            return int(self.requant.width)
         return int(max(2, int(np.abs(self.requant.multipliers).max()).bit_length() + 1))
 
     def memories(self, graph):
