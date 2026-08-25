@@ -8,6 +8,7 @@ import copy
 
 import numpy as np
 
+from .accuracy import AccuracyReport
 from .p2_graph.datatype import IntType
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
@@ -29,6 +30,10 @@ class CompilationResult:
         self.hardware_graph = hardware_graph
         self.context = context
         self.build = build
+
+    @property
+    def accuracy(self):
+        return self.context.artifacts.get("accuracy")
 
     @property
     def folding(self):
@@ -94,6 +99,9 @@ class Compiler:
             InsertFifos(cap=self.fifo_cap),
             StreamsAreSingleConsumer(),
         ], self.verbose).run(working, context)
+
+        context.artifacts["accuracy"] = AccuracyReport.measure(
+            float_graph, graph, plan, samples)
 
         writer = ProjectWriter(graph, context, self.top_name)
         build = writer.write(out_dir)

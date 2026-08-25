@@ -20,7 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tests" / "shuffled_runner.py"
 
 FAST = ("test_ingest.py", "test_devices.py", "test_numerics.py", "test_pipeline.py",
-        "test_latency.py", "test_determinism.py", "test_quantized_import.py",
+        "test_latency.py", "test_accuracy.py", "test_determinism.py", "test_quantized_import.py",
         "test_characterize.py", "test_synth_script.py")
 
 

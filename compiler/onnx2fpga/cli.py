@@ -92,6 +92,9 @@ class CompileCommand(Command):
         if not args.quiet:
             print()
             print(result.folding.render())
+            if result.accuracy:
+                print()
+                print(result.accuracy.render())
             print()
             print("wrote %s" % args.out)
             print("run   cd %s && make run" % args.out)
