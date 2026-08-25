@@ -56,6 +56,12 @@ class CompileCommand(Command):
                             choices=(8, 16, 32),
                             help="width of the graph's output; wider keeps "
                                  "scores int8 would saturate")
+        parser.add_argument("--act-bits", type=int, default=8, choices=(8, 16),
+                            help="width of the activations between layers; "
+                                 "int16 for models int8 cannot hold")
+        parser.add_argument("--weight-bits", type=int, default=8, choices=(8, 16),
+                            help="width the weights are quantized to; widen it "
+                                 "with --act-bits, not on its own")
         parser.add_argument("--utilisation", type=float, default=0.80,
                             help="fraction of the device the design may occupy")
         parser.add_argument("--mult-bits", type=int, default=18,
@@ -74,7 +80,9 @@ class CompileCommand(Command):
                             utilisation_limit=args.utilisation,
                             mult_bits=args.mult_bits, top_name=args.top,
                             verbose=not args.quiet, unroll=args.unroll,
-                            output_bits=args.output_bits)
+                            output_bits=args.output_bits,
+                            act_bits=args.act_bits,
+                            weight_bits=args.weight_bits)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()

@@ -49,11 +49,19 @@ class CompilationResult:
 class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
-                 unroll=False, output_bits=None):
+                 unroll=False, output_bits=None, act_bits=8, weight_bits=8):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.unroll = unroll
         self.output_dtype = IntType(output_bits, True) if output_bits else None
+        # The width the activations between layers are carried in. Widening it
+        # widens every datapath in the design, which is why it is one number
+        # for the whole graph and not a per tensor choice.
+        self.act_dtype = IntType(act_bits, True)
+        # Weights are quantized separately and, on this model, dominate the
+        # error: widening the activations alone buys about a factor of two,
+        # because what is lost is mostly in the weights.
+        self.weight_dtype = IntType(weight_bits, True)
         self.utilisation_limit = utilisation_limit
         self.mult_bits = mult_bits
         self.top_name = top_name
@@ -103,7 +111,9 @@ class Compiler:
             raise ValueError("a float model needs calibration samples")
         context.note("plan: calibrated on %d samples" % len(samples))
         return Calibrator(graph).plan(samples, mult_bits=self.mult_bits,
-                                     out_dtype=self.output_dtype)
+                                     out_dtype=self.output_dtype,
+                                     act_dtype=self.act_dtype,
+                                     weight_dtype=self.weight_dtype)
 
     @staticmethod
     def _stimulus(graph, samples, plan):
