@@ -60,6 +60,32 @@ checks every output beat against vectors produced from the compiler's own numpy
 model. `--sweep` repeats it under randomised backpressure, which is where
 stream designs actually fail.
 
+### From Python
+
+The same flow is importable, and returns values rather than printing them:
+
+```python
+import onnx2fpga
+
+model = onnx2fpga.load("model.onnx")
+
+fit = onnx2fpga.estimate(model, device="z7020", target_cycles=64)
+print(fit.latency_cycles, fit.fits, fit.tightest)
+
+built = onnx2fpga.compile(model, onnx2fpga.samples_for(model),
+                          out_dir="build/model", device="z7020")
+print(built.accuracy.worst.relative)
+
+check = onnx2fpga.simulate(model, device="z7020", target_cycles=64)
+print(check.ok, check.latency)
+```
+
+`estimate` and `simulate` will calibrate on random inputs if you have no data
+yet, which is enough to answer "does it fit" and "does the RTL match the model"
+and is not an accuracy claim; pass `samples=` when it matters. Everything
+returned is the object the CLI renders, so a notebook can ask it a further
+question instead of parsing text back out.
+
 ### The whole path, from nothing
 
 Everything above starts from an `.onnx` that already exists. This starts from

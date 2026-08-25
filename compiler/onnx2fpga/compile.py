@@ -136,10 +136,11 @@ class Compiler:
         if not samples:
             raise ValueError(
                 "this model states no quantization grids, so it has to be "
-                "calibrated, and no samples were given. Try: pass --calibration "
-                "with an npy file of real inputs, or --samples N to calibrate on "
-                "random ones, which is fine for a shape check and not for "
-                "accuracy.")
+                "calibrated, and no samples were given. Try: --calibration with "
+                "an npy file of real inputs, or --samples N for random ones; "
+                "from Python, pass samples= or onnx2fpga.samples_for(model). "
+                "Random inputs are fine for a shape check and are not an "
+                "accuracy claim.")
         context.note("plan: calibrated on %d samples" % len(samples))
         return Calibrator(graph, per_feature_inputs=self.per_feature_input).plan(
                                      samples, mult_bits=self.mult_bits,

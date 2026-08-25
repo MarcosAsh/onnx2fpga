@@ -14,3 +14,9 @@ the numpy golden model the generated RTL is checked against.
 """
 
 __version__ = "0.1.0"
+
+from .api import (compile, device, devices, estimate, load, samples_for,
+                  simulate)
+
+__all__ = ["compile", "device", "devices", "estimate", "load", "samples_for",
+           "simulate", "__version__"]
