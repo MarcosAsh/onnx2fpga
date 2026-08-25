@@ -49,7 +49,8 @@ class CompilationResult:
 class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
-                 unroll=False, output_bits=None, act_bits=8, weight_bits=8):
+                 unroll=False, output_bits=None, act_bits=8, weight_bits=8,
+                 per_feature_input=False):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.unroll = unroll
@@ -62,6 +63,7 @@ class Compiler:
         # error: widening the activations alone buys about a factor of two,
         # because what is lost is mostly in the weights.
         self.weight_dtype = IntType(weight_bits, True)
+        self.per_feature_input = per_feature_input
         self.utilisation_limit = utilisation_limit
         self.mult_bits = mult_bits
         self.top_name = top_name
@@ -110,7 +112,8 @@ class Compiler:
         if not samples:
             raise ValueError("a float model needs calibration samples")
         context.note("plan: calibrated on %d samples" % len(samples))
-        return Calibrator(graph).plan(samples, mult_bits=self.mult_bits,
+        return Calibrator(graph, per_feature_inputs=self.per_feature_input).plan(
+                                     samples, mult_bits=self.mult_bits,
                                      out_dtype=self.output_dtype,
                                      act_dtype=self.act_dtype,
                                      weight_dtype=self.weight_dtype)
@@ -123,8 +126,8 @@ class Compiler:
         if samples:
             return np.asarray(list(samples[0].values())[0], dtype=np.float64)
         rng = np.random.default_rng(0)
-        peak = plan.scale(name) * plan.act_dtype.max
-        return rng.uniform(-peak, peak, graph.tensor(name).shape)
+        peak = plan.spec(name).scale * plan.act_dtype.max
+        return rng.uniform(-1.0, 1.0, graph.tensor(name).shape) * peak
 
     @staticmethod
     def _adapt(graph, feeds):
@@ -142,8 +145,7 @@ class Compiler:
         in_tensor, out_tensor = graph.tensor(in_name), graph.tensor(out_name)
 
         raw = sample
-        quantized = plan.act_dtype.clamp(
-            np.rint(raw / plan.scale(in_name)) + plan.zero_point(in_name))
+        quantized = plan.spec(in_name).quantize(raw, plan.act_dtype)
         produced = GraphRunner(graph).run({in_name: quantized})[out_name]
 
         StreamCodec(in_tensor).to_image(quantized).write(build.path("golden/input.hex"))

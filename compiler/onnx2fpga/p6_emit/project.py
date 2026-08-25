@@ -95,7 +95,14 @@ class ProjectWriter:
         if plan:
             for side, tensor in (("input", self.graph.inputs[0]),
                                  ("output", self.graph.outputs[0])):
-                manifest[side]["scale"] = plan.scale(tensor)
+                spec = plan.spec(tensor)
+                # A per-feature port carries a scale per column. It is written
+                # as a list so a reader that only understands one number fails
+                # on the type rather than quietly using the wrong scale for
+                # every feature but the first.
+                manifest[side]["scale"] = (
+                    [float(v) for v in spec.scale] if spec.per_channel
+                    else plan.scale(tensor))
                 manifest[side]["zero_point"] = plan.zero_point(tensor)
                 manifest[side]["symmetric"] = plan.spec(tensor).is_symmetric
                 if plan.spec(tensor).rebased:

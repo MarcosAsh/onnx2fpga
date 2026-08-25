@@ -43,7 +43,10 @@ class QuantizationPlan:
                    out_dtype=None):
         plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype)
         for name, peak in peaks.items():
-            plan.annotate(name, QuantSpec(max(peak, TINY) / act_dtype.max, 0))
+            values = np.atleast_1d(np.asarray(peak, dtype=np.float64))
+            scale = np.maximum(values, TINY) / act_dtype.max
+            plan.annotate(name, QuantSpec(scale if scale.size > 1 else scale[0],
+                                          0, -1 if scale.size > 1 else None))
         return plan
 
     @classmethod
@@ -76,7 +79,15 @@ class QuantizationPlan:
         return self.specs.get(target)
 
     def scale(self, name):
-        return float(self.spec(name).scale.flat[0])
+        """The one scale this tensor is on. A per-feature tensor does not have
+        one, and quietly returning the first feature's would be wrong in a way
+        nothing downstream could detect, so it says so instead."""
+        spec = self.spec(name)
+        if spec.per_channel:
+            raise ValueError(
+                "%r is quantized per feature (%d scales); ask the spec, not for "
+                "a single scale" % (name, spec.scale.size))
+        return float(spec.scale.flat[0])
 
     def zero_point(self, name):
         return int(self.spec(name).zero_point.flat[0])

@@ -62,6 +62,10 @@ class CompileCommand(Command):
         parser.add_argument("--weight-bits", type=int, default=8, choices=(8, 16),
                             help="width the weights are quantized to; widen it "
                                  "with --act-bits, not on its own")
+        parser.add_argument("--per-feature-input", action="store_true",
+                            help="fit a scale per input column instead of one "
+                                 "for the whole vector; for feature vectors "
+                                 "whose columns differ in magnitude")
         parser.add_argument("--utilisation", type=float, default=0.80,
                             help="fraction of the device the design may occupy")
         parser.add_argument("--mult-bits", type=int, default=18,
@@ -82,7 +86,8 @@ class CompileCommand(Command):
                             verbose=not args.quiet, unroll=args.unroll,
                             output_bits=args.output_bits,
                             act_bits=args.act_bits,
-                            weight_bits=args.weight_bits)
+                            weight_bits=args.weight_bits,
+                            per_feature_input=args.per_feature_input)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()
