@@ -60,6 +60,41 @@ checks every output beat against vectors produced from the compiler's own numpy
 model. `--sweep` repeats it under randomised backpressure, which is where
 stream designs actually fail.
 
+### The whole path, from nothing
+
+Everything above starts from an `.onnx` that already exists. This starts from
+no model at all, trains one, and ends by saying what quantization cost:
+
+```
+python3 examples/worked_example.py
+```
+
+It makes a small classification problem, fits an 8-16-3 network to it in numpy,
+exports that to ONNX, compiles it, and compares the compiled design's answers
+against the float model's on held-out data:
+
+```
+accuracy on 200 held out samples
+  float model     99.5%
+  compiled design 99.5%
+  same prediction on 100.0% of them
+```
+
+That last line is the one worth reading. The error report above it says the
+worst output moved by about one percent of the model's own range, and the
+predictions did not change at all, which is the usual outcome when the decision
+is an argmax: int8 is far more precision than a ranking needs.
+
+It leaves a buildable design behind, so building and simulating it is one more
+command:
+
+```
+cd build/worked && make run
+```
+
+There is no framework involved. Training is thirty lines of numpy, the same
+dependency the compiler already has.
+
 Installed, the same commands are on PATH:
 
 ```
