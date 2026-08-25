@@ -264,6 +264,15 @@ class InspectCommand(Command):
 
     def configure(self, parser):
         parser.add_argument("model", type=pathlib.Path)
+        parser.add_argument("--device", default=None, choices=Device.names(),
+                            help="estimate fit and latency for this device, "
+                                 "without building anything")
+        parser.add_argument("--target-cycles", type=int, default=None,
+                            help="fold to this frame cost when estimating")
+        parser.add_argument("--unroll", action="store_true",
+                            help="estimate the fully unrolled design")
+        parser.add_argument("--samples", type=int, default=8)
+        parser.add_argument("--seed", type=int, default=0)
 
     def run(self, args):
         model = OnnxModel.load(args.model)
@@ -277,6 +286,13 @@ class InspectCommand(Command):
         print()
         graph = OnnxImporter(model).run()
         print(graph.summary())
+        if args.device:
+            print()
+            estimate = Compiler(
+                device=args.device, target_cycles=args.target_cycles,
+                unroll=args.unroll).estimate(
+                    model, calibration_samples(model, args.samples, args.seed))
+            print(estimate.render())
         return 0
 
 

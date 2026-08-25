@@ -9,6 +9,7 @@ import copy
 import numpy as np
 
 from .accuracy import AccuracyReport
+from .estimate import Estimate
 from .p2_graph.datatype import IntType
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
@@ -75,7 +76,13 @@ class Compiler:
         self.verbose = verbose
         self.fifo_cap = fifo_cap
 
-    def compile(self, model, samples=None, out_dir="build/out"):
+    def _build(self, model, samples):
+        """Everything up to writing files.
+
+        Separated out because answering "will this fit, and how fast" needs all
+        of it and none of the output: a pre-flight that wrote a build directory
+        would not be much of a pre-flight.
+        """
         context = CompilerContext(self.device)
         float_graph = OnnxImporter(model).run()
         samples = [self._adapt(float_graph, feeds) for feeds in (samples or [])]
@@ -99,6 +106,15 @@ class Compiler:
             InsertFifos(cap=self.fifo_cap),
             StreamsAreSingleConsumer(),
         ], self.verbose).run(working, context)
+        return float_graph, graph, plan, samples, context
+
+    def estimate(self, model, samples=None):
+        """What this model would cost, without building it."""
+        float_graph, graph, plan, samples, context = self._build(model, samples)
+        return Estimate(graph, context.artifacts.get("folding"), self.device)
+
+    def compile(self, model, samples=None, out_dir="build/out"):
+        float_graph, graph, plan, samples, context = self._build(model, samples)
 
         context.artifacts["accuracy"] = AccuracyReport.measure(
             float_graph, graph, plan, samples)
