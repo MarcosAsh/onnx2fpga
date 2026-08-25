@@ -116,7 +116,12 @@ class ConvHandler(OpHandler):
     def handle(self, node, importer):
         attrs = node.attributes()
         if int(attrs.get("group", 1)) != 1:
-            raise ImportError_("grouped convolution is not supported yet: %s" % node.name)
+            raise ImportError_(
+                "Conv in node %r uses groups=%d, and only groups=1 is supported. "
+                "Try: split it into %d separate Conv nodes over slices of the "
+                "channels, which is the same arithmetic."
+                % (node.name or "<unnamed>", int(attrs.get("group", 1)),
+                   int(attrs.get("group", 1))))
         weights = importer.constant_array(node.input[1])
         kernel = self.spatial(attrs, "kernel_shape", weights.shape[2:])
         strides = self.spatial(attrs, "strides", (1, 1))
@@ -145,9 +150,18 @@ class GemmHandler(OpHandler):
         weights = importer.constant_array(node.input[1])
         if node.op_type == "Gemm":
             if float(attrs.get("alpha", 1.0)) != 1.0 or float(attrs.get("beta", 1.0)) != 1.0:
-                raise ImportError_("Gemm alpha/beta scaling is not supported: %s" % node.name)
+                raise ImportError_(
+                    "Gemm in node %r scales by alpha=%s beta=%s, which is not "
+                    "supported. Try: multiply the weights by alpha and the bias "
+                    "by beta in the exported model; both are constants."
+                    % (node.name or "<unnamed>", attrs.get("alpha", 1.0),
+                       attrs.get("beta", 1.0)))
             if int(attrs.get("transA", 0)):
-                raise ImportError_("Gemm transA is not supported: %s" % node.name)
+                raise ImportError_(
+                    "Gemm in node %r sets transA, which would transpose the "
+                    "activations at run time. Try: export with transA=0; the "
+                    "input is a row vector per frame here."
+                    % (node.name or "<unnamed>"))
             if int(attrs.get("transB", 0)):
                 weights = weights.T
         weight_name = importer.derive_constant(node.input[1], weights)
@@ -358,8 +372,7 @@ class OnnxImporter:
                 continue
             handler = self._dispatch.get(node.op_type)
             if handler is None:
-                raise ImportError_("unsupported ONNX op %r in node %r"
-                                   % (node.op_type, node.name))
+                raise ImportError_(self._unsupported(node))
             handler.handle(node, self)
         for name in self.model.graph_outputs():
             self.graph.outputs.append(self.rename(name))
@@ -383,6 +396,52 @@ class OnnxImporter:
         self.graph.add_node(node)
         node.infer(self.graph)
 
+    #: What to do about an operator this compiler does not have. Naming the
+    #: rewrite is most of the value: "unsupported" tells someone their model
+    #: does not work, and "fold it into the preceding Gemm" tells them how to
+    #: make it work this afternoon.
+    REWRITES = {
+        "BatchNormalization": "fold it into the preceding Conv or Gemm; it is "
+                              "constant at inference and most exporters can do "
+                              "this for you",
+        "Mul": "if it scales by a constant, fold that constant into the weights "
+               "of the layer before it",
+        "Div": "if it divides by a constant, fold the reciprocal into the "
+               "weights of the layer before it",
+        "Sub": "fold the constant into the bias of the layer before it",
+        "Softmax": "leave it off the model and take the argmax of the scores, "
+                   "or apply it on the host; it does not change the ranking",
+        "Sigmoid": "apply it on the host, or threshold the raw score instead; "
+                   "it is monotonic, so the comparison is unchanged",
+        "Tanh": "apply it on the host; there is no activation unit for it",
+        "AveragePool": "use MaxPool, or fold a fixed average into the next "
+                       "layer's weights",
+        "GlobalAveragePool": "as AveragePool; a fixed average is a constant "
+                             "scale on the next layer",
+        "Transpose": "if it only reorders to match a layout, export the model "
+                     "channel-last and drop it",
+        "Unsqueeze": "use Reshape or Flatten, which are relabelling here and "
+                     "cost no hardware",
+        "Concat": "not supported; a multi-branch graph has to join at an Add",
+        "Split": "not supported; a stream can fork to consumers but not be cut "
+                 "into pieces",
+        "LSTM": "no recurrent unit exists yet (3.5 on the roadmap)",
+        "GRU": "no recurrent unit exists yet (3.5 on the roadmap)",
+        "ConvTranspose": "no deconvolution unit exists; upsample on the host, "
+                         "or express it as a Conv over an already upsampled "
+                         "input",
+    }
+
+    def _unsupported(self, node):
+        where = node.name or "<unnamed>"
+        advice = self.REWRITES.get(node.op_type)
+        supported = ", ".join(sorted(self._dispatch))
+        lines = ["%s in node %r is not supported." % (node.op_type, where)]
+        if advice:
+            lines.append("Try: %s." % advice)
+        lines.append("Supported operators are: %s." % supported)
+        return " ".join(lines)
+
     def rename(self, name):
         return self._renames.get(name, name)
 
@@ -395,7 +454,10 @@ class OnnxImporter:
                 return np.asarray(self.graph.tensor(candidate).data, dtype=np.float64)
         if self.model.has_initializer(resolved):
             return self.model.initializer(resolved).astype(np.float64)
-        raise ImportError_("expected %r to be a constant initializer" % name)
+        raise ImportError_(
+            "%r has to be a constant, but it arrives as a stream. Weights and "
+            "scales are held on chip, so they must be initializers in the "
+            "model rather than values computed at run time." % name)
 
     def add_constant(self, name, array):
         if self.graph.has_tensor(name):
@@ -424,7 +486,10 @@ class OnnxImporter:
     @staticmethod
     def _to_channel_last(shape):
         if shape is None:
-            raise ImportError_("graph input has no static shape")
+            raise ImportError_(
+                "a graph input has no static shape. Try: export with a fixed "
+                "batch size and fixed dimensions; the design is built for one "
+                "shape and cannot be sized at run time.")
         dims = [1 if isinstance(d, str) else int(d) for d in shape]
         if len(dims) == 4:
             return (dims[0], dims[2], dims[3], dims[1])

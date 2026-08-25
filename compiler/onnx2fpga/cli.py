@@ -23,6 +23,7 @@ from .doctor import Doctor
 from .measure import Characterizer, VivadoRunner, calibration_samples, render
 from .p1_ingest import OnnxModel
 from .p2_graph.graph import GraphError
+from .p2_graph.onnx_importer import ImportError_
 from .p2_graph.onnx_importer import OnnxImporter
 from .simulate import SimulationRunner
 from .targets.device import Device
@@ -298,11 +299,12 @@ class CommandLine:
         args = self.build_parser().parse_args(argv)
         try:
             return args.handler.run(args)
-        except GraphError as refused:
-            # A refused graph is an answer, not a crash. The passes raise it
-            # when they can prove the design is not buildable as asked, and the
-            # message already says what to change, so a traceback here would
-            # bury it under frames nobody outside this repo can read.
+        except (GraphError, ImportError_) as refused:
+            # A refused model is an answer, not a crash. The importer and the
+            # passes raise these when they can prove the design is not
+            # buildable as asked, and the message already names the node and
+            # what to change, so a traceback here would bury the one useful
+            # line under frames nobody outside this repo can read.
             print("onnx2fpga: %s" % refused, file=sys.stderr)
             return 1
 

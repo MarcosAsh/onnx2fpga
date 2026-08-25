@@ -118,7 +118,12 @@ class Compiler:
                 graph.annotations, mult_bits=self.mult_bits,
                 out_dtype=self.output_dtype)
         if not samples:
-            raise ValueError("a float model needs calibration samples")
+            raise ValueError(
+                "this model states no quantization grids, so it has to be "
+                "calibrated, and no samples were given. Try: pass --calibration "
+                "with an npy file of real inputs, or --samples N to calibrate on "
+                "random ones, which is fine for a shape check and not for "
+                "accuracy.")
         context.note("plan: calibrated on %d samples" % len(samples))
         return Calibrator(graph, per_feature_inputs=self.per_feature_input).plan(
                                      samples, mult_bits=self.mult_bits,

@@ -34,6 +34,7 @@ test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_devices.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_latency.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_accuracy.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_rejections.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_numerics.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_determinism.py" -v

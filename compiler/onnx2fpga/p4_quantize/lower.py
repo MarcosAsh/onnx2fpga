@@ -295,7 +295,10 @@ class LowerToHardware(Pass):
         for node in list(graph.topological_order()):
             lowering = self._dispatch.get(type(node))
             if lowering is None:
-                raise NotImplementedError("no lowering for %s" % type(node).__name__)
+                raise NotImplementedError(
+                    "%s in node %r reached lowering with no hardware unit to "
+                    "become. It imported, so this is a gap in this compiler "
+                    "rather than in the model." % (type(node).__name__, node.name))
             graph.replace_node(node, lowering.apply(node, ctx))
         graph.infer()
         context.artifacts["plan"] = self.plan
