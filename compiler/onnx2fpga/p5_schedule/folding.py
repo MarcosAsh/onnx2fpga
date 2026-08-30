@@ -18,6 +18,7 @@ class FoldingReport:
         self.rows = []
         self.bottleneck_cycles = 0
         self.total = Resources.zero()
+        self.latency_cycles = None
 
     def record(self, graph):
         self.rows = []
@@ -51,6 +52,9 @@ class FoldingReport:
         lines.append("bottleneck %d cycles -> %.1f frames/s at %.0f MHz"
                      % (self.bottleneck_cycles, self.frames_per_second,
                         self.device.fmax_mhz))
+        if self.latency_cycles is not None:
+            lines.append("latency %d cycles to first output"
+                         % self.latency_cycles)
         return "\n".join(lines)
 
 

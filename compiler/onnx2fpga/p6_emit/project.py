@@ -14,6 +14,7 @@ import pathlib
 import shutil
 
 from ..assets import AssetLocator
+from ..p5_schedule.latency import graph_latency
 from .memories import HexImage
 from .systemverilog import NetlistBuilder
 
@@ -87,6 +88,11 @@ class ProjectWriter:
                       for name, kind, fold, cycles, _ in
                       (folding.rows if folding else [])],
         }
+        manifest["latency_cycles"] = graph_latency(self.graph)
+        if self.context.device.fmax_mhz:
+            manifest["latency_ns"] = round(
+                1000.0 * manifest["latency_cycles"]
+                / self.context.device.fmax_mhz, 1)
         if folding:
             manifest["cycles_per_frame"] = folding.bottleneck_cycles
             manifest["estimated_fps"] = round(folding.frames_per_second, 2)

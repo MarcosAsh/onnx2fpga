@@ -48,6 +48,11 @@ class Device:
         return (self.budget.dsp * self.macs_per_dsp(act_bits, weight_bits)
                 * self.fmax_mhz * 1e6)
 
+    def cycles_for_ns(self, nanoseconds):
+        if not self.fmax_mhz:
+            return None
+        return max(1, int(nanoseconds * self.fmax_mhz / 1000.0))
+
     @classmethod
     def register(cls, device):
         cls._registry[device.name] = device

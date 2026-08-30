@@ -50,6 +50,11 @@ class CompileCommand(Command):
         parser.add_argument("--device", default="vu9p", choices=Device.names())
         parser.add_argument("--target-cycles", type=int, default=None,
                             help="stop folding once every stage is this fast")
+        parser.add_argument("--target-latency-ns", type=float, default=None,
+                            help="refold for first-output latency once the "
+                                 "converters and buffers are in place; the "
+                                 "clock it converts through is assumed, not "
+                                 "measured")
         parser.add_argument("--unroll", action="store_true",
                             help="do not fold at all: every unit at its widest, "
                                  "for the lowest latency the device will hold")
@@ -94,7 +99,8 @@ class CompileCommand(Command):
                             act_bits=args.act_bits,
                             weight_bits=args.weight_bits,
                             per_feature_input=args.per_feature_input,
-                            fixed_shift=args.fixed_shift)
+                            fixed_shift=args.fixed_shift,
+                            target_latency_ns=args.target_latency_ns)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()
@@ -124,6 +130,9 @@ class ModelCommand(Command):
         parser.add_argument("--out", type=pathlib.Path, default=None)
         parser.add_argument("--device", default="vu9p", choices=Device.names())
         parser.add_argument("--target-cycles", type=int, default=None)
+        parser.add_argument("--target-latency-ns", type=float, default=None,
+                            help="refold for first-output latency; the clock "
+                                 "it converts through is assumed, not measured")
         parser.add_argument("--unroll", action="store_true",
                             help="do not fold at all: every unit at its widest")
         parser.add_argument("--samples", type=int, default=32)
@@ -134,6 +143,7 @@ class ModelCommand(Command):
         model = OnnxModel.load(args.model)
         out = args.out or pathlib.Path("build") / default_out
         compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
+                            target_latency_ns=args.target_latency_ns,
                             verbose=not args.quiet, unroll=args.unroll)
         result = compiler.compile(model, calibration_samples(
             model, args.samples, args.seed), out)
@@ -275,6 +285,8 @@ class InspectCommand(Command):
                                  "without building anything")
         parser.add_argument("--target-cycles", type=int, default=None,
                             help="fold to this frame cost when estimating")
+        parser.add_argument("--target-latency-ns", type=float, default=None,
+                            help="estimate the design refolded for latency")
         parser.add_argument("--unroll", action="store_true",
                             help="estimate the fully unrolled design")
         parser.add_argument("--samples", type=int, default=8)
@@ -296,6 +308,7 @@ class InspectCommand(Command):
             print()
             estimate = Compiler(
                 device=args.device, target_cycles=args.target_cycles,
+                target_latency_ns=args.target_latency_ns,
                 unroll=args.unroll).estimate(
                     model, calibration_samples(model, args.samples, args.seed))
             print(estimate.render())

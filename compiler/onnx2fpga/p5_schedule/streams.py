@@ -251,3 +251,25 @@ class InsertFifos(Pass):
                             depth=depth, width=source.stream_width)
         consumer.inputs = [staged if i == name else i for i in consumer.inputs]
         graph.insert_after(producer, buffer)
+
+
+class StripStreamPlumbing(Pass):
+    """Removes every width converter and FIFO, leaving the units and forks."""
+
+    name = "strip-streams"
+
+    def run(self, graph, context):
+        removed = 0
+        for node in graph.topological_order():
+            if not isinstance(node, (WidthConverter, StreamFifo)):
+                continue
+            staged = node.outputs[0]
+            graph.rewire(staged, node.inputs[0])
+            graph.remove_node(node)
+            graph.remove_tensor(staged)
+            removed += 1
+        if removed:
+            context.note("strip-streams: removed %d converters and buffers"
+                         % removed)
+        graph.infer()
+        return graph

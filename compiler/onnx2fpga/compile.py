@@ -11,11 +11,13 @@ import numpy as np
 from .accuracy import AccuracyReport
 from .estimate import Estimate
 from .p2_graph.datatype import IntType
+from .p2_graph.graph import GraphError
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
 from .p4_quantize.plan import QuantizationPlan
 from .p4_quantize.lower import FuseRelu, LowerToHardware
 from .p5_schedule.folding import FoldingAllocator
+from .p5_schedule.refold import LatencyDirectedFolding
 from .p5_schedule.streams import (AlignBeatWidths, InsertDuplicates, InsertFifos,
                                   InsertWidthConverters, StreamsAreSingleConsumer)
 from .p6_emit.project import ProjectWriter
@@ -56,10 +58,20 @@ class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
                  unroll=False, output_bits=None, act_bits=8, weight_bits=8,
-                 per_feature_input=False, fixed_shift=None):
+                 per_feature_input=False, fixed_shift=None,
+                 target_latency_ns=None):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.unroll = unroll
+        if unroll and target_latency_ns is not None:
+            raise GraphError(
+                "--unroll and --target-latency-ns are two answers to the same "
+                "question: unrolled is already the lowest latency this device "
+                "will hold, and a target cannot ask for less. Drop one.")
+        self.target_latency_ns = target_latency_ns
+        self.target_latency_cycles = (
+            None if target_latency_ns is None
+            else self.device.cycles_for_ns(target_latency_ns))
         self.output_dtype = IntType(output_bits, True) if output_bits else None
         # The width the activations between layers are carried in. Widening it
         # widens every datapath in the design, which is why it is one number
@@ -105,8 +117,17 @@ class Compiler:
             AlignBeatWidths(),
             InsertWidthConverters(),
             InsertFifos(cap=self.fifo_cap),
-            StreamsAreSingleConsumer(),
         ], self.verbose).run(working, context)
+
+        if self.target_latency_cycles is not None:
+            graph = PassManager([
+                LatencyDirectedFolding(self.target_latency_cycles,
+                                       self.utilisation_limit,
+                                       fifo_cap=self.fifo_cap),
+            ], self.verbose).run(graph, context)
+
+        graph = PassManager([StreamsAreSingleConsumer()], self.verbose).run(
+            graph, context)
         return float_graph, graph, plan, samples, context
 
     def estimate(self, model, samples=None):

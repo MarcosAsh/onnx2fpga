@@ -37,6 +37,7 @@ class LatencyModel:
     def __init__(self, graph):
         self.graph = graph
         self.starts = {}
+        self.gates = {}
         self._place()
 
     def _place(self):
@@ -46,7 +47,7 @@ class LatencyModel:
             self.starts[node.name] = self._earliest_start(node)
 
     def _earliest_start(self, node):
-        start = 0
+        start, gate = 0, None
         for index, name in enumerate(node.stream_inputs(self.graph)):
             producer = self.graph.producer(name)
             if not isinstance(producer, StreamingNode):
@@ -62,7 +63,10 @@ class LatencyModel:
             # about the flip flop, so the delay is added at every hop.
             base = self.starts[producer.name] + producer.REGISTER_STAGES
             for beat in range(min(len(emitted), len(taken))):
-                start = max(start, base + emitted[beat] - taken[beat])
+                candidate = base + emitted[beat] - taken[beat]
+                if candidate > start:
+                    start, gate = candidate, producer.name
+        self.gates[node.name] = gate
         return start
 
     @property
@@ -89,6 +93,20 @@ class LatencyModel:
         """The units in the order they gate one another, each with the cycle
         its first output appears. What to look at when the total is too big."""
         return [(n.name, self.first_output_of(n)) for n in self.units]
+
+    @property
+    def gating_path(self):
+        """The chain that sets the total, latest last."""
+        units = self.units
+        if not units:
+            return []
+        by_name = {n.name: n for n in units}
+        node, chain, seen = max(units, key=self.first_output_of), [], set()
+        while node is not None and node.name not in seen:
+            seen.add(node.name)
+            chain.append(node)
+            node = by_name.get(self.gates.get(node.name))
+        return list(reversed(chain))
 
 
 def graph_latency(graph):

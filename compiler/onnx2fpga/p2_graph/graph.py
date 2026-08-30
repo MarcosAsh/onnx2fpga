@@ -23,6 +23,11 @@ class Graph:
         self._tensors[tensor.name] = tensor
         return tensor
 
+    def remove_tensor(self, name):
+        if self.producer(name) or self.consumers(name):
+            raise GraphError("tensor %r is still wired to a node" % name)
+        self._tensors.pop(name, None)
+
     def tensor_names(self):
         return list(self._tensors)
 
