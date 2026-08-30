@@ -48,6 +48,11 @@ class Device:
         return (self.budget.dsp * self.macs_per_dsp(act_bits, weight_bits)
                 * self.fmax_mhz * 1e6)
 
+    def cycles_for_ns(self, nanoseconds):
+        if not self.fmax_mhz:
+            return None
+        return max(1, int(nanoseconds * self.fmax_mhz / 1000.0))
+
     @classmethod
     def register(cls, device):
         cls._registry[device.name] = device
@@ -88,6 +93,15 @@ Device.register(Device(
     budget=Resources(lut=230400, ff=460800, dsp=1728, bram36=312, uram=96),
     fmax_mhz=250.0, dsp_generation="DSP48E2", external_bandwidth_gbps=19.2,
     provenance="vendor", notes="ZCU104 class board"))
+
+Device.register(Device(
+    name="zu5ev", part="xck26-sfvc784-2lv-c",
+    budget=Resources(lut=117120, ff=234240, dsp=1248, bram36=144, uram=64),
+    fmax_mhz=250.0, dsp_generation="DSP48E2", external_bandwidth_gbps=19.2,
+    provenance="vendor",
+    notes="Kria K26 SOM. A production module rather than a development board, and "
+          "the cheapest DSP48E2 part inside the free Vivado tier, so the int8 DSP "
+          "packing rule can be checked without a paid licence."))
 
 Device.register(Device(
     name="z7020", part="xc7z020-clg400-1",

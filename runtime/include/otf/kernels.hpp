@@ -47,7 +47,14 @@ public:
           multipliers_(std::move(multipliers)), shift_(shift),
           lower_(lower), upper_(upper), zero_point_(zero_point) {}
 
-    void run(const int8_t* input, int vectors, int8_t* output) const {
+    // The output type is a parameter because a graph's own output need not be
+    // as narrow as the activations between its layers. Nothing consumes it, so
+    // widening it costs a port and buys back the saturation an int8 score
+    // loses. The arithmetic is identical either way: apply() has already
+    // clamped to the requantiser's own bounds by the time it is stored, so the
+    // type here decides how much of that range survives, not what is computed.
+    template <typename Out>
+    void run(const int8_t* input, int vectors, Out* output) const {
         for (int v = 0; v < vectors; ++v) {
             const int8_t* row = input + static_cast<size_t>(v) * mw_;
             for (int channel = 0; channel < mh_; ++channel) {
@@ -59,7 +66,7 @@ public:
                 const Requantizer rescale(multipliers_[channel], shift_, lower_,
                                           upper_, zero_point_);
                 output[static_cast<size_t>(v) * mh_ + channel] =
-                    static_cast<int8_t>(rescale.apply(accumulator));
+                    static_cast<Out>(rescale.apply(accumulator));
             }
         }
     }

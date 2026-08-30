@@ -19,8 +19,8 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tests" / "shuffled_runner.py"
 
-FAST = ("test_ingest.py", "test_numerics.py", "test_pipeline.py",
-        "test_determinism.py", "test_quantized_import.py",
+FAST = ("test_ingest.py", "test_devices.py", "test_numerics.py", "test_pipeline.py",
+        "test_latency.py", "test_refold.py", "test_accuracy.py", "test_rejections.py", "test_estimate.py", "test_worked_example.py", "test_api.py", "test_reweight.py", "test_determinism.py", "test_quantized_import.py",
         "test_characterize.py", "test_synth_script.py")
 
 

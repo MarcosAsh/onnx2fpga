@@ -14,6 +14,7 @@ import pathlib
 import shutil
 
 from ..assets import AssetLocator
+from ..p5_schedule.latency import graph_latency
 from .memories import HexImage
 from .systemverilog import NetlistBuilder
 
@@ -87,6 +88,11 @@ class ProjectWriter:
                       for name, kind, fold, cycles, _ in
                       (folding.rows if folding else [])],
         }
+        manifest["latency_cycles"] = graph_latency(self.graph)
+        if self.context.device.fmax_mhz:
+            manifest["latency_ns"] = round(
+                1000.0 * manifest["latency_cycles"]
+                / self.context.device.fmax_mhz, 1)
         if folding:
             manifest["cycles_per_frame"] = folding.bottleneck_cycles
             manifest["estimated_fps"] = round(folding.frames_per_second, 2)
@@ -95,7 +101,14 @@ class ProjectWriter:
         if plan:
             for side, tensor in (("input", self.graph.inputs[0]),
                                  ("output", self.graph.outputs[0])):
-                manifest[side]["scale"] = plan.scale(tensor)
+                spec = plan.spec(tensor)
+                # A per-feature port carries a scale per column. It is written
+                # as a list so a reader that only understands one number fails
+                # on the type rather than quietly using the wrong scale for
+                # every feature but the first.
+                manifest[side]["scale"] = (
+                    [float(v) for v in spec.scale] if spec.per_channel
+                    else plan.scale(tensor))
                 manifest[side]["zero_point"] = plan.zero_point(tensor)
                 manifest[side]["symmetric"] = plan.spec(tensor).is_symmetric
                 if plan.spec(tensor).rebased:

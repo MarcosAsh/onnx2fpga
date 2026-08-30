@@ -31,6 +31,15 @@ test: test-unit test-cpp test-sim
 
 test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_devices.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_latency.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_refold.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_accuracy.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_rejections.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_estimate.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_worked_example.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_reweight.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_numerics.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_determinism.py" -v
@@ -41,6 +50,7 @@ test-unit:
 
 test-cpp: runtime
 	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_host_driver.py" -v
 
 test-flaky:
 	$(PYTHON) tools/flakecheck.py --repeat 5 --fast
@@ -99,6 +109,10 @@ synth-impl: models
 synth-dry: models
 	$(PYTHON) -m onnx2fpga synth $(MODEL) --device $(DEVICE) --dry-run
 
+# compiler/onnx2fpga/assets is staged build output, and a stale one shadows the
+# checkout it was copied from: the locator prefers it, so the suite would test
+# yesterday's RTL and runtime without saying so. It belongs here with the rest
+# of the artifacts.
 clean:
-	rm -rf build runtime/bin
+	rm -rf build runtime/bin compiler/onnx2fpga/assets
 	find . -name __pycache__ -type d -exec rm -rf {} +

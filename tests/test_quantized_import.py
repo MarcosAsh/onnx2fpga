@@ -12,7 +12,7 @@ import unittest
 import numpy as np
 
 from support import Fixtures, SingleUnitProject, run  # noqa: F401
-from make_models import QdqModelFactory
+from make_models import QdqModelFactory, QOperatorModelFactory
 
 from onnx2fpga.compile import Compiler
 from onnx2fpga.p1_ingest import TensorProto
@@ -158,6 +158,95 @@ class QdqSimulationTest(unittest.TestCase):
                                   "--output-duty", str(duty[1]), "--quiet"], cwd=build)
                     self.assertEqual(result.returncode, 0,
                                      result.stdout + result.stderr)
+
+
+class QOperatorImportTest(unittest.TestCase):
+    """The other form a static quantizer emits.
+
+    QDQ states a tensor's grid beside the tensor; QOperator folds it into the
+    operator's signature. Same information, so the compiler should reach the
+    same place, and these check that it does rather than that QOperator merely
+    parses."""
+
+    ACTIVATIONS = (("uint8", TensorProto.UINT8), ("int8", TensorProto.INT8))
+
+    def _compile(self, activation_dtype, name):
+        factory = QOperatorModelFactory(seed=3, activation_dtype=activation_dtype)
+        model = factory.mlp()
+        result = Compiler(device="vu9p", target_cycles=64).compile(
+            model, out_dir=Fixtures.build_dir(name))
+        return factory, result
+
+    def test_a_qlinearmatmul_model_compiles(self):
+        for label, dtype in self.ACTIVATIONS:
+            with self.subTest(activations=label):
+                _, result = self._compile(dtype, "qop_compile_" + label)
+                self.assertTrue(result.hardware_graph.nodes)
+
+    def test_grids_come_from_the_model_not_calibration(self):
+        """The whole point of reading a quantized model: it already knows."""
+        for label, dtype in self.ACTIVATIONS:
+            with self.subTest(activations=label):
+                _, result = self._compile(dtype, "qop_plan_" + label)
+                self.assertTrue(result.plan.from_model)
+
+    def test_no_calibration_samples_are_required(self):
+        factory = QOperatorModelFactory(seed=3)
+        Compiler(device="vu9p", target_cycles=64).compile(
+            factory.mlp(), out_dir=Fixtures.build_dir("qop_nosamples"))
+
+    def test_integer_pipeline_matches_the_specification(self):
+        """Agreement with what the model means, not with itself."""
+        for label, dtype in self.ACTIVATIONS:
+            with self.subTest(activations=label):
+                factory, result = self._compile(dtype, "qop_semantics_" + label)
+                graph, plan = result.hardware_graph, result.plan
+                source, sink = graph.inputs[0], graph.outputs[0]
+
+                rng = np.random.default_rng(5)
+                values = rng.normal(0, 1, graph.tensor(source).shape)
+                integers = plan.act_dtype.clamp(
+                    np.rint(values / plan.scale(source)) + plan.zero_point(source))
+                produced = GraphRunner(graph).run({source: integers})[sink]
+                actual = (produced - plan.zero_point(sink)) * plan.scale(sink)
+
+                expected = factory.reference(values)
+                step = plan.scale(sink)
+                worst = float(np.max(np.abs(actual - expected)))
+                self.assertLessEqual(
+                    worst, 1.5 * step,
+                    "worst error %.6g is %.2f output steps" % (worst, worst / step))
+
+    def test_a_streamed_weight_is_refused_with_a_reason(self):
+        """QLinearMatMul allows both operands to be streams. This compiler
+        holds weights on chip, so it cannot take the second one as a stream,
+        and should say which operator and which node rather than failing later
+        somewhere that does not mention either."""
+        from onnx2fpga.p1_ingest.onnx_model import ModelBuilder
+        from onnx2fpga.p2_graph.onnx_importer import ImportError_, OnnxImporter
+
+        builder = ModelBuilder("streamed_weight").add_input("x", (1, 4))
+        builder.add_initializer("scale", np.float32(0.02))
+        builder.add_initializer("zp", np.int8(0))
+        builder.add_initializer("w_f", np.zeros((4, 3), dtype=np.float32))
+        # w_i is produced by a node, so it is not an initializer the importer
+        # can read the numbers out of.
+        builder.add_node("QuantizeLinear", ["w_f", "scale", "zp"], ["w_i"],
+                         name="quant_w")
+        builder.add_node("QuantizeLinear", ["x", "scale", "zp"], ["x_i"],
+                         name="quant_x")
+        builder.add_node("QLinearMatMul",
+                         ["x_i", "scale", "zp", "w_i", "scale", "zp",
+                          "scale", "zp"], ["y_i"], name="qmm")
+        builder.add_node("DequantizeLinear", ["y_i", "scale", "zp"], ["y"],
+                         name="dequant")
+        model = builder.add_output("y", (1, 3)).build()
+
+        with self.assertRaises(ImportError_) as caught:
+            OnnxImporter(model).run()
+        message = str(caught.exception)
+        self.assertIn("QLinearMatMul", message)
+        self.assertIn("qmm", message)
 
 
 if __name__ == "__main__":

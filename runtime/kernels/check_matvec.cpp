@@ -27,13 +27,17 @@ public:
         fixture.bias = read<int32_t>(file, fixture.mh);
         fixture.multipliers = read<int32_t>(file, fixture.mh);
         fixture.input = read<int8_t>(file, fixture.vectors * fixture.mw);
-        fixture.expected = read<int8_t>(file, fixture.vectors * fixture.mh);
+        // Read wide. The fixture may describe an output wider than int8, and
+        // a value that fits int16 must not be silently folded into int8 by the
+        // reader that is supposed to be checking it.
+        fixture.expected = read<int64_t>(file, fixture.vectors * fixture.mh);
         return fixture;
     }
 
     int mw = 0, mh = 0, shift = 0, vectors = 0;
     int64_t lower = 0, upper = 0, zero_point = 0;
-    std::vector<int8_t> weights, input, expected;
+    std::vector<int8_t> weights, input;
+    std::vector<int64_t> expected;
     std::vector<int32_t> bias, multipliers;
 
 private:
@@ -62,7 +66,7 @@ int main(int argc, char** argv) {
                                        fixture.bias, fixture.multipliers,
                                        fixture.shift, fixture.lower, fixture.upper,
                                        fixture.zero_point);
-        std::vector<int8_t> produced(fixture.expected.size());
+        std::vector<int64_t> produced(fixture.expected.size());
         kernel.run(fixture.input.data(), fixture.vectors, produced.data());
 
         size_t mismatches = 0;
@@ -70,8 +74,9 @@ int main(int argc, char** argv) {
             if (produced[index] == fixture.expected[index]) continue;
             if (mismatches < 8) {
                 std::cerr << "  element " << index << " expected "
-                          << static_cast<int>(fixture.expected[index]) << " got "
-                          << static_cast<int>(produced[index]) << "\n";
+                          << static_cast<long long>(fixture.expected[index])
+                          << " got " << static_cast<long long>(produced[index])
+                          << "\n";
             }
             ++mismatches;
         }

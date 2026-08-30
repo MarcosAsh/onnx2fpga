@@ -116,7 +116,12 @@ class ConvHandler(OpHandler):
     def handle(self, node, importer):
         attrs = node.attributes()
         if int(attrs.get("group", 1)) != 1:
-            raise ImportError_("grouped convolution is not supported yet: %s" % node.name)
+            raise ImportError_(
+                "Conv in node %r uses groups=%d, and only groups=1 is supported. "
+                "Try: split it into %d separate Conv nodes over slices of the "
+                "channels, which is the same arithmetic."
+                % (node.name or "<unnamed>", int(attrs.get("group", 1)),
+                   int(attrs.get("group", 1))))
         weights = importer.constant_array(node.input[1])
         kernel = self.spatial(attrs, "kernel_shape", weights.shape[2:])
         strides = self.spatial(attrs, "strides", (1, 1))
@@ -145,9 +150,18 @@ class GemmHandler(OpHandler):
         weights = importer.constant_array(node.input[1])
         if node.op_type == "Gemm":
             if float(attrs.get("alpha", 1.0)) != 1.0 or float(attrs.get("beta", 1.0)) != 1.0:
-                raise ImportError_("Gemm alpha/beta scaling is not supported: %s" % node.name)
+                raise ImportError_(
+                    "Gemm in node %r scales by alpha=%s beta=%s, which is not "
+                    "supported. Try: multiply the weights by alpha and the bias "
+                    "by beta in the exported model; both are constants."
+                    % (node.name or "<unnamed>", attrs.get("alpha", 1.0),
+                       attrs.get("beta", 1.0)))
             if int(attrs.get("transA", 0)):
-                raise ImportError_("Gemm transA is not supported: %s" % node.name)
+                raise ImportError_(
+                    "Gemm in node %r sets transA, which would transpose the "
+                    "activations at run time. Try: export with transA=0; the "
+                    "input is a row vector per frame here."
+                    % (node.name or "<unnamed>"))
             if int(attrs.get("transB", 0)):
                 weights = weights.T
         weight_name = importer.derive_constant(node.input[1], weights)
@@ -158,6 +172,129 @@ class GemmHandler(OpHandler):
         importer.emit(GemmOp(node.name or "gemm", inputs,
                              [importer.rename(node.output[0])]))
 
+
+class _FloatNode:
+    """A QOperator node dressed as its float equivalent.
+
+    QLinearConv is a Conv whose operands happen to arrive already quantized,
+    so once the grids are recorded and the weights dequantized there is
+    nothing left for a separate importer to do. Handing the existing handler a
+    node of this shape is what stops the two paths drifting: QDQ and
+    QOperator models reach the same ConvOp by the same code."""
+
+    def __init__(self, op_type, name, inputs, outputs, attributes):
+        self.op_type = op_type
+        self.name = name
+        self.input = list(inputs)
+        self.output = list(outputs)
+        self._attributes = dict(attributes)
+
+    def attributes(self):
+        return self._attributes
+
+
+class QOperatorHandler(OpHandler):
+    """QLinearConv and QLinearMatMul.
+
+    The QDQ form states a tensor's grid beside the tensor; the QOperator form
+    folds it into the operator's own signature. Same information, so it lands
+    the same way: annotate the activation grids, dequantize the stored weights
+    so the float frontend has something to look at, and emit the operator the
+    rest of the compiler already knows. The lowering then re-derives exactly
+    the integers the model shipped, rather than picking its own.
+    """
+
+    op_types = ("QLinearConv", "QLinearMatMul")
+
+    STORED = {TensorProto.INT8: IntType(8, True),
+              TensorProto.UINT8: IntType(8, False)}
+
+    def handle(self, node, importer):
+        if node.op_type == "QLinearConv":
+            self._convolution(node, importer)
+        else:
+            self._matmul(node, importer)
+
+    def _convolution(self, node, importer):
+        # x, x_scale, x_zp, w, w_scale, w_zp, y_scale, y_zp, and maybe B.
+        x, w = node.input[0], node.input[3]
+        importer.annotate(importer.rename(x), self._spec(node, importer, 1, 2))
+        weights = self._dequantized(node, importer, 3, 4, 5, channel_axis=0)
+        inputs = [importer.rename(x), weights]
+        if len(node.input) > 8 and node.input[8]:
+            inputs.append(self._bias(node, importer, 8, 1, 4))
+        importer.annotate(importer.rename(node.output[0]),
+                          self._spec(node, importer, 6, 7))
+        ConvHandler().handle(
+            _FloatNode("Conv", node.name or "qconv", inputs, node.output,
+                       node.attributes()), importer)
+
+    def _matmul(self, node, importer):
+        # a, a_scale, a_zp, b, b_scale, b_zp, y_scale, y_zp.
+        a, b = node.input[0], node.input[3]
+        importer.annotate(importer.rename(a), self._spec(node, importer, 1, 2))
+        weights = self._dequantized(node, importer, 3, 4, 5, channel_axis=1)
+        importer.annotate(importer.rename(node.output[0]),
+                          self._spec(node, importer, 6, 7))
+        GemmHandler().handle(
+            _FloatNode("MatMul", node.name or "qmatmul",
+                       [importer.rename(a), weights], node.output, {}), importer)
+
+    def _spec(self, node, importer, scale_index, zero_index):
+        scale = importer.constant_array(node.input[scale_index])
+        zero_point = np.zeros_like(scale, dtype=np.int64)
+        dtype = UINT8
+        name = node.input[zero_index] if len(node.input) > zero_index else ""
+        if name:
+            zero_point = importer.constant_array(name).astype(np.int64)
+            dtype = self.STORED.get(importer.model.initializer_dtype(name), UINT8)
+        return QuantSpec(scale, zero_point, None, dtype)
+
+    def _dequantized(self, node, importer, weight_index, scale_index,
+                     zero_index, channel_axis):
+        """Weights come back as floats carrying the grid they were stored on,
+        which is what lets the quantizer land on the model's own integers
+        instead of recalibrating to something close but different."""
+        name = node.input[weight_index]
+        if not importer.model.has_initializer(name):
+            raise ImportError_(
+                "%s needs its weights as an initializer, not a stream: %s"
+                % (node.op_type, node.name))
+        stored = importer.model.initializer(name).astype(np.float64)
+        scale = np.asarray(importer.constant_array(node.input[scale_index]),
+                           dtype=np.float64)
+        zero = np.zeros_like(scale, dtype=np.float64)
+        if len(node.input) > zero_index and node.input[zero_index]:
+            zero = np.asarray(importer.constant_array(node.input[zero_index]),
+                              dtype=np.float64)
+        shape = [1] * stored.ndim
+        if scale.ndim:
+            shape[channel_axis] = scale.size
+        real = (stored - zero.reshape(shape)) * scale.reshape(shape)
+
+        spec_dtype = UINT8
+        zp_name = node.input[zero_index] if len(node.input) > zero_index else ""
+        if zp_name:
+            spec_dtype = self.STORED.get(importer.model.initializer_dtype(zp_name),
+                                         UINT8)
+        target = importer.graph.fresh_name(name + "_deq")
+        importer.add_constant(target, real)
+        importer.annotate(target, QuantSpec(scale, np.asarray(zero, dtype=np.int64),
+                                            channel_axis if scale.ndim else None,
+                                            spec_dtype))
+        return target
+
+    def _bias(self, node, importer, bias_index, x_scale_index, w_scale_index):
+        """int32, on the product of the input and weight grids, which is what
+        an integer accumulator lands on before it is rescaled."""
+        raw = importer.model.initializer(node.input[bias_index]).astype(np.float64)
+        x_scale = np.asarray(importer.constant_array(node.input[x_scale_index]),
+                             dtype=np.float64)
+        w_scale = np.asarray(importer.constant_array(node.input[w_scale_index]),
+                             dtype=np.float64)
+        target = importer.graph.fresh_name(node.input[bias_index] + "_deq")
+        importer.add_constant(target, raw * x_scale * w_scale)
+        return target
 
 class ReluHandler(OpHandler):
     op_types = ("Relu",)
@@ -210,7 +347,8 @@ class FlattenHandler(OpHandler):
 
 class OnnxImporter:
     HANDLERS = (ConvHandler(), GemmHandler(), ReluHandler(), MaxPoolHandler(),
-                AddHandler(), FlattenHandler(), QdqHandler(), IdentityHandler())
+                AddHandler(), FlattenHandler(), QdqHandler(), QOperatorHandler(),
+                IdentityHandler())
 
     def __init__(self, model):
         self.model = model
@@ -234,8 +372,7 @@ class OnnxImporter:
                 continue
             handler = self._dispatch.get(node.op_type)
             if handler is None:
-                raise ImportError_("unsupported ONNX op %r in node %r"
-                                   % (node.op_type, node.name))
+                raise ImportError_(self._unsupported(node))
             handler.handle(node, self)
         for name in self.model.graph_outputs():
             self.graph.outputs.append(self.rename(name))
@@ -259,6 +396,52 @@ class OnnxImporter:
         self.graph.add_node(node)
         node.infer(self.graph)
 
+    #: What to do about an operator this compiler does not have. Naming the
+    #: rewrite is most of the value: "unsupported" tells someone their model
+    #: does not work, and "fold it into the preceding Gemm" tells them how to
+    #: make it work this afternoon.
+    REWRITES = {
+        "BatchNormalization": "fold it into the preceding Conv or Gemm; it is "
+                              "constant at inference and most exporters can do "
+                              "this for you",
+        "Mul": "if it scales by a constant, fold that constant into the weights "
+               "of the layer before it",
+        "Div": "if it divides by a constant, fold the reciprocal into the "
+               "weights of the layer before it",
+        "Sub": "fold the constant into the bias of the layer before it",
+        "Softmax": "leave it off the model and take the argmax of the scores, "
+                   "or apply it on the host; it does not change the ranking",
+        "Sigmoid": "apply it on the host, or threshold the raw score instead; "
+                   "it is monotonic, so the comparison is unchanged",
+        "Tanh": "apply it on the host; there is no activation unit for it",
+        "AveragePool": "use MaxPool, or fold a fixed average into the next "
+                       "layer's weights",
+        "GlobalAveragePool": "as AveragePool; a fixed average is a constant "
+                             "scale on the next layer",
+        "Transpose": "if it only reorders to match a layout, export the model "
+                     "channel-last and drop it",
+        "Unsqueeze": "use Reshape or Flatten, which are relabelling here and "
+                     "cost no hardware",
+        "Concat": "not supported; a multi-branch graph has to join at an Add",
+        "Split": "not supported; a stream can fork to consumers but not be cut "
+                 "into pieces",
+        "LSTM": "no recurrent unit exists yet (3.5 on the roadmap)",
+        "GRU": "no recurrent unit exists yet (3.5 on the roadmap)",
+        "ConvTranspose": "no deconvolution unit exists; upsample on the host, "
+                         "or express it as a Conv over an already upsampled "
+                         "input",
+    }
+
+    def _unsupported(self, node):
+        where = node.name or "<unnamed>"
+        advice = self.REWRITES.get(node.op_type)
+        supported = ", ".join(sorted(self._dispatch))
+        lines = ["%s in node %r is not supported." % (node.op_type, where)]
+        if advice:
+            lines.append("Try: %s." % advice)
+        lines.append("Supported operators are: %s." % supported)
+        return " ".join(lines)
+
     def rename(self, name):
         return self._renames.get(name, name)
 
@@ -271,7 +454,10 @@ class OnnxImporter:
                 return np.asarray(self.graph.tensor(candidate).data, dtype=np.float64)
         if self.model.has_initializer(resolved):
             return self.model.initializer(resolved).astype(np.float64)
-        raise ImportError_("expected %r to be a constant initializer" % name)
+        raise ImportError_(
+            "%r has to be a constant, but it arrives as a stream. Weights and "
+            "scales are held on chip, so they must be initializers in the "
+            "model rather than values computed at run time." % name)
 
     def add_constant(self, name, array):
         if self.graph.has_tensor(name):
@@ -300,7 +486,10 @@ class OnnxImporter:
     @staticmethod
     def _to_channel_last(shape):
         if shape is None:
-            raise ImportError_("graph input has no static shape")
+            raise ImportError_(
+                "a graph input has no static shape. Try: export with a fixed "
+                "batch size and fixed dimensions; the design is built for one "
+                "shape and cannot be sized at run time.")
         dims = [1 if isinstance(d, str) else int(d) for d in shape]
         if len(dims) == 4:
             return (dims[0], dims[2], dims[3], dims[1])

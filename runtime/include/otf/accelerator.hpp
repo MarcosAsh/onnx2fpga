@@ -22,26 +22,35 @@ class QuantizedIo {
 public:
     explicit QuantizedIo(const Manifest& manifest) : manifest_(manifest) {}
 
+    // The index is the feature position, which for a port on one scale makes
+    // no difference and for a per-feature port is the whole point. Frames are
+    // laid out one after another, so the column is the position within a
+    // frame rather than within the vector handed in.
     std::vector<int8_t> quantize_input(const std::vector<float>& values) const {
-        const double scale = manifest_.input().scale;
-        const double zero = manifest_.input().zero_point;
+        const PortSpec& port = manifest_.input();
+        const double zero = port.zero_point;
+        const size_t stride = port.elements() ? port.elements() : 1;
         std::vector<int8_t> out;
         out.reserve(values.size());
-        for (float value : values) {
+        for (size_t index = 0; index < values.size(); ++index) {
+            const double scale = port.scale_at(index % stride);
             const double raw =
-                std::nearbyint(static_cast<double>(value) / scale) + zero;
+                std::nearbyint(static_cast<double>(values[index]) / scale) + zero;
             out.push_back(static_cast<int8_t>(std::max(-128.0, std::min(127.0, raw))));
         }
         return out;
     }
 
     std::vector<float> dequantize_output(const std::vector<int8_t>& values) const {
-        const double scale = manifest_.output().scale;
-        const int zero = manifest_.output().zero_point;
+        const PortSpec& port = manifest_.output();
+        const int zero = port.zero_point;
+        const size_t stride = port.elements() ? port.elements() : 1;
         std::vector<float> out;
         out.reserve(values.size());
-        for (int8_t value : values) {
-            out.push_back(static_cast<float>((static_cast<int>(value) - zero) * scale));
+        for (size_t index = 0; index < values.size(); ++index) {
+            const double scale = port.scale_at(index % stride);
+            out.push_back(static_cast<float>(
+                (static_cast<int>(values[index]) - zero) * scale));
         }
         return out;
     }

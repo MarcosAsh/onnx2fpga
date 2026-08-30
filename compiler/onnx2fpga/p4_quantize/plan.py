@@ -20,24 +20,43 @@ TINY = 1e-12
 
 
 class QuantizationPlan:
-    def __init__(self, act_dtype=INT8, weight_dtype=INT8, mult_bits=18):
+    def __init__(self, act_dtype=INT8, weight_dtype=INT8, mult_bits=18,
+                 out_dtype=None, fixed_shift=None):
         self.act_dtype = act_dtype
         self.weight_dtype = weight_dtype
         self.mult_bits = mult_bits
+        # What the graph's own outputs are carried in. Activations between
+        # layers stay narrow because the next layer has to consume them, but
+        # nothing consumes the last one, so it is free to be wider. None means
+        # the same as the activations, which is what every model got before
+        # this was a choice.
+        self._out_dtype = out_dtype
+        # Pinning the requantiser shift makes the generated RTL independent of
+        # the weights, which is what lets a retrained model of the same shape
+        # reuse a netlist instead of rebuilding one.
+        self.fixed_shift = fixed_shift
         self.specs = {}
         self.from_model = False
 
+    @property
+    def out_dtype(self):
+        return self._out_dtype or self.act_dtype
+
     @classmethod
-    def from_peaks(cls, peaks, act_dtype=INT8, weight_dtype=INT8, mult_bits=18):
-        plan = cls(act_dtype, weight_dtype, mult_bits)
+    def from_peaks(cls, peaks, act_dtype=INT8, weight_dtype=INT8, mult_bits=18,
+                   out_dtype=None, fixed_shift=None):
+        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype, fixed_shift)
         for name, peak in peaks.items():
-            plan.annotate(name, QuantSpec(max(peak, TINY) / act_dtype.max, 0))
+            values = np.atleast_1d(np.asarray(peak, dtype=np.float64))
+            scale = np.maximum(values, TINY) / act_dtype.max
+            plan.annotate(name, QuantSpec(scale if scale.size > 1 else scale[0],
+                                          0, -1 if scale.size > 1 else None))
         return plan
 
     @classmethod
     def from_annotations(cls, annotations, act_dtype=INT8, weight_dtype=INT8,
-                         mult_bits=18):
-        plan = cls(act_dtype, weight_dtype, mult_bits)
+                         mult_bits=18, out_dtype=None, fixed_shift=None):
+        plan = cls(act_dtype, weight_dtype, mult_bits, out_dtype, fixed_shift)
         for name, spec in annotations.items():
             plan.annotate(name, spec)
         plan.from_model = True
@@ -64,7 +83,15 @@ class QuantizationPlan:
         return self.specs.get(target)
 
     def scale(self, name):
-        return float(self.spec(name).scale.flat[0])
+        """The one scale this tensor is on. A per-feature tensor does not have
+        one, and quietly returning the first feature's would be wrong in a way
+        nothing downstream could detect, so it says so instead."""
+        spec = self.spec(name)
+        if spec.per_channel:
+            raise ValueError(
+                "%r is quantized per feature (%d scales); ask the spec, not for "
+                "a single scale" % (name, spec.scale.size))
+        return float(spec.scale.flat[0])
 
     def zero_point(self, name):
         return int(self.spec(name).zero_point.flat[0])

@@ -78,11 +78,52 @@ class LoweringContext:
         self.graph.add_tensor(Tensor(name, shape, dtype))
         return name
 
+    def fold_input_scale(self, name, weights, weight_spec=None):
+        """Per-feature input scaling, folded into the weights it multiplies.
+
+        y_c = sum_k v_k w_kc, and v_k is x_k s_k, so y_c = sum_k x_k (s_k w_kc).
+        Scaling each row of the weight matrix by its own feature's scale leaves
+        an accumulator on a single grid again, which is what lets one
+        multiplier per output channel still rescale it. The whole thing is a
+        compile time transform on a constant, so per-feature input scaling
+        costs no hardware at all.
+
+        Returns the effective weights and the input scale that remains. For a
+        tensor on one scale that is the weights untouched and the scale itself.
+        """
+        spec = self.plan.spec(name)
+        if not spec.per_channel:
+            return weights, self.scale(name)
+        if weight_spec is not None:
+            # The model stated the grid its weights live on. Scaling them here
+            # would leave that statement describing numbers that no longer
+            # exist, so the two cannot both apply.
+            raise NotImplementedError(
+                "%r is quantized per feature, but its consumer's weights carry "
+                "a grid from the model; per-feature input scaling is for "
+                "calibrated models" % name)
+        scales = np.asarray(spec.scale, dtype=np.float64)
+        if scales.size != weights.shape[0]:
+            raise NotImplementedError(
+                "%r has %d feature scales but its consumer takes %d inputs"
+                % (name, scales.size, weights.shape[0]))
+        shape = [1] * weights.ndim
+        shape[0] = scales.size
+        return weights * scales.reshape(shape), 1.0
+
+    def out_dtype(self, name):
+        """What a tensor is carried in. Everything the pipeline consumes stays
+        at the activation width; a tensor nobody consumes is a graph output and
+        may be wider, because the only cost of widening it is the port."""
+        return (self.plan.out_dtype if name in self.graph.outputs
+                else self.plan.act_dtype)
+
     def matvec_requant(self, out_name, in_scale, weight_scales, relu):
         reals = in_scale * weight_scales / self.scale(out_name)
         return Requantizer.from_real_multipliers(
-            reals, self.plan.act_dtype, self.plan.mult_bits, relu=relu,
-            zero_point=self.zero_point(out_name))
+            reals, self.out_dtype(out_name), self.plan.mult_bits, relu=relu,
+            zero_point=self.zero_point(out_name),
+            shift=self.plan.fixed_shift)
 
     def quantize_bias(self, node, index, unit_scale, channels, weights, in_zero):
         """The model's own bias plus the correction an asymmetric input needs.
@@ -105,9 +146,10 @@ class GemmLowering(Lowering):
     def apply(self, node, ctx):
         source = ctx.graph.tensor(node.inputs[0])
         weights = np.asarray(ctx.graph.tensor(node.inputs[1]).data, dtype=np.float64)
-        scales = ctx.plan.weight_scales(weights, ctx.weight_spec(node.inputs[1]))
+        weight_spec = ctx.weight_spec(node.inputs[1])
+        weights, in_scale = ctx.fold_input_scale(node.inputs[0], weights, weight_spec)
+        scales = ctx.plan.weight_scales(weights, weight_spec)
         quantized = ctx.plan.quantize_weights(weights, scales)
-        in_scale = ctx.scale(node.inputs[0])
         in_zero = ctx.zero_point(node.inputs[0])
         bias = ctx.quantize_bias(node, 2, in_scale * scales, weights.shape[1],
                                  quantized, in_zero)
@@ -115,7 +157,8 @@ class GemmLowering(Lowering):
                                      bool(node.attrs.get("relu")))
         vectors = source.numel // weights.shape[0]
         return [MatVecUnit(node.name, [node.inputs[0]], node.outputs, quantized,
-                           bias, requant, ctx.plan.act_dtype, ctx.plan.act_dtype,
+                           bias, requant, ctx.plan.act_dtype,
+                           ctx.out_dtype(node.outputs[0]),
                            ctx.plan.weight_dtype, vectors=vectors)]
 
 
@@ -144,7 +187,8 @@ class ConvLowering(Lowering):
             pad_value=in_zero)
         out_h, out_w = window.ofm_dim
         matvec = MatVecUnit(node.name, window.outputs, node.outputs, quantized,
-                            bias, requant, ctx.plan.act_dtype, ctx.plan.act_dtype,
+                            bias, requant, ctx.plan.act_dtype,
+                            ctx.out_dtype(node.outputs[0]),
                             ctx.plan.weight_dtype, vectors=out_h * out_w)
         return [window, matvec]
 
@@ -252,7 +296,10 @@ class LowerToHardware(Pass):
         for node in list(graph.topological_order()):
             lowering = self._dispatch.get(type(node))
             if lowering is None:
-                raise NotImplementedError("no lowering for %s" % type(node).__name__)
+                raise NotImplementedError(
+                    "%s in node %r reached lowering with no hardware unit to "
+                    "become. It imported, so this is a gap in this compiler "
+                    "rather than in the model." % (type(node).__name__, node.name))
             graph.replace_node(node, lowering.apply(node, ctx))
         graph.infer()
         context.artifacts["plan"] = self.plan

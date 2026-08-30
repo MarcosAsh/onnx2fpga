@@ -22,6 +22,8 @@ from .compile import Compiler
 from .doctor import Doctor
 from .measure import Characterizer, VivadoRunner, calibration_samples, render
 from .p1_ingest import OnnxModel
+from .p2_graph.graph import GraphError
+from .p2_graph.onnx_importer import ImportError_
 from .p2_graph.onnx_importer import OnnxImporter
 from .simulate import SimulationRunner
 from .targets.device import Device
@@ -48,6 +50,33 @@ class CompileCommand(Command):
         parser.add_argument("--device", default="vu9p", choices=Device.names())
         parser.add_argument("--target-cycles", type=int, default=None,
                             help="stop folding once every stage is this fast")
+        parser.add_argument("--target-latency-ns", type=float, default=None,
+                            help="refold for first-output latency once the "
+                                 "converters and buffers are in place; the "
+                                 "clock it converts through is assumed, not "
+                                 "measured")
+        parser.add_argument("--unroll", action="store_true",
+                            help="do not fold at all: every unit at its widest, "
+                                 "for the lowest latency the device will hold")
+        parser.add_argument("--output-bits", type=int, default=None,
+                            choices=(8, 16, 32),
+                            help="width of the graph's output; wider keeps "
+                                 "scores int8 would saturate")
+        parser.add_argument("--act-bits", type=int, default=8, choices=(8, 16),
+                            help="width of the activations between layers; "
+                                 "int16 for models int8 cannot hold")
+        parser.add_argument("--weight-bits", type=int, default=8, choices=(8, 16),
+                            help="width the weights are quantized to; widen it "
+                                 "with --act-bits, not on its own")
+        parser.add_argument("--fixed-shift", type=int, default=None,
+                            help="pin the requantiser shift so a retrained "
+                                 "model of the same shape reuses this netlist; "
+                                 "pin it at or below the value a free build "
+                                 "chooses, never above")
+        parser.add_argument("--per-feature-input", action="store_true",
+                            help="fit a scale per input column instead of one "
+                                 "for the whole vector; for feature vectors "
+                                 "whose columns differ in magnitude")
         parser.add_argument("--utilisation", type=float, default=0.80,
                             help="fraction of the device the design may occupy")
         parser.add_argument("--mult-bits", type=int, default=18,
@@ -65,11 +94,20 @@ class CompileCommand(Command):
         compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
                             utilisation_limit=args.utilisation,
                             mult_bits=args.mult_bits, top_name=args.top,
-                            verbose=not args.quiet)
+                            verbose=not args.quiet, unroll=args.unroll,
+                            output_bits=args.output_bits,
+                            act_bits=args.act_bits,
+                            weight_bits=args.weight_bits,
+                            per_feature_input=args.per_feature_input,
+                            fixed_shift=args.fixed_shift,
+                            target_latency_ns=args.target_latency_ns)
         result = compiler.compile(model, samples, args.out)
         if not args.quiet:
             print()
             print(result.folding.render())
+            if result.accuracy:
+                print()
+                print(result.accuracy.render())
             print()
             print("wrote %s" % args.out)
             print("run   cd %s && make run" % args.out)
@@ -92,6 +130,11 @@ class ModelCommand(Command):
         parser.add_argument("--out", type=pathlib.Path, default=None)
         parser.add_argument("--device", default="vu9p", choices=Device.names())
         parser.add_argument("--target-cycles", type=int, default=None)
+        parser.add_argument("--target-latency-ns", type=float, default=None,
+                            help="refold for first-output latency; the clock "
+                                 "it converts through is assumed, not measured")
+        parser.add_argument("--unroll", action="store_true",
+                            help="do not fold at all: every unit at its widest")
         parser.add_argument("--samples", type=int, default=32)
         parser.add_argument("--seed", type=int, default=0)
         parser.add_argument("--quiet", action="store_true")
@@ -100,7 +143,8 @@ class ModelCommand(Command):
         model = OnnxModel.load(args.model)
         out = args.out or pathlib.Path("build") / default_out
         compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
-                            verbose=not args.quiet)
+                            target_latency_ns=args.target_latency_ns,
+                            verbose=not args.quiet, unroll=args.unroll)
         result = compiler.compile(model, calibration_samples(
             model, args.samples, args.seed), out)
         return result, out
@@ -131,7 +175,7 @@ class SimulateCommand(ModelCommand):
             return 1
 
         first = runner.once()
-        print(first.output.strip())
+        print(first.annotated_output().strip())
         if not first.ok:
             return 1
         if not args.sweep:
@@ -143,6 +187,10 @@ class SimulateCommand(ModelCommand):
             print(entry.render())
         failed = [entry for entry in results if not entry.ok]
         print("\n%d of %d settings passed" % (len(results) - len(failed), len(results)))
+        summary = runner.summarise(results)
+        if summary:
+            print()
+            print(summary.render())
         return 1 if failed else 0
 
 
@@ -232,6 +280,17 @@ class InspectCommand(Command):
 
     def configure(self, parser):
         parser.add_argument("model", type=pathlib.Path)
+        parser.add_argument("--device", default=None, choices=Device.names(),
+                            help="estimate fit and latency for this device, "
+                                 "without building anything")
+        parser.add_argument("--target-cycles", type=int, default=None,
+                            help="fold to this frame cost when estimating")
+        parser.add_argument("--target-latency-ns", type=float, default=None,
+                            help="estimate the design refolded for latency")
+        parser.add_argument("--unroll", action="store_true",
+                            help="estimate the fully unrolled design")
+        parser.add_argument("--samples", type=int, default=8)
+        parser.add_argument("--seed", type=int, default=0)
 
     def run(self, args):
         model = OnnxModel.load(args.model)
@@ -245,6 +304,14 @@ class InspectCommand(Command):
         print()
         graph = OnnxImporter(model).run()
         print(graph.summary())
+        if args.device:
+            print()
+            estimate = Compiler(
+                device=args.device, target_cycles=args.target_cycles,
+                target_latency_ns=args.target_latency_ns,
+                unroll=args.unroll).estimate(
+                    model, calibration_samples(model, args.samples, args.seed))
+            print(estimate.render())
         return 0
 
 
@@ -265,7 +332,16 @@ class CommandLine:
 
     def main(self, argv=None):
         args = self.build_parser().parse_args(argv)
-        return args.handler.run(args)
+        try:
+            return args.handler.run(args)
+        except (GraphError, ImportError_) as refused:
+            # A refused model is an answer, not a crash. The importer and the
+            # passes raise these when they can prove the design is not
+            # buildable as asked, and the message already names the node and
+            # what to change, so a traceback here would bury the one useful
+            # line under frames nobody outside this repo can read.
+            print("onnx2fpga: %s" % refused, file=sys.stderr)
+            return 1
 
 
 SYNTH_FIELDS = ("lut", "ff", "dsp", "bram36", "uram")

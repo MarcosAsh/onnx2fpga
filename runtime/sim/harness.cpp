@@ -203,11 +203,16 @@ private:
         if (!options_.quiet) {
             std::cout << "input beats      " << sent << " / " << stimulus.size() << "\n"
                       << "output beats     " << collected.size() << " / "
-                      << wanted_beats << "\n"
-                      << "cycles           " << cycles_ << "\n"
-                      << "latency          " << first_output_cycle_
-                      << " cycles to first output\n"
-                      << "backpressure     input " << options_.input_duty
+                      << wanted_beats << "\n";
+        }
+        // The two numbers worth having survive --quiet. A backpressure sweep
+        // runs every setting quiet and still has to be able to read the cost
+        // back out of each one.
+        std::cout << "cycles           " << cycles_ << "\n"
+                  << "latency          " << first_output_cycle_
+                  << " cycles to first output\n";
+        if (!options_.quiet) {
+            std::cout << "backpressure     input " << options_.input_duty
                       << "%, output " << options_.output_duty << "%\n";
         }
         if (timed_out) {

@@ -8,11 +8,16 @@ import copy
 
 import numpy as np
 
+from .accuracy import AccuracyReport
+from .estimate import Estimate
+from .p2_graph.datatype import IntType
+from .p2_graph.graph import GraphError
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
 from .p4_quantize.plan import QuantizationPlan
 from .p4_quantize.lower import FuseRelu, LowerToHardware
 from .p5_schedule.folding import FoldingAllocator
+from .p5_schedule.refold import LatencyDirectedFolding
 from .p5_schedule.streams import (AlignBeatWidths, InsertDuplicates, InsertFifos,
                                   InsertWidthConverters, StreamsAreSingleConsumer)
 from .p6_emit.project import ProjectWriter
@@ -28,6 +33,10 @@ class CompilationResult:
         self.hardware_graph = hardware_graph
         self.context = context
         self.build = build
+
+    @property
+    def accuracy(self):
+        return self.context.artifacts.get("accuracy")
 
     @property
     def folding(self):
@@ -47,16 +56,46 @@ class CompilationResult:
 
 class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
-                 mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None):
+                 mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
+                 unroll=False, output_bits=None, act_bits=8, weight_bits=8,
+                 per_feature_input=False, fixed_shift=None,
+                 target_latency_ns=None):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
+        self.unroll = unroll
+        if unroll and target_latency_ns is not None:
+            raise GraphError(
+                "--unroll and --target-latency-ns are two answers to the same "
+                "question: unrolled is already the lowest latency this device "
+                "will hold, and a target cannot ask for less. Drop one.")
+        self.target_latency_ns = target_latency_ns
+        self.target_latency_cycles = (
+            None if target_latency_ns is None
+            else self.device.cycles_for_ns(target_latency_ns))
+        self.output_dtype = IntType(output_bits, True) if output_bits else None
+        # The width the activations between layers are carried in. Widening it
+        # widens every datapath in the design, which is why it is one number
+        # for the whole graph and not a per tensor choice.
+        self.act_dtype = IntType(act_bits, True)
+        # Weights are quantized separately and, on this model, dominate the
+        # error: widening the activations alone buys about a factor of two,
+        # because what is lost is mostly in the weights.
+        self.weight_dtype = IntType(weight_bits, True)
+        self.per_feature_input = per_feature_input
+        self.fixed_shift = fixed_shift
         self.utilisation_limit = utilisation_limit
         self.mult_bits = mult_bits
         self.top_name = top_name
         self.verbose = verbose
         self.fifo_cap = fifo_cap
 
-    def compile(self, model, samples=None, out_dir="build/out"):
+    def _build(self, model, samples):
+        """Everything up to writing files.
+
+        Separated out because answering "will this fit, and how fast" needs all
+        of it and none of the output: a pre-flight that wrote a build directory
+        would not be much of a pre-flight.
+        """
         context = CompilerContext(self.device)
         float_graph = OnnxImporter(model).run()
         samples = [self._adapt(float_graph, feeds) for feeds in (samples or [])]
@@ -73,12 +112,34 @@ class Compiler:
         graph = PassManager([
             LowerToHardware(plan),
             InsertDuplicates(),
-            FoldingAllocator(self.target_cycles, self.utilisation_limit),
+            FoldingAllocator(self.target_cycles, self.utilisation_limit,
+                             unroll=self.unroll),
             AlignBeatWidths(),
             InsertWidthConverters(),
             InsertFifos(cap=self.fifo_cap),
-            StreamsAreSingleConsumer(),
         ], self.verbose).run(working, context)
+
+        if self.target_latency_cycles is not None:
+            graph = PassManager([
+                LatencyDirectedFolding(self.target_latency_cycles,
+                                       self.utilisation_limit,
+                                       fifo_cap=self.fifo_cap),
+            ], self.verbose).run(graph, context)
+
+        graph = PassManager([StreamsAreSingleConsumer()], self.verbose).run(
+            graph, context)
+        return float_graph, graph, plan, samples, context
+
+    def estimate(self, model, samples=None):
+        """What this model would cost, without building it."""
+        float_graph, graph, plan, samples, context = self._build(model, samples)
+        return Estimate(graph, context.artifacts.get("folding"), self.device)
+
+    def compile(self, model, samples=None, out_dir="build/out"):
+        float_graph, graph, plan, samples, context = self._build(model, samples)
+
+        context.artifacts["accuracy"] = AccuracyReport.measure(
+            float_graph, graph, plan, samples)
 
         writer = ProjectWriter(graph, context, self.top_name)
         build = writer.write(out_dir)
@@ -92,11 +153,23 @@ class Compiler:
             context.note("plan: read %d grids from the model's quantize nodes"
                          % len(graph.annotations))
             return QuantizationPlan.from_annotations(
-                graph.annotations, mult_bits=self.mult_bits)
+                graph.annotations, mult_bits=self.mult_bits,
+                out_dtype=self.output_dtype, fixed_shift=self.fixed_shift)
         if not samples:
-            raise ValueError("a float model needs calibration samples")
+            raise ValueError(
+                "this model states no quantization grids, so it has to be "
+                "calibrated, and no samples were given. Try: --calibration with "
+                "an npy file of real inputs, or --samples N for random ones; "
+                "from Python, pass samples= or onnx2fpga.samples_for(model). "
+                "Random inputs are fine for a shape check and are not an "
+                "accuracy claim.")
         context.note("plan: calibrated on %d samples" % len(samples))
-        return Calibrator(graph).plan(samples, mult_bits=self.mult_bits)
+        return Calibrator(graph, per_feature_inputs=self.per_feature_input).plan(
+                                     samples, mult_bits=self.mult_bits,
+                                     out_dtype=self.output_dtype,
+                                     act_dtype=self.act_dtype,
+                                     weight_dtype=self.weight_dtype,
+                                     fixed_shift=self.fixed_shift)
 
     @staticmethod
     def _stimulus(graph, samples, plan):
@@ -106,8 +179,8 @@ class Compiler:
         if samples:
             return np.asarray(list(samples[0].values())[0], dtype=np.float64)
         rng = np.random.default_rng(0)
-        peak = plan.scale(name) * plan.act_dtype.max
-        return rng.uniform(-peak, peak, graph.tensor(name).shape)
+        peak = plan.spec(name).scale * plan.act_dtype.max
+        return rng.uniform(-1.0, 1.0, graph.tensor(name).shape) * peak
 
     @staticmethod
     def _adapt(graph, feeds):
@@ -125,8 +198,7 @@ class Compiler:
         in_tensor, out_tensor = graph.tensor(in_name), graph.tensor(out_name)
 
         raw = sample
-        quantized = plan.act_dtype.clamp(
-            np.rint(raw / plan.scale(in_name)) + plan.zero_point(in_name))
+        quantized = plan.spec(in_name).quantize(raw, plan.act_dtype)
         produced = GraphRunner(graph).run({in_name: quantized})[out_name]
 
         StreamCodec(in_tensor).to_image(quantized).write(build.path("golden/input.hex"))
