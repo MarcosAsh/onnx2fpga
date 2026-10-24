@@ -8,6 +8,7 @@ from ..targets.resources import Resources, memory_cost
 from ..p2_graph.datatype import IntType
 from ..p2_graph.node import MemorySpec, Node
 from .onnx_ops import Im2Col
+from .trees import EQ, LEAF
 
 
 def divisors(value, limit=None):
@@ -346,6 +347,105 @@ class DenseUnit(MatVecUnit):
             "OUT_MIN": self.requant.lower_clamp, "OUT_MAX": self.requant.upper_clamp,
             "OUT_ZP": self.requant.zero_point,
             "CONSTANT": int(self.arithmetic == "constant"),
+        }
+
+
+class TreeEnsembleUnit(StreamingNode):
+    """Integer splits (x <= t or x == t) and leaf codes; outputs the leaf sum plus bias, or with decision its sign inverted."""
+
+    module = "otf_trees"
+    hardcaml_only = True
+    ARITY = 4
+
+    def __init__(self, name, inputs, outputs, ensemble, bias, decision, features,
+                 feature_dtype, leaf_dtype):
+        self.ensemble = ensemble
+        self.bias = int(bias)
+        self.decision = bool(decision)
+        self.features = int(features)
+        self.feature_dtype = feature_dtype
+        self.leaf_dtype = leaf_dtype
+        StreamingNode.__init__(self, name, inputs, outputs)
+
+    @property
+    def adder_stages(self):
+        """Operands left after each register stage of the adder tree, the leaves and the bias going in."""
+        counts, operands = [], self.ensemble.trees + 1
+        while operands > 1:
+            operands = -(-operands // self.ARITY)
+            counts.append(operands)
+        return counts
+
+    @property
+    def latency(self):
+        """One cycle of comparisons, one of leaf select, then one per adder stage."""
+        return 2 + len(self.adder_stages)
+
+    @property
+    def cycles(self):
+        return 1
+
+    @property
+    def comparators(self):
+        split = self.ensemble.mode != LEAF
+        return len(set(zip(self.ensemble.feature[split], self.ensemble.threshold[split],
+                           self.ensemble.mode[split])))
+
+    @property
+    def sum_dtype(self):
+        ranges = [(self.ensemble.value[leaves].min(), self.ensemble.value[leaves].max())
+                  for leaves in self.ensemble.tree_leaves()]
+        low = sum(int(r[0]) for r in ranges) + self.bias
+        high = sum(int(r[1]) for r in ranges) + self.bias
+        return IntType(max(self.leaf_dtype.bits, IntType.smallest_for(low, high).bits), True)
+
+    @property
+    def out_dtype(self):
+        return IntType(1, False) if self.decision else self.sum_dtype
+
+    def infer(self, graph):
+        out = graph.ensure_tensor(self.outputs[0])
+        out.shape = (graph.tensor(self.inputs[0]).shape[0], 1)
+        out.dtype = self.out_dtype
+        out.elems_per_beat = 1
+
+    def execute(self, graph, values):
+        x = np.asarray(values[self.inputs[0]], dtype=np.int64)
+        total = self.ensemble.leaf_values(x).sum(axis=1) + self.bias
+        return [(total >= 0 if self.decision else total).astype(np.int64).reshape(-1, 1)]
+
+    def amd_resources(self, device):
+        """Fitted to yosys synth_xilinx on the two 100 tree fixtures, within 3 percent of LUT1 to LUT6."""
+        return Resources(lut=(self.comparators * self.feature_dtype.bits / 64
+                              + 0.22 * self.ensemble.splits * self.leaf_dtype.bits
+                              + self.ensemble.trees * self.sum_dtype.bits),
+                         ff=self.registers)
+
+    @property
+    def registers(self):
+        return (self.comparators + self.ensemble.trees * self.leaf_dtype.bits
+                + sum(self.adder_stages) * self.sum_dtype.bits + self.latency)
+
+    def memories(self, graph):
+        ensemble = self.ensemble
+        index_bits = max(1, (ensemble.nodes - 1).bit_length())
+        kind = np.where(ensemble.mode == LEAF, 2, np.where(ensemble.mode == EQ, 1, 0))
+        value = np.where(ensemble.mode == LEAF, ensemble.value, ensemble.threshold)
+        return {
+            "kind": MemorySpec(kind, 2),
+            "feature": MemorySpec(ensemble.feature, max(1, (self.features - 1).bit_length())),
+            "value": MemorySpec(value, max(self.feature_dtype.bits, self.leaf_dtype.bits)),
+            "if_true": MemorySpec(ensemble.if_true, index_bits),
+            "if_false": MemorySpec(ensemble.if_false, index_bits),
+            "roots": MemorySpec(ensemble.roots, index_bits),
+            "bias": MemorySpec(np.array([self.bias]), self.sum_dtype.bits),
+        }
+
+    def sv_params(self, graph):
+        return {
+            "FEATURES": self.features, "FEATURE_BITS": self.feature_dtype.bits,
+            "LEAF_BITS": self.leaf_dtype.bits, "SUM_BITS": self.sum_dtype.bits,
+            "TREES": self.ensemble.trees, "DECISION": int(self.decision),
         }
 
 

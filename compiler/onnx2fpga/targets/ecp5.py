@@ -149,6 +149,13 @@ class Ecp5CostModel:
         wide = max(node.in_elems, node.out_elems) * node.elem_bits
         return Resources(lut=4 + 0.35 * wide, ff=wide + 4)
 
+    def otf_trees(self, node):
+        """A comparison against a constant becomes a CCU2C carry chain, two LUT4 sites per two bits."""
+        return Resources(lut=(0.85 * node.comparators * node.feature_dtype.bits
+                              + 0.26 * node.ensemble.splits * node.leaf_dtype.bits
+                              + node.ensemble.trees * node.sum_dtype.bits),
+                         ff=node.registers)
+
 
 class Ecp5Device(Device):
     HARD_FIELDS = ("dsp", "ebr")

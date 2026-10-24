@@ -10,12 +10,14 @@ class ModelError(Onnx2FpgaError, ValueError):
 
 
 class UnsupportedOpError(ModelError):
-    def __init__(self, op_type, node, supported):
+    """`message` replaces the default text when the op is known but an option of it is not."""
+
+    def __init__(self, op_type, node, supported=(), message=None):
         self.op_type = op_type
         self.node = node
         self.supported = tuple(supported)
         ModelError.__init__(
-            self, "unsupported op %r in node %r (supported: %s); add it with "
+            self, message or "unsupported op %r in node %r (supported: %s); add it with "
             "custom_objects={%r: YourHardwareLayer}"
             % (op_type, node, ", ".join(self.supported), op_type))
 

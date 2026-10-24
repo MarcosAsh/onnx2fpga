@@ -49,6 +49,11 @@ such as a `Conv`, raises `ConfigError` naming it, and one too large to unroll on
 the device raises `BudgetError` naming its largest layer. The default build
 directory is `build/<model>_fixed`.
 
+A tree ensemble (TreeEnsembleRegressor or a binary TreeEnsembleClassifier)
+compiles only with `mode="fixed"`, and raises `ConfigError` otherwise. Its
+feature grids come from the model's thresholds, so `calibration` is not needed
+and does not change them. See [005](../specs/005-tree-ensembles.md).
+
 ### `summary(print_fn=None)`
 
 Before compile: layers, output shapes, parameter counts and any pins. After:
@@ -57,20 +62,25 @@ marked, totals against the budget, throughput, quantization and build path.
 Shapes are channel last. A fixed latency design prints one row per layer with
 its arithmetic, multipliers and latency in cycles instead, then the total
 latency in cycles and in nanoseconds at the device's clock, and how many
-multipliers constant arithmetic saved. Once a Kria build has left a Vivado
-`timing_summary.rpt` in the build directory, a `Clock:` line gives the measured
-fmax beside the estimate.
+multipliers constant arithmetic saved. For a tree ensemble the row gives the
+tree count and depth and the number of comparators, and leaves the arithmetic
+blank. Once a Kria build has left a Vivado `timing_summary.rpt` in the build
+directory, a `Clock:` line gives the measured fmax beside the estimate.
 
 ### `evaluate(x, y=None)`
 
 Returns a dict. Always `agreement`; with labels also `accuracy` (integer model)
-and `float_accuracy`.
+and `float_accuracy`. A model with one output that is not a label, such as a
+tree ensemble regressor, returns only `mean_abs_error` between the integer and
+float models, since agreement of an argmax over one value means nothing. For a
+binary tree classifier `agreement` compares the labels.
 
 ### `predict(x, on=None, quantized=False)`
 
 Runs a batch. `on=None` means the board after `deploy`, otherwise the integer
 reference. `on="reference"` or `on="board"` forces one. Returns dequantized
-floats, or integer codes with `quantized=True`.
+floats, or integer codes with `quantized=True`. A tree classifier returns the
+label's index in `classlabels`, as a float.
 
 ### `simulate(x=None, sweep=False)`
 

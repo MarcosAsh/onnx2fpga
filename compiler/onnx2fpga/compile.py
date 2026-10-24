@@ -2,12 +2,13 @@ import copy
 
 import numpy as np
 
-from .errors import ModelError
+from .errors import ConfigError, ModelError
 from .hardware_layer import custom_passes
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
 from .p4_quantize.plan import QuantizationPlan
 from .p4_quantize.lower import FuseRelu, LowerToHardware
+from .p4_quantize.trees import plan_trees, tree_op
 from .p5_schedule.fixed import UnrollForFixedLatency, check_fixed_ops
 from .p5_schedule.folding import FoldingAllocator
 from .p5_schedule.streams import (AlignBeatWidths, InsertDuplicates, InsertFifos,
@@ -70,6 +71,8 @@ class Compiler:
         float_graph = prologue.run(float_graph, context)
         if self.mode == "fixed":
             check_fixed_ops(float_graph)
+        elif tree_op(float_graph):
+            raise ConfigError("a tree ensemble compiles only with mode='fixed'")
 
         plan = self._plan(float_graph, samples, context)
         # Lowering rewrites in place, so copy first or the two graphs on the result would be one object.
@@ -97,7 +100,10 @@ class Compiler:
 
     def _plan(self, graph, samples, context):
         """A pre-quantized model already states every scale, so calibrating it would be guessing."""
-        if graph.annotations:
+        if tree_op(graph):
+            context.note("plan: feature grids from the tree thresholds")
+            plan = plan_trees(graph, self.mult_bits)
+        elif graph.annotations:
             context.note("plan: read %d grids from the model's quantize nodes"
                          % len(graph.annotations))
             plan = QuantizationPlan.from_annotations(
@@ -130,8 +136,7 @@ class Compiler:
     def _write_golden(self, graph, plan, sample, build):
         """Stimulus and expected output for the Verilator harness, from the integer reference model."""
         in_name, out_name = graph.inputs[0], graph.outputs[0]
-        quantized = plan.act_dtype.clamp(
-            np.rint(sample / plan.scale(in_name)) + plan.zero_point(in_name))
+        quantized = plan.quantize(in_name, sample)
         produced = GraphRunner(graph).run({in_name: quantized})[out_name]
         StreamCodec(graph.tensor(in_name)).to_image(quantized).write(
             build.path("golden/input.hex"))

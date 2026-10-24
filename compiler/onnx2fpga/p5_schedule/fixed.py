@@ -1,15 +1,16 @@
 """Fixed latency mode: every dense layer unrolled to one vector per cycle, with the latency summed along the chain."""
 
 from ..errors import BudgetError, ConfigError
-from ..p3_ops.hardware_ops import DenseUnit
+from ..p3_ops.hardware_ops import DenseUnit, TreeEnsembleUnit
 from ..p3_ops.onnx_ops import FlattenOp, GemmOp
+from ..p3_ops.trees import TreeEnsembleOp
 from ..pipeline import Pass
 from .folding import FoldingReport
 
 
 def check_fixed_ops(graph):
     for node in graph.topological_order():
-        if not isinstance(node, (GemmOp, FlattenOp)):
+        if not isinstance(node, (GemmOp, FlattenOp, TreeEnsembleOp)):
             kind = node.op_type + ("+Relu" if node.attrs.get("relu") else "")
             raise ConfigError("mode='fixed' cannot build %s (%s) yet" % (node.name, kind))
 
@@ -23,6 +24,8 @@ class UnrollForFixedLatency(Pass):
 
     def run(self, graph, context):
         for node in list(graph.topological_order()):
+            if isinstance(node, TreeEnsembleUnit):
+                continue
             if node.vectors != 1:
                 raise ConfigError("mode='fixed' cannot build %s, which takes %d vectors "
                                   "per input" % (node.name, node.vectors))
@@ -31,9 +34,10 @@ class UnrollForFixedLatency(Pass):
                 node.requant, node.act_dtype, node.out_dtype, node.weight_dtype)])
         graph.infer()
         units = graph.topological_order()
-        graph.tensor(graph.inputs[0]).elems_per_beat = units[0].mw
+        graph.tensor(graph.inputs[0]).elems_per_beat = graph.tensor(graph.inputs[0]).numel
         for unit in units:
-            unit.arithmetic = self._arithmetic(unit, context.device)
+            if isinstance(unit, DenseUnit):
+                unit.arithmetic = self._arithmetic(unit, context.device)
         self._check_budget(units, context.device)
 
         latency = sum(unit.latency for unit in units)
@@ -61,6 +65,12 @@ class UnrollForFixedLatency(Pass):
         if not over:
             return
         field, used, allowed = over[0]
+        if isinstance(units[0], TreeEnsembleUnit):
+            ensemble = units[0].ensemble
+            raise BudgetError("the tree ensemble needs %d %s, past the %d allowed on %s "
+                              "(%d trees of depth %d)" % (used, field.upper(), allowed,
+                                                          device.name, ensemble.trees,
+                                                          ensemble.depth))
         largest = max(units, key=lambda unit: unit.weights.size)
         raise BudgetError("the unrolled model needs %d %s, past the %d allowed on %s "
                           "(largest layer %s has %d weights)"

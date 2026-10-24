@@ -25,9 +25,12 @@ from .p1_ingest import OnnxModel
 from .p1_ingest.protobuf_codec import WireError
 from .p2_graph.datatype import DataType, IntType
 from .p2_graph.onnx_importer import OnnxImporter
-from .p3_ops.hardware_ops import DuplicateUnit, StreamFifo, WidthConverter
+from .p3_ops.hardware_ops import (DuplicateUnit, StreamFifo, TreeEnsembleUnit,
+                                  WidthConverter)
 from .p3_ops.onnx_ops import ConvOp, FlattenOp, GemmOp
+from .p3_ops.trees import TreeEnsembleOp
 from .p4_quantize.lower import FuseRelu
+from .p4_quantize.trees import tree_op
 from .p6_emit.hardcaml import HardcamlError, HardcamlGenerator
 from .p6_emit.project import ProjectWriter
 from .p6_emit.stream_io import StreamCodec
@@ -365,7 +368,8 @@ class Accelerator:
                              tuple(x.shape), hint))
 
     def _default_samples(self):
-        if not self._float_view.annotations:
+        """Trees take their feature grids from the thresholds, so only other models warn."""
+        if not self._float_view.annotations and not tree_op(self._float_view):
             warnings.warn("calibrating %s on random inputs; pass "
                           "calibration=x_train[:64] for accurate scales" % self.name,
                           stacklevel=3)
@@ -459,23 +463,27 @@ class Accelerator:
         widths = (30, 12, 12, 12, 9, 9, 7)
         right = (False, True, True, True, True, True, True)
         rule = sum(widths)
+        units = graph.topological_order()
+        trees = isinstance(units[0], TreeEnsembleUnit)
         lines = ['Accelerator: "%s" on %s (%s), hdl %s, fixed latency'
                  % (self.name, device.name, device.part, self.hdl), "_" * rule,
-                 _row(("Layer (kind)", "In -> out", "Arithmetic", "Multipliers", "Latency",
-                       "LUT", "DSP"), widths, right), "=" * rule]
-        units = graph.topological_order()
+                 _row(("Layer (kind)", "Trees/depth" if trees else "In -> out",
+                       "" if trees else "Arithmetic", "Comparators" if trees else "Multipliers",
+                       "Latency", "LUT", "DSP"), widths, right), "=" * rule]
         costs = [unit.resources(device) for unit in units]
-        for unit, cost in zip(units, costs):
-            lines.append(_row(("%s (%s)" % (unit.name, self.layers[unit.name].kind),
-                               "%d -> %d" % (unit.mw, unit.mh), unit.arithmetic,
-                               unit.multipliers, unit.latency, int(cost.lut),
-                               _number(cost.dsp)), widths, right))
+        parts = [unit.comparators if trees else unit.multipliers for unit in units]
+        for unit, cost, count in zip(units, costs, parts):
+            shape = ("%d/%d" % (unit.ensemble.trees, unit.ensemble.depth) if trees
+                     else "%d -> %d" % (unit.mw, unit.mh))
+            lines.append(_row(("%s (%s)" % (unit.name, self.layers[unit.name].kind), shape,
+                               "" if trees else unit.arithmetic, count, unit.latency,
+                               int(cost.lut), _number(cost.dsp)), widths, right))
         total, budget = _sum(costs), device.budget
         latency = self.latency
-        saved = sum(unit.weights.size - unit.multipliers for unit in units)
+        saved = 0 if trees else sum(unit.weights.size - unit.multipliers for unit in units)
         lines += ["=" * rule,
-                  _row(("Total", "", "", sum(unit.multipliers for unit in units), latency,
-                        int(total.lut), _number(total.dsp)), widths, right),
+                  _row(("Total", "", "", sum(parts), latency, int(total.lut),
+                        _number(total.dsp)), widths, right),
                   _row(("Budget on %s" % device.name, "", "", "", "", budget.lut,
                         budget.dsp), widths, right),
                   _row(("Used", "", "", "", "", _percent(total.lut, budget.lut),
@@ -508,6 +516,9 @@ class Accelerator:
 
     def _describe_quantization(self):
         plan = self.result.plan
+        if plan.source == "thresholds":
+            return ("features %s on per feature grids from the thresholds, leaves %s"
+                    % (plan.act_dtype.name.lower(), plan.weight_dtype.name.lower()))
         weights = plan.weight_dtype.name.lower()
         if plan.layer_weight_dtypes:
             weights += " (%s)" % ", ".join(
@@ -521,11 +532,16 @@ class Accelerator:
         """Accuracy cost of quantization: the integer model against the float one, plus top-1 agreement."""
         self._require_compiled("evaluate")
         feeds = self._feeds(x, "evaluate")
-        integer = self._dequantize(self._reference(feeds))
-        floating = np.concatenate([self._float_reference(feed) for feed in feeds])
-        picked = np.argmax(integer.reshape(len(feeds), -1), axis=1)
-        wanted = np.argmax(floating.reshape(len(feeds), -1), axis=1)
+        integer = self._dequantize(self._reference(feeds)).reshape(len(feeds), -1)
+        floating = np.concatenate([self._float_reference(feed)
+                                   for feed in feeds]).reshape(len(feeds), -1)
         metrics = {}
+        # One output is a label for a classifier and a value for a regressor, so argmax means nothing.
+        if integer.shape[1] == 1 and not self._labels:
+            metrics["mean_abs_error"] = float(np.mean(np.abs(integer - floating)))
+            return metrics
+        picked = np.argmax(integer, axis=1) if integer.shape[1] > 1 else integer[:, 0]
+        wanted = np.argmax(floating, axis=1) if integer.shape[1] > 1 else floating[:, 0]
         if y is not None:
             labels = np.asarray(y)
             labels = labels if labels.ndim == 1 else np.argmax(
@@ -537,6 +553,10 @@ class Accelerator:
             metrics["float_accuracy"] = float(np.mean(wanted == labels))
         metrics["agreement"] = float(np.mean(picked == wanted))
         return metrics
+
+    @property
+    def _labels(self):
+        return getattr(self.result.hardware_graph.nodes[-1], "decision", False)
 
     def predict(self, x, on=None, quantized=False):
         """Outputs for a batch of inputs, from the reference model until deployed and from the board after."""
@@ -559,8 +579,7 @@ class Accelerator:
         raw = np.asarray(feed[name], dtype=np.float64)
         if name in graph.layouts:
             raw = graph.layouts[name].to_internal(raw)
-        return plan.act_dtype.clamp(np.rint(raw / plan.scale(name))
-                                    + plan.zero_point(name))
+        return plan.quantize(name, raw)
 
     def _reference(self, feeds):
         graph = self.result.hardware_graph
@@ -776,9 +795,11 @@ class Layer:
         self.output_shape = graph.tensor(node.outputs[0]).shape
         self.params = sum(graph.tensor(name).numel or 0 for name in node.inputs
                           if graph.tensor(name).is_constant)
+        if isinstance(node, TreeEnsembleOp):
+            self.params = node.params
         if isinstance(node, (GemmOp, ConvOp)):
             self.factors = ("simd", "pe")
-        elif isinstance(node, FlattenOp):
+        elif isinstance(node, (FlattenOp, TreeEnsembleOp)):
             self.factors = ()
         else:
             self.factors = ("pe",)

@@ -113,6 +113,27 @@ and Reshape as wiring. Anything else, a `Conv` for instance, raises
 for the Icepi Zero does not take it yet. See
 [001](../specs/001-fixed-latency.md) for the design.
 
+## Tree ensembles
+
+Gradient boosted trees exported by onnxmltools or skl2onnx compile the same
+way, in fixed mode only. There is nothing to calibrate, because each feature's
+grid comes from the thresholds the trees test it against:
+
+```python
+acc = otf.load("tests/fixtures/xgb_regressor.onnx")   # 100 trees of depth 4
+acc.compile(device="vu9p", mode="fixed")
+acc.latency          # 6
+acc.evaluate(x)      # {'mean_abs_error': ...} for a regressor, label agreement for a classifier
+acc.simulate()
+```
+
+Every comparison happens in the first cycle, each tree picks its leaf in the
+second, and an adder tree of fan in 4 needs four more for 100 trees and the
+base value. A binary classifier outputs one bit, the label, decided on the
+margin. Features enter as 16 bit codes on per feature grids, which
+`manifest.json` lists as a scale and zero point per feature. See
+[005](../specs/005-tree-ensembles.md) for the design and what is not supported.
+
 ## What predict gives back
 
 `predict(x)` takes a batch in the model's own layout and returns floats, so it

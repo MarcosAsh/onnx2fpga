@@ -8,7 +8,9 @@ from ..p3_ops.onnx_ops import AddOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluO
 from ..p3_ops.hardware_ops import (ActivationUnit, AddUnit, MatVecUnit, PoolUnit,
                                    SlidingWindowUnit)
 from ..pipeline import Pass
+from ..p3_ops.trees import TreeEnsembleOp
 from .requantize import Requantizer
+from .trees import lower_trees
 
 
 class FuseRelu(Pass):
@@ -170,7 +172,8 @@ def lower_flatten(node, ctx):
 
 
 BUILTIN = {GemmOp: lower_gemm, ConvOp: lower_conv, MaxPoolOp: lower_maxpool,
-           ReluOp: lower_relu, AddOp: lower_add, FlattenOp: lower_flatten}
+           ReluOp: lower_relu, AddOp: lower_add, FlattenOp: lower_flatten,
+           TreeEnsembleOp: lower_trees}
 
 
 class LowerToHardware(Pass):

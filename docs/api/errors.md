@@ -8,7 +8,7 @@ sentence what went wrong, naming the layer, op or budget involved.
 | Error | Raised when | Example message |
 |---|---|---|
 | `ModelError` | The ONNX file is malformed or uses something unsupported. | |
-| `UnsupportedOpError` | An operator has no handler. | names the operator, the node and the supported list |
+| `UnsupportedOpError` | An operator has no handler, or a tree ensemble uses an option we do not support. | names the operator, the node and the supported list, or the option |
 | `ConfigError` | An argument or pin is invalid. | `fc0 cannot fold to pe=3, valid values: 1, 2, 4, 8, 16, 32, 64` |
 | `UnknownLayerError` | `acc.layers[name]` names no layer. Also a `KeyError`. | `the model has no layer named 'nope'. Layers: fc0, fc1, fc2` |
 | `BudgetError` | The target cannot fit the device. | quotes the allocator's reason line and suggests what to change |

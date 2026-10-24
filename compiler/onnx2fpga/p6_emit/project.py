@@ -6,6 +6,7 @@ import shutil
 
 from ..assets import AssetLocator
 from ..errors import ConfigError
+from ..p3_ops.hardware_ops import DenseUnit
 from .hardcaml import HardcamlGenerator, design
 from .memories import HexImage
 from .systemverilog import identifier, render_top
@@ -112,7 +113,8 @@ class ProjectWriter:
             manifest["latency"] = self.latency
             for row, node in zip(manifest["nodes"], self.graph.topological_order()):
                 row["latency"] = node.latency
-                row["arithmetic"] = node.arithmetic
+                if isinstance(node, DenseUnit):
+                    row["arithmetic"] = node.arithmetic
         if folding:
             manifest["cycles_per_frame"] = folding.bottleneck_cycles
             manifest["estimated_fps"] = round(folding.frames_per_second, 2)
@@ -121,8 +123,11 @@ class ProjectWriter:
         if plan:
             for side, tensor in (("input", source.name), ("output", sink.name)):
                 spec = plan.spec(tensor)
-                manifest[side]["scale"] = plan.scale(tensor)
-                manifest[side]["zero_point"] = plan.zero_point(tensor)
+                per_feature = spec.scale.size > 1
+                manifest[side]["scale"] = (spec.scale.tolist() if per_feature
+                                           else plan.scale(tensor))
+                manifest[side]["zero_point"] = (spec.zero_point.tolist() if per_feature
+                                                else plan.zero_point(tensor))
                 manifest[side]["symmetric"] = spec.is_symmetric
                 if spec.rebased:
                     manifest[side]["note"] = (
@@ -130,7 +135,7 @@ class ProjectWriter:
                         "the signed grid, which the scale and zero point above "
                         "already account for")
             manifest["quantization"] = {
-                "source": "model" if plan.from_model else "calibration",
+                "source": plan.source,
                 "activations": plan.act_dtype.name,
                 "weights": plan.weight_dtype.name,
             }
