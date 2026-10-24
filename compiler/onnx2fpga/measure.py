@@ -11,9 +11,6 @@ import sys
 import numpy as np
 
 from .assets import AssetLocator
-from .compile import Compiler
-from .p1_ingest import OnnxModel
-from .targets.device import Device
 from .targets.resources import Resources
 
 
@@ -37,9 +34,6 @@ class Subject:
         return " ".join("%s=%s" % (key, value)
                         for key, value in sorted(self.generics.items())
                         if not (isinstance(value, str) and not value))
-
-    def __repr__(self):
-        return "Subject(%s, %s)" % (self.name, self.module)
 
 
 class SynthesisResult:
@@ -198,8 +192,7 @@ def render(comparisons):
     if comparisons:
         worst = min(c.result.fmax_mhz for c in comparisons)
         lines.append("")
-        lines.append("slowest unit runs at %.1f MHz, which is the honest fmax "
-                     "for this design" % worst)
+        lines.append("slowest unit runs at %.1f MHz" % worst)
     return "\n".join(lines)
 
 

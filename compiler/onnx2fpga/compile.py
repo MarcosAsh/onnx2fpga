@@ -39,13 +39,6 @@ class CompilationResult:
         """Cycles from input to output in fixed latency mode, None for a streaming design."""
         return self.context.artifacts.get("latency")
 
-    def summary(self):
-        lines = list(self.context.log)
-        if self.folding:
-            lines.append("")
-            lines.append(self.folding.render())
-        return "\n".join(lines)
-
 
 class Compiler:
     """`folding`, `weight_dtypes` and `custom_objects` are the per-layer settings built by onnx2fpga.api."""
@@ -109,9 +102,7 @@ class Compiler:
             plan = QuantizationPlan.from_annotations(
                 graph.annotations, mult_bits=self.mult_bits)
         elif not samples:
-            raise ModelError("a float model needs calibration samples to fix its "
-                             "activation scales: pass a few representative inputs, or "
-                             "quantize the model to the ONNX QDQ form first")
+            raise ModelError("a float model needs calibration samples")
         else:
             context.note("plan: calibrated on %d samples" % len(samples))
             plan = Calibrator(graph).plan(samples, mult_bits=self.mult_bits)
@@ -137,16 +128,11 @@ class Compiler:
 
     def _write_golden(self, graph, plan, sample, build):
         """Stimulus and expected output for the Verilator harness, from the integer reference model."""
-        in_name = graph.inputs[0]
-        out_name = graph.outputs[0]
-        in_tensor, out_tensor = graph.tensor(in_name), graph.tensor(out_name)
-
-        raw = sample
+        in_name, out_name = graph.inputs[0], graph.outputs[0]
         quantized = plan.act_dtype.clamp(
-            np.rint(raw / plan.scale(in_name)) + plan.zero_point(in_name))
+            np.rint(sample / plan.scale(in_name)) + plan.zero_point(in_name))
         produced = GraphRunner(graph).run({in_name: quantized})[out_name]
-
-        StreamCodec(in_tensor).to_image(quantized).write(build.path("golden/input.hex"))
-        StreamCodec(out_tensor).to_image(produced).write(
+        StreamCodec(graph.tensor(in_name)).to_image(quantized).write(
+            build.path("golden/input.hex"))
+        StreamCodec(graph.tensor(out_name)).to_image(produced).write(
             build.path("golden/expected.hex"))
-        return produced

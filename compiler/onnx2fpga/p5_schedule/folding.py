@@ -53,7 +53,7 @@ class FoldingAllocator(Pass):
     name = "fold"
 
     def __init__(self, target_cycles=None, utilisation_limit=0.80, pins=None):
-        """`pins` maps a unit name to folding factors fixed by hand; see HwNode.allowed_foldings."""
+        """`pins` maps a unit name to folding factors fixed by hand; see StreamingNode.allowed_foldings."""
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
         self.pins = dict(pins or {})
@@ -83,16 +83,13 @@ class FoldingAllocator(Pass):
                             max(n.cycles for n in floor)))
         if target != self.target_cycles:
             for node, (field, used, allowed) in missed.items():
-                context.note("fold: %d cycles does not fit the %s budget of %s: the next "
-                             "step for %s would take the design to %.0f %s, past the "
-                             "%.0f allowed. Balanced at %d cycles instead"
+                context.note("fold: %d cycles does not fit the %s budget of %s (%s needs "
+                             "%.0f of %.0f), balanced at %d cycles"
                              % (self.target_cycles, field, device.name, node.name,
-                                used, field, allowed, target))
+                                used, allowed, target))
         for node, (field, used, allowed) in held.items():
-            context.note("fold: %s held at %d cycles by the %s budget: its next step "
-                         "would take the design to %.0f %s, past the %.0f allowed on %s"
-                         % (node.name, node.cycles, field, used, field, allowed,
-                            device.name))
+            context.note("fold: %s held at %d cycles by the %s budget (%.0f of %.0f)"
+                         % (node.name, node.cycles, field, used, allowed))
         context.note("fold: bottleneck %d cycles, %.1f frames/s, dsp %.0f"
                      % (report.bottleneck_cycles, report.frames_per_second,
                         report.total.dsp))
@@ -140,35 +137,29 @@ class FoldingAllocator(Pass):
         return candidates[low] if candidates else target_cycles
 
     def _apply_pins(self, nodes):
-        """Checks every pin against what the unit can do first, so a typo fails here naming the choices."""
         units = {node.name: node for node in nodes}
         for name, factors in self.pins.items():
             node = units.get(name)
             if node is None:
-                raise ConfigError(
-                    "cannot fold %r: the compiled design has no unit by that name that "
-                    "folds. Units that fold: %s" % (name, ", ".join(sorted(units))))
+                raise ConfigError("no unit named %r folds; units that fold: %s"
+                                  % (name, ", ".join(sorted(units))))
             options = node.folding_options()
             known = sorted(node.default_folding())
             unknown = sorted(set(factors) - set(known))
             if unknown:
-                raise ConfigError(
-                    "%s (%s) folds by %s, not %s. Pass only those, for example "
-                    "fold(%s=%d)" % (name, type(node).__name__, " and ".join(known),
-                                     ", ".join(unknown), known[0], options[-1][known[0]]))
+                raise ConfigError("%s (%s) folds by %s, not %s"
+                                  % (name, type(node).__name__, " and ".join(known),
+                                     ", ".join(unknown)))
             for key, value in sorted(factors.items()):
                 valid = sorted({option[key] for option in options})
                 if value not in valid:
-                    raise ConfigError(
-                        "%s cannot fold to %s=%r. Valid %s values for it: %s%s"
-                        % (name, key, value, key, ", ".join(str(v) for v in valid),
-                           _fold_hint(node, key)))
+                    raise ConfigError("%s cannot fold to %s=%r, valid values: %s"
+                                      % (name, key, value, ", ".join(map(str, valid))))
             node.attrs["pinned_folding"] = dict(factors)
             if not node.allowed_foldings():
-                raise ConfigError(
-                    "%s cannot fold to %s: each value is valid alone but not together. "
-                    "Valid foldings: %s" % (name, _render(factors),
-                                            "; ".join(_render(o) for o in options)))
+                raise ConfigError("%s cannot fold to %s, valid foldings: %s"
+                                  % (name, _render(factors),
+                                     "; ".join(_render(o) for o in options)))
 
     def _check_pins(self, pinned, report, device):
         """Only a pin can take a design past its budget; the allocator checks its own choices first."""
@@ -177,11 +168,8 @@ class FoldingAllocator(Pass):
             return
         field, used, allowed = over[0]
         names = ", ".join("%s to %s" % (n.name, _render(n.folding)) for n in pinned)
-        raise BudgetError(
-            "the design does not fit %s: folding %s by hand takes it to %.0f %s, past "
-            "the %.0f allowed at a utilisation limit of %.2f. Fold less, drop the pin "
-            "and let the allocator choose, or compile for a larger device"
-            % (device.name, names, used, field, allowed, self.utilisation_limit))
+        raise BudgetError("folding %s by hand needs %.0f %s, past the %.0f allowed on %s"
+                          % (names, used, field, allowed, device.name))
 
     def _effective_target(self, frozen, target_cycles):
         """A stage that cannot fold further sets the floor for the pipeline, so the target rises to meet it."""
@@ -192,19 +180,11 @@ class FoldingAllocator(Pass):
             return floor
         return max(target_cycles, floor)
 
-    @staticmethod
-    def _bottleneck(graph):
-        candidates = [n for n in graph.nodes if n.folding_options() != [{}]]
-        return max(candidates, key=lambda n: n.cycles, default=None)
-
-    def _total_without(self, graph, node, device):
-        return sum((n.resources(device) for n in graph.nodes if n is not node),
-                   Resources.zero())
-
     def _cheapest_upgrade(self, node, graph, device, target):
         """Picks the next folding step: cheapest that reaches the target, else most cycles per resource."""
         baseline = node.cycles
-        others = self._total_without(graph, node, device)
+        others = sum((n.resources(device) for n in graph.nodes if n is not node),
+                     Resources.zero())
         current = dict(node.folding)
         base_pressure = node.resources(device).pressure(device.budget)
         limits = device.limits(self.utilisation_limit)
@@ -239,13 +219,3 @@ class FoldingAllocator(Pass):
 
 def _render(folding):
     return ",".join("%s=%d" % item for item in sorted(folding.items()))
-
-
-def _fold_hint(node, key):
-    """What each factor has to divide, for units where that is a fact about the layer."""
-    if hasattr(node, "mw") and hasattr(node, "mh"):
-        return {"simd": " (simd divides the %d inputs each output sums over)" % node.mw,
-                "pe": " (pe divides the %d outputs)" % node.mh}.get(key, "")
-    if hasattr(node, "channels") and key == "pe":
-        return " (pe divides the %d channels)" % node.channels
-    return ""

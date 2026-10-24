@@ -5,7 +5,7 @@ import random
 import sys
 import unittest
 
-from support import ROOT  # noqa: F401  sets up sys.path
+from support import ROOT
 
 
 def flatten(suite):

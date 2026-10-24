@@ -36,14 +36,12 @@ class IcepiZero:
             raise BoardError("unknown Icepi Zero revision %r, expected one of %s"
                              % (rev, ", ".join(self.REVISIONS)))
         if uart not in self.UARTS:
-            raise BoardError("the serial pair goes on usb or header, not %r" % uart)
+            raise BoardError("uart must be usb or header, not %r" % uart)
         if mhz < 4 or self.VCO_MHZ % mhz:
-            raise BoardError("the PLL makes clocks that divide 480 MHz: %d MHz is not one"
-                             % mhz)
+            raise BoardError("%d MHz does not divide the 480 MHz PLL" % mhz)
         clocks = round(mhz * 1e6 / baud)
         if clocks < 4 or abs(clocks * baud / (mhz * 1e6) - 1) > 0.02:
-            raise BoardError("%d MHz cannot make %d baud within 2 percent with at least "
-                             "4 clocks a bit" % (mhz, baud))
+            raise BoardError("%d MHz cannot make %d baud within 2 percent" % (mhz, baud))
         self.out = pathlib.Path(out)
         self.rev, self.mhz, self.baud, self.seeds = rev, mhz, baud, tuple(seeds)
         self.uart = uart
@@ -54,8 +52,7 @@ class IcepiZero:
         """hardware/boards/icepi_zero, next to the Hardcaml project."""
         project = self.generator.project
         if project is None:
-            raise BoardError("no Hardcaml project found, so no board files either; "
-                             "the bitstream flow needs a checkout")
+            raise BoardError("no Hardcaml project, so no board files")
         return project.parent / "boards" / self.NAME
 
     @property
@@ -123,7 +120,6 @@ class IcepiZero:
                                    capture_output=True, text=True,
                                    timeout=self.FLOW_TIMEOUT)
         if completed.returncode != 0:
-            # The Makefile ends with what went wrong, after the commands it echoed.
             said = completed.stdout.strip().splitlines()[-8:]
             raise BoardError("the %s flow failed in %s:\n%s\n%s" % (
                 self.NAME, self.build, "\n".join(said), completed.stderr[-2000:].strip()))
@@ -153,5 +149,3 @@ class IcepiZero:
         port = " --port PORT_OF_YOUR_ADAPTER" if self.uart == "header" else ""
         return "python3 %s %s%s" % (self.directory / "host.py", self.out, port)
 
-
-BOARDS = {IcepiZero.NAME: IcepiZero}

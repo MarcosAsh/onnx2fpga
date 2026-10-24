@@ -1,4 +1,4 @@
-"""Builds a wheel via setuptools' PEP 517 backend, staging the RTL library and C++ runtime into the package first."""
+"""Builds a wheel, staging the RTL library and C++ runtime into the package first."""
 
 import pathlib
 import shutil
@@ -7,13 +7,12 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "compiler" / "onnx2fpga" / "assets"
 
-# Build products, not sources: runtime/bin and the object files beside it are left by `make runtime`.
+# Build products from `make runtime`, not sources.
 LEAVINGS = shutil.ignore_patterns("bin", "obj_dir", "__pycache__",
                                   "*.o", "*.d", "*.a")
 
 
 def stage():
-    """Copy hardware/ and runtime/ into the package."""
     shutil.rmtree(ASSETS, ignore_errors=True)
     (ASSETS / "hardware").mkdir(parents=True)
     for name in ("rtl", "synth"):
@@ -21,7 +20,6 @@ def stage():
     shutil.copytree(ROOT / "runtime", ASSETS / "runtime", ignore=LEAVINGS)
     staged = sum(1 for path in ASSETS.rglob("*") if path.is_file())
     print("staged %d files" % staged)
-    return staged
 
 
 def main():

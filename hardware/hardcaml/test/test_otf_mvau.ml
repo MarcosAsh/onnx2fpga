@@ -48,10 +48,10 @@ module Make_test (Config : Params) = struct
         |> Stream_bench.of_signed_lanes ~lane_bits:out_bits))
   ;;
 
-  let random_traffic ?random_initial_state ~seed ~vectors ~in_duty ~out_duty () =
+  let random_traffic ~seed ~vectors ~in_duty ~out_duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -182,34 +182,17 @@ let%expect_test "matrix vector products under random backpressure" =
     |}]
 ;;
 
-let%expect_test "random initial state is overwritten by the clear" =
-  let (module Config) = config ~mw:6 ~mh:4 ~simd:3 ~pe:2 ~out_zp:(-3) 9 in
-  let module T = Make_test (Config) in
-  let cycles =
-    T.random_traffic
-      ~random_initial_state:`All
-      ~seed:2
-      ~vectors:10
-      ~in_duty:70
-      ~out_duty:60
-      ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 58) |}]
-;;
-
 (* Two synapse and two neuron folds; the vector is replayed from the buffer on the second. *)
 let%expect_test "waveform of a vector taken once and replayed" =
   let (module Config) = config ~mw:4 ~mh:4 ~simd:2 ~pe:2 ~shift:26 10 in
-  let module Dut = Otf_mvau.Make (Config) in
-  let module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O) in
+  let module T = Make_test (Config) in
   let display_rules =
     [ Display_rule.port_name_matches (Glob "s$*") ~wave_format:(Bit_or Hex)
     ; Display_rule.port_name_matches (Glob "m$*") ~wave_format:(Bit_or Hex)
     ]
   in
-  Harness.run
-    ~create:Dut.hierarchical
+  T.Harness.run
+    ~create:T.Dut.hierarchical
     ~trace:`Ports_only
     ~print_waves_after_test:(fun waves ->
       Waveform.print

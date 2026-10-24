@@ -85,14 +85,14 @@ module Make (Config : Config) = struct
       let out_zp = out_zp
     end)
 
-  let w_addr_bits = Sv_int.counter_width (sf_count * nf_count)
+  let w_addr_bits = address_bits_for (sf_count * nf_count)
 
   let create (scope : Scope.t) (i : Signal.t I.t) =
     let spec = Clocking.to_spec i.clocking in
     let spec_no_clear = Clocking.to_spec_no_clear i.clocking in
     let clear = i.clocking.clear in
-    let%hw sf = wire (Sv_int.counter_width sf_count) in
-    let%hw nf = wire (Sv_int.counter_width nf_count) in
+    let%hw sf = wire (address_bits_for sf_count) in
+    let%hw nf = wire (address_bits_for nf_count) in
     let%hw out_valid = wire 1 in
     let%hw last_sf = Sv_int.is_last sf ~count:sf_count in
     let%hw out_free = ~:out_valid |: i.m.ready in

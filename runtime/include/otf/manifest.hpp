@@ -1,4 +1,4 @@
-// Typed view over manifest.json, the contract between a compiled design and its host.
+// Typed view over manifest.json.
 #pragma once
 
 #include <fstream>
@@ -18,7 +18,6 @@ struct PortSpec {
     int beats = 0;
     double scale = 1.0;
     int zero_point = 0;
-    std::string source_layout = "channel-last";
 
     size_t elements() const {
         size_t count = 1;
@@ -44,9 +43,7 @@ public:
         manifest.fmax_mhz_ = root["fmax_mhz"].number();
         manifest.input_ = read_port(root["input"]);
         manifest.output_ = read_port(root["output"]);
-        if (root.has("cycles_per_frame")) {
-            manifest.cycles_per_frame_ = root["cycles_per_frame"].as_int();
-        }
+        if (root.has("cycles_per_frame")) manifest.cycles_per_frame_ = root["cycles_per_frame"].as_int();
         return manifest;
     }
 
@@ -66,15 +63,12 @@ private:
     static PortSpec read_port(const JsonValue& node) {
         PortSpec port;
         port.tensor = node["tensor"].string();
-        for (const JsonValue& extent : node["shape"].array()) {
-            port.shape.push_back(extent.as_int());
-        }
+        for (const JsonValue& extent : node["shape"].array()) port.shape.push_back(extent.as_int());
         port.elem_bits = node["elem_bits"].as_int();
         port.elems_per_beat = node["elems_per_beat"].as_int();
         port.beats = node["beats"].as_int();
         if (node.has("scale")) port.scale = node["scale"].number();
         if (node.has("zero_point")) port.zero_point = node["zero_point"].as_int();
-        if (node.has("source_layout")) port.source_layout = node["source_layout"].string();
         return port;
     }
 

@@ -58,9 +58,6 @@ type t =
   }
 [@@deriving sexp_of]
 
-(** The [format] field this reader accepts. *)
-val format : int
-
 (** Raises on anything malformed, naming the field. *)
 val of_string : string -> t
 

@@ -85,10 +85,10 @@ module Make_test (Config : Params) = struct
   ;;
 
   (* A vector every cycle, valid on [duty] percent, each due exactly [latency] later. *)
-  let run ?random_initial_state ~seed ~cycles ~duty () =
+  let run ~seed ~cycles ~duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -158,25 +158,16 @@ let%expect_test "every vector comes out exactly three cycles later" =
     |}]
 ;;
 
-let%expect_test "random initial state is overwritten by the clear" =
-  let (module Config) = config ~mw:8 ~mh:4 ~out_zp:3 8 in
-  let module T = Make_test (Config) in
-  let checked = T.run ~random_initial_state:`All ~seed:3 ~cycles:200 ~duty:50 () in
-  print_s [%message (checked : int)];
-  [%expect {| (checked 95) |}]
-;;
-
 let%expect_test "waveform of back to back vectors and a gap" =
   let (module Config) = config ~mw:2 ~mh:2 ~acc_bits:17 ~mult_bits:4 ~shift:6 9 in
-  let module Dut = Otf_dense.Make (Config) in
-  let module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O) in
+  let module T = Make_test (Config) in
   let display_rules =
     [ Display_rule.port_name_matches (Glob "x$*") ~wave_format:(Bit_or Hex)
     ; Display_rule.port_name_matches (Glob "y$*") ~wave_format:(Bit_or Hex)
     ]
   in
-  Harness.run
-    ~create:Dut.hierarchical
+  T.Harness.run
+    ~create:T.Dut.hierarchical
     ~trace:`Ports_only
     ~print_waves_after_test:(fun waves ->
       Waveform.print ~display_rules ~signals_width:9 ~display_width:90 ~wave_width:2 waves)

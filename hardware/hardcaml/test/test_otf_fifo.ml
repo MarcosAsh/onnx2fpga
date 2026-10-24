@@ -11,10 +11,10 @@ module Make_test (Config : Otf_fifo.Config) = struct
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
   (* [s.ready] and [m.valid] must match an occupancy count every cycle. *)
-  let random_traffic ?random_initial_state ~seed ~beats ~in_duty ~out_duty () =
+  let random_traffic ~seed ~beats ~in_duty ~out_duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~waves_config:
         (if debug
          then Hardcaml_test_harness.Waves_config.to_test_directory ()
@@ -84,32 +84,10 @@ let%expect_test "every depth passes beats through in order under random backpres
     |}]
 ;;
 
-let%expect_test "random initial state is overwritten by the clear" =
-  let module T =
-    Make_test (struct
-      let width = 12
-      let depth = 4
-    end)
-  in
-  let cycles =
-    T.random_traffic
-      ~random_initial_state:`All
-      ~seed:7
-      ~beats:100
-      ~in_duty:60
-      ~out_duty:60
-      ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 189) |}]
-;;
-
-module Two = Otf_fifo.Make (struct
+module Two = Make_test (struct
     let width = 8
     let depth = 2
   end)
-
-module Harness = Hardcaml_test_harness.Lws_harness.Make (Two.I) (Two.O)
 
 (* Full holds [s.ready] low while a beat leaves; empty shows a stale word. *)
 let%expect_test "waveform of a depth two buffer filling and draining" =
@@ -118,8 +96,8 @@ let%expect_test "waveform of a depth two buffer filling and draining" =
     ; Display_rule.port_name_matches (Glob "m$*") ~wave_format:(Bit_or Hex)
     ]
   in
-  Harness.run
-    ~create:Two.hierarchical
+  Two.Harness.run
+    ~create:Two.Dut.hierarchical
     ~trace:`Ports_only
     ~print_waves_after_test:(fun waves ->
       Waveform.print ~display_rules ~signals_width:9 ~display_width:72 ~wave_width:1 waves)

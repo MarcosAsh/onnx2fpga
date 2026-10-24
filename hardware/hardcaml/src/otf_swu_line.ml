@@ -115,7 +115,7 @@ module Make (Config : Config) = struct
       +: Sv_int.mul (Sv_int.mul (Sv_int.of_unsigned kxg) par) dil_w
       -: Sv_int.int32 pad_l
     in
-    let%hw row_ok = ~:(Sv_int.is_negative row) &: (row <+ Sv_int.int32 ifm_h) in
+    let%hw row_ok = ~:(msb row) &: (row <+ Sv_int.int32 ifm_h) in
     let%hw row_offset = frame_base +: Sv_int.mul row ifm_w in
     let rd_addr = Sv_int.of_unsigned rd_cg in
     let wr_addr = buffer_address wr_pixel (uresize wr_cg ~width:32) in
@@ -124,9 +124,7 @@ module Make (Config : Config) = struct
     let copies =
       List.init par ~f:(fun j ->
         let col = col_base +: Sv_int.int32 (j * dil_w) in
-        let in_view =
-          row_ok &: ~:(Sv_int.is_negative col) &: (col <+ Sv_int.int32 ifm_w)
-        in
+        let in_view = row_ok &: ~:(msb col) &: (col <+ Sv_int.int32 ifm_w) in
         let needed = row_offset +: col in
         let buffer =
           multiport_memory
@@ -142,7 +140,7 @@ module Make (Config : Config) = struct
             ~read_addresses:[| buffer_address needed rd_addr |]
         in
         let fetched = mux2 in_view buffer.(0) pad in
-        let not_yet_written = ~:(Sv_int.is_negative (needed -: wr_pixel)) in
+        let not_yet_written = ~:(msb (needed -: wr_pixel)) in
         fetched, in_view &: not_yet_written)
     in
     let%hw read_ok = ~:(reduce ~f:( |: ) (List.map copies ~f:snd)) in
@@ -164,10 +162,7 @@ module Make (Config : Config) = struct
     in
     let%hw last_out_row = Sv_int.is_last oh ~count:ofm_h in
     let%hw oldest =
-      mux2
-        (~:last_out_row &: Sv_int.is_negative (oldest_next -: oldest_here))
-        oldest_next
-        oldest_here
+      mux2 (~:last_out_row &: msb (oldest_next -: oldest_here)) oldest_next oldest_here
     in
     can_write <-- (wr_pixel -: oldest <+ Sv_int.int32 depth);
     let%hw out_free = ~:ovalid |: i.m.ready in

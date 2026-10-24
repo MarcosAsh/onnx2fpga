@@ -1,4 +1,4 @@
-"""Target device models; "estimated" provenance figures are working numbers, not for sizing a real build."""
+"""Target devices; "estimated" figures are working numbers, not for sizing a real build."""
 
 from .resources import Resources
 
@@ -12,23 +12,19 @@ class Device:
     # nextpnr arguments that select the part, empty for parts Vivado builds.
     nextpnr_args = ()
 
+    # A vendor specific estimator that prices each unit instead of its AMD model.
+    cost_model = None
+
     def __init__(self, name, part, budget, fmax_mhz, dsp_generation,
-                 external_bandwidth_gbps=0.0, provenance="estimated", notes="",
-                 block_ram="bram36"):
+                 provenance="estimated", notes="", block_ram="bram36"):
         self.name = name
         self.part = part
         self.budget = budget
         self.fmax_mhz = fmax_mhz
         self.dsp_generation = dsp_generation
-        self.external_bandwidth_gbps = external_bandwidth_gbps
         self.provenance = provenance
         self.notes = notes
         self.block_ram = block_ram
-
-    @property
-    def cost_model(self):
-        """A vendor specific estimator replacing the AMD model of each node, or None."""
-        return None
 
     def limits(self, utilisation_limit):
         """Fraction of the budget each resource may use."""
@@ -51,10 +47,6 @@ class Device:
     def dsp_cost(self, mac_count, act_bits, weight_bits):
         return mac_count / self.macs_per_dsp(act_bits, weight_bits)
 
-    def peak_macs_per_second(self, act_bits, weight_bits):
-        return (self.budget.dsp * self.macs_per_dsp(act_bits, weight_bits)
-                * self.fmax_mhz * 1e6)
-
     @classmethod
     def register(cls, device):
         cls._registry[device.name] = device
@@ -72,20 +64,17 @@ class Device:
     def names(cls):
         return sorted(cls._registry)
 
-    def __repr__(self):
-        return "Device(%s, %s, %s)" % (self.name, self.part, self.budget)
-
 
 Device.register(Device(
     name="vu9p", part="xcvu9p-flgb2104-2-i",
     budget=Resources(lut=1182240, ff=2364480, dsp=6840, bram36=2160, uram=960),
-    fmax_mhz=300.0, dsp_generation="DSP48E2", external_bandwidth_gbps=64.0,
+    fmax_mhz=300.0, dsp_generation="DSP48E2",
     provenance="vendor", notes="AWS EC2 F1 shell leaves roughly 20 percent to the platform"))
 
 Device.register(Device(
     name="vu47p", part="xcvu47p-fsvh2892-2-e",
     budget=Resources(lut=1303680, ff=2607360, dsp=9024, bram36=2016, uram=960),
-    fmax_mhz=300.0, dsp_generation="DSP48E2", external_bandwidth_gbps=460.0,
+    fmax_mhz=300.0, dsp_generation="DSP48E2",
     provenance="mixed",
     notes="AWS EC2 F2. LUT/FF/DSP are vendor figures; bram36 and uram are estimated "
           "from the sibling VU37P and unverified. 16 GB HBM at about 460 GB/s."))
@@ -93,13 +82,13 @@ Device.register(Device(
 Device.register(Device(
     name="zu7ev", part="xczu7ev-ffvc1156-2-e",
     budget=Resources(lut=230400, ff=460800, dsp=1728, bram36=312, uram=96),
-    fmax_mhz=250.0, dsp_generation="DSP48E2", external_bandwidth_gbps=19.2,
+    fmax_mhz=250.0, dsp_generation="DSP48E2",
     provenance="vendor", notes="ZCU104 class board"))
 
 Device.register(Device(
     name="z7020", part="xc7z020-clg400-1",
     budget=Resources(lut=53200, ff=106400, dsp=220, bram36=140, uram=0),
-    fmax_mhz=100.0, dsp_generation="DSP48E1", external_bandwidth_gbps=4.2,
+    fmax_mhz=100.0, dsp_generation="DSP48E1",
     provenance="vendor", notes="PYNQ-Z1/Z2 class board"))
 
 Device.register(Device(

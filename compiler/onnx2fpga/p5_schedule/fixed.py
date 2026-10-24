@@ -11,9 +11,7 @@ def check_fixed_ops(graph):
     for node in graph.topological_order():
         if not isinstance(node, (GemmOp, FlattenOp)):
             kind = node.op_type + ("+Relu" if node.attrs.get("relu") else "")
-            raise ConfigError("mode='fixed' cannot build %s (%s) yet, only Gemm and MatMul "
-                              "with an optional fused Relu, Flatten and Reshape"
-                              % (node.name, kind))
+            raise ConfigError("mode='fixed' cannot build %s (%s) yet" % (node.name, kind))
 
 
 class UnrollForFixedLatency(Pass):
@@ -25,8 +23,8 @@ class UnrollForFixedLatency(Pass):
     def run(self, graph, context):
         for node in list(graph.topological_order()):
             if node.vectors != 1:
-                raise ConfigError("mode='fixed' takes one vector per cycle, but %s multiplies "
-                                  "%d vectors per input" % (node.name, node.vectors))
+                raise ConfigError("mode='fixed' cannot build %s, which takes %d vectors "
+                                  "per input" % (node.name, node.vectors))
             graph.replace_node(node, [DenseUnit(
                 node.name, node.inputs, node.outputs, node.weights, node.bias,
                 node.requant, node.act_dtype, node.out_dtype, node.weight_dtype)])
@@ -49,9 +47,8 @@ class UnrollForFixedLatency(Pass):
             return
         field, used, allowed = over[0]
         largest = max(units, key=lambda unit: unit.multipliers)
-        raise BudgetError(
-            "the model does not fit %s unrolled: it needs %d %s against the %d allowed, and "
-            "its largest layer %s alone has %d multipliers; use a larger device or the "
-            "streaming mode" % (device.name, used, field.upper(), allowed, largest.name,
-                                largest.multipliers))
+        raise BudgetError("the unrolled model needs %d %s, past the %d allowed on %s "
+                          "(largest layer %s has %d multipliers)"
+                          % (used, field.upper(), allowed, device.name, largest.name,
+                             largest.multipliers))
 

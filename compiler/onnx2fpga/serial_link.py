@@ -15,10 +15,9 @@ class LinkTimeout(Exception):
 
     def __init__(self, timeout, done, count, partial, baud):
         self.done, self.count, self.partial = done, count, partial
-        Exception.__init__(
-            self, "no output for %.1f s after %d of %d frames (%d bytes of a partial "
-                  "frame): is the bitstream loaded and the baud rate %d?"
-                  % (timeout, done, count, partial, baud))
+        Exception.__init__(self, "no output for %.1f s after %d of %d frames (%d bytes "
+                                 "pending) at %d baud" % (timeout, done, count, partial,
+                                                          baud))
 
 
 class Link:
@@ -72,7 +71,7 @@ class Link:
     @staticmethod
     def frames(beats, per_frame, what):
         if not beats or len(beats) % per_frame:
-            raise ValueError("%s holds %d beats, not a whole number of %d beat frames"
+            raise ValueError("%s holds %d beats, not whole %d beat frames"
                              % (what, len(beats), per_frame))
         return [beats[k:k + per_frame] for k in range(0, len(beats), per_frame)]
 

@@ -7,47 +7,37 @@ import subprocess
 import sys
 import unittest
 import zipfile
+from unittest import mock
 
 from support import Fixtures, ROOT, run
 
 from onnx2fpga.assets import AssetError, AssetLocator
 
 
-class AssetLocatorTest(unittest.TestCase):
-    def test_finds_the_checkout_layout(self):
+class Locator(unittest.TestCase):
+    def test_checkout(self):
         locator = AssetLocator()
         self.assertTrue(locator.rtl_dir.is_dir())
         self.assertEqual(len(locator.rtl_sources()), 10)
         self.assertTrue(locator.synth_script.is_file())
         self.assertTrue((locator.runtime_dir / "sim" / "harness.cpp").is_file())
+        self.assertEqual(AssetLocator(ROOT).root, ROOT)
 
-    def test_an_explicit_override_wins(self):
-        locator = AssetLocator(ROOT)
-        self.assertEqual(locator.root, ROOT)
-
-    def test_the_environment_variable_wins_over_discovery(self):
+    def test_wrong_environment_fails(self):
+        """A wrong override set on purpose must fail loudly, not quietly build against other RTL."""
         empty = Fixtures.build_dir("assets_empty")
-        previous = os.environ.get(AssetLocator.ENV)
-        os.environ[AssetLocator.ENV] = str(empty)
-        try:
-            # A wrong override set on purpose must fail loudly, not quietly build against other RTL.
+        with mock.patch.dict(os.environ, {AssetLocator.ENV: str(empty)}):
             with self.assertRaises(AssetError):
                 AssetLocator().root
-        finally:
-            if previous is None:
-                os.environ.pop(AssetLocator.ENV, None)
-            else:
-                os.environ[AssetLocator.ENV] = previous
 
-    def test_a_missing_layout_says_where_it_looked(self):
-        locator = AssetLocator(Fixtures.build_dir("assets_absent"))
+    def test_missing(self):
         with self.assertRaises(AssetError) as caught:
-            locator.root
-        self.assertIn("hardware/", str(caught.exception) + "hardware/")
+            AssetLocator(Fixtures.build_dir("assets_absent")).root
+        self.assertIn("hardware/", str(caught.exception))
         self.assertIn(AssetLocator.ENV, str(caught.exception))
 
 
-class WheelTest(unittest.TestCase):
+class Wheel(unittest.TestCase):
     """Builds the wheel and runs it with the checkout out of reach."""
 
     @classmethod
@@ -57,71 +47,55 @@ class WheelTest(unittest.TestCase):
         wheels = sorted((ROOT / "dist").glob("onnx2fpga-*.whl"))
         assert wheels, "no wheel produced"
         cls.wheel = wheels[-1]
-
         cls.site = Fixtures.build_dir("packaging_site")
-        if cls.site.exists():
-            shutil.rmtree(cls.site)
+        shutil.rmtree(cls.site)
         cls.site.mkdir(parents=True)
         zipfile.ZipFile(cls.wheel).extractall(cls.site)
 
-    def test_the_wheel_carries_the_rtl_and_the_runtime(self):
-        names = zipfile.ZipFile(self.wheel).namelist()
+    def test_contents(self):
+        archive = zipfile.ZipFile(self.wheel)
+        names = archive.namelist()
         modules = [n for n in names if n.endswith(".sv")]
         self.assertEqual(len(modules), 10, modules)
-        self.assertTrue(any(n.endswith("synth_unit.tcl") for n in names))
-        self.assertTrue(any(n.endswith("sim/harness.cpp") for n in names))
-        self.assertTrue(any(n.endswith("otf/kernels.hpp") for n in names))
-
-    def test_the_wheel_declares_the_console_command(self):
-        names = zipfile.ZipFile(self.wheel).namelist()
+        for suffix in ("synth_unit.tcl", "sim/harness.cpp", "otf/kernels.hpp"):
+            self.assertTrue(any(n.endswith(suffix) for n in names), suffix)
         entry = next(n for n in names if n.endswith("entry_points.txt"))
-        text = zipfile.ZipFile(self.wheel).read(entry).decode()
-        self.assertIn("onnx2fpga = onnx2fpga.cli:main", text)
+        self.assertIn("onnx2fpga = onnx2fpga.cli:main", archive.read(entry).decode())
 
-    def _installed(self, *arguments, cwd, timeout=900):
-        environment = dict(os.environ)
-        environment["PYTHONPATH"] = str(self.site)
+    def installed(self, *arguments, cwd):
+        environment = dict(os.environ, PYTHONPATH=str(self.site))
         environment.pop(AssetLocator.ENV, None)
-        return subprocess.run([sys.executable, "-m", "onnx2fpga"] + list(arguments),
-                              cwd=cwd, env=environment, capture_output=True,
-                              text=True, timeout=timeout)
+        return subprocess.run([sys.executable] + list(arguments), cwd=cwd,
+                              env=environment, capture_output=True, text=True,
+                              timeout=900)
 
-    def test_an_installed_copy_resolves_its_assets_from_inside_itself(self):
-        work = Fixtures.build_dir("packaging_work")
-        probe = ("from onnx2fpga.assets import AssetLocator; "
-                 "print(AssetLocator().root)")
-        environment = dict(os.environ)
-        environment["PYTHONPATH"] = str(self.site)
-        environment.pop(AssetLocator.ENV, None)
-        completed = subprocess.run([sys.executable, "-c", probe], cwd=work,
-                                   env=environment, capture_output=True, text=True)
+    def test_assets_resolve_inside_the_install(self):
+        completed = self.installed(
+            "-c", "from onnx2fpga.assets import AssetLocator; print(AssetLocator().root)",
+            cwd=Fixtures.build_dir("packaging_work"))
         self.assertEqual(completed.returncode, 0, completed.stderr)
         resolved = pathlib.Path(completed.stdout.strip())
         self.assertTrue(str(resolved).startswith(str(self.site)),
                         "installed copy reached outside itself: %s" % resolved)
 
-    def test_an_installed_copy_compiles(self):
-        work = Fixtures.build_dir("packaging_work")
-        model = work / "mlp.onnx"
-        shutil.copyfile(ROOT / "examples" / "models" / "mlp.onnx", model)
-        completed = self._installed("compile", "mlp.onnx", "--out", "out",
-                                    "--target-cycles", "64", "--quiet", cwd=work)
-        self.assertEqual(completed.returncode, 0,
-                         completed.stdout + completed.stderr)
+    def run_command(self, command, folder):
+        work = Fixtures.build_dir(folder)
+        shutil.copyfile(ROOT / "examples" / "models" / "mlp.onnx", work / "mlp.onnx")
+        completed = self.installed("-m", "onnx2fpga", command, "mlp.onnx", "--out", "out",
+                                   "--target-cycles", "64", "--quiet", cwd=work)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        return work / "out", completed
+
+    def test_compile(self):
+        out, _ = self.run_command("compile", "packaging_work")
         for relative in ("rtl/top.sv", "Makefile", "manifest.json"):
-            self.assertTrue((work / "out" / relative).exists(), relative)
-        self.assertEqual(len(list((work / "out" / "rtl").glob("otf_*.sv"))), 10)
+            self.assertTrue((out / relative).exists(), relative)
+        self.assertEqual(len(list((out / "rtl").glob("otf_*.sv"))), 10)
 
     @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
-    def test_an_installed_copy_can_simulate_what_it_emitted(self):
+    def test_simulate(self):
         """The generated Makefile points at the C++ harness, which must be inside the wheel."""
-        work = Fixtures.build_dir("packaging_sim")
-        model = work / "mlp.onnx"
-        shutil.copyfile(ROOT / "examples" / "models" / "mlp.onnx", model)
-        completed = self._installed("simulate", "mlp.onnx", "--out", "out",
-                                    "--target-cycles", "64", "--quiet", cwd=work)
-        self.assertEqual(completed.returncode, 0,
-                         completed.stdout + completed.stderr)
+        _, completed = self.run_command("simulate", "packaging_sim")
         self.assertIn("PASS", completed.stdout)
 
 

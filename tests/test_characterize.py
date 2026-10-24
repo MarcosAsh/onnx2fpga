@@ -8,15 +8,18 @@ import subprocess
 import sys
 import unittest
 
-from support import Fixtures, ROOT  # noqa: F401
-
-from onnx2fpga.measure import (Characterizer, Comparison, SynthesisResult,
-                               Subject, VivadoRunner, calibration_samples, render)
+from support import Fixtures, ROOT
 
 from onnx2fpga.compile import Compiler
+from onnx2fpga.measure import (Characterizer, Comparison, SynthesisResult,
+                               Subject, VivadoRunner, calibration_samples, render)
 from onnx2fpga.p1_ingest import OnnxModel
 from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
 from onnx2fpga.targets.device import Device
+from onnx2fpga.targets.resources import Resources
+
+CNN = ROOT / "examples" / "models" / "cnn.onnx"
+FAKE_VIVADO = ROOT / "tests" / "fake_vivado"
 
 # What the TCL writes, in the shape it writes it.
 SUMMARY = {
@@ -27,123 +30,66 @@ SUMMARY = {
 }
 
 
-class SynthesisResultTest(unittest.TestCase):
-    def test_reads_what_the_script_writes(self):
+def synth(*arguments, timeout=900):
+    return subprocess.run([sys.executable, "-m", "onnx2fpga", "synth", str(CNN),
+                           "--device", "z7020"] + list(arguments),
+                          capture_output=True, text=True, timeout=timeout,
+                          env={**os.environ, "PYTHONPATH": str(ROOT / "compiler")})
+
+
+class Results(unittest.TestCase):
+    def test_summary(self):
         path = Fixtures.build_dir("characterize") / "summary.json"
         path.write_text(json.dumps(SUMMARY))
         result = SynthesisResult.load(path)
-        self.assertEqual(result.measured.lut, 412)
-        self.assertEqual(result.measured.dsp, 6)
-        self.assertEqual(result.measured.bram36, 2.0)
+        self.assertEqual((result.measured.lut, result.measured.dsp,
+                          result.measured.bram36), (412, 6, 2.0))
         self.assertEqual(result.fmax_mhz, 240.15)
         self.assertEqual(result.stage, "synth")
 
-    def test_half_block_rams_count_as_half(self):
-        self.assertEqual(SUMMARY["bram36"],
-                         SUMMARY["ramb36"] + 0.5 * SUMMARY["ramb18"])
-
-
-class ComparisonTest(unittest.TestCase):
-    def setUp(self):
-        from onnx2fpga.targets.resources import Resources
+    def test_comparison(self):
         predicted = Resources(lut=500, ff=288, dsp=6, bram36=1.0, uram=0)
-        self.comparison = Comparison(
-            Subject("u", "otf_mvau", {"MW": 9}, predicted, 100),
-            SynthesisResult(SUMMARY))
-
-    def test_error_is_signed_and_relative(self):
-        self.assertAlmostEqual(self.comparison.error("lut"), 500 / 412 - 1.0)
-        self.assertAlmostEqual(self.comparison.error("dsp"), 0.0)
-        self.assertAlmostEqual(self.comparison.error("bram36"), -0.5)
-
-    def test_predicting_something_that_does_not_exist_is_infinite(self):
-        self.assertEqual(self.comparison.error("uram"), None)
-
-    def test_row_and_table_render(self):
-        self.assertIn("otf_mvau", self.comparison.row())
-        table = render([self.comparison])
-        self.assertIn("slowest unit runs at 240.2 MHz", table)
+        comparison = Comparison(Subject("u", "otf_mvau", {"MW": 9}, predicted, 100),
+                                SynthesisResult(SUMMARY))
+        self.assertAlmostEqual(comparison.error("lut"), 500 / 412 - 1.0)
+        self.assertAlmostEqual(comparison.error("dsp"), 0.0)
+        self.assertAlmostEqual(comparison.error("bram36"), -0.5)
+        self.assertIsNone(comparison.error("uram"))
+        self.assertIn("otf_mvau", comparison.row())
+        self.assertIn("slowest unit runs at 240.2 MHz", render([comparison]))
 
 
-class SubjectTest(unittest.TestCase):
+class Subjects(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        model = OnnxModel.load(ROOT / "examples" / "models" / "cnn.onnx")
+        model = OnnxModel.load(CNN)
+        cls.build = Fixtures.build_dir("characterize_subjects")
         cls.result = Compiler(device="z7020", target_cycles=400).compile(
-            model, calibration_samples(model), Fixtures.build_dir("characterize_subjects"))
+            model, calibration_samples(model), cls.build)
+        cls.driver = Characterizer(VivadoRunner("xc7z020-clg400-1"), Device.get("z7020"))
 
-    def test_every_unit_becomes_a_subject(self):
-        driver = Characterizer(VivadoRunner("xc7z020-clg400-1"), Device.get("z7020"))
-        graph = self.result.hardware_graph
-        subjects = driver.subjects(graph)
-        self.assertTrue(subjects)
+    def test_subjects(self):
+        subjects = self.driver.subjects(self.result.hardware_graph)
         modules = {s.module for s in subjects}
-        self.assertIn("otf_mvau", modules)
-        self.assertIn("otf_swu_line", modules)
-
-    def test_identical_units_are_characterised_once(self):
-        driver = Characterizer(VivadoRunner("xc7z020-clg400-1"), Device.get("z7020"))
-        subjects = driver.subjects(self.result.hardware_graph)
+        self.assertLessEqual({"otf_mvau", "otf_swu_line"}, modules)
         keys = [(s.module, s.generic_arguments()) for s in subjects]
         self.assertEqual(len(keys), len(set(keys)))
 
-    def test_generics_carry_the_memory_files(self):
+    def test_memory_files(self):
         graph = self.result.hardware_graph
         unit = next(n for n in graph.topological_order() if isinstance(n, MatVecUnit))
         subject = Subject.from_node(unit, graph, Device.get("z7020"))
         self.assertIn("WEIGHT_FILE=mem/", subject.generic_arguments())
 
-    def test_empty_string_generics_are_dropped(self):
-        """An empty file name would make Vivado read a file called nothing, so those parameters keep their default."""
-        subject = Subject("u", "otf_mvau",
-                          {"MW": 9, "WEIGHT_FILE": "", "BIAS_FILE": "mem/b.hex"},
-                          None, 0)
-        self.assertNotIn("WEIGHT_FILE", subject.generic_arguments())
+    def test_sources_are_relative(self):
+        sources = self.driver.sources(self.build)
+        self.assertTrue(sources, "no RTL found in %s" % self.build)
+        for source in sources:
+            self.assertFalse(pathlib.Path(source).is_absolute(), source)
 
 
-class EndToEndTest(unittest.TestCase):
-    """The whole measurement path against a Vivado stand in; the printed numbers are canned and mean nothing."""
-
-    FAKE = ROOT / "tests" / "fake_vivado"
-
-    @unittest.skipIf(shutil.which("tclsh") is None, "tclsh not installed")
-    def test_every_unit_is_measured_and_compared(self):
-        self.assertTrue(os.access(self.FAKE, os.X_OK), "%s must be executable" % self.FAKE)
-        build = Fixtures.build_dir("characterize_e2e")
-        model_path = ROOT / "examples" / "models" / "cnn.onnx"
-        completed = subprocess.run(
-            [sys.executable, "-m", "onnx2fpga", "synth", str(model_path),
-             "--device", "z7020", "--vivado", str(self.FAKE),
-             "--out", str(build), "--measurements", str(build / "measured.json")],
-            capture_output=True, text=True, timeout=900,
-            env={**os.environ, "PYTHONPATH": str(ROOT / "compiler")})
-        self.assertEqual(completed.returncode, 0,
-                         completed.stdout + completed.stderr)
-        self.assertIn("otf_mvau", completed.stdout)
-        self.assertIn("slowest unit runs at", completed.stdout)
-
-        measured = json.loads((build / "measured.json").read_text())
-        self.assertTrue(measured)
-        for row in measured:
-            self.assertIn("predicted", row)
-            self.assertIn("measured", row)
-            self.assertGreater(row["measured"]["fmax_mhz"], 0)
-
-    @unittest.skipIf(shutil.which("tclsh") is None, "tclsh not installed")
-    def test_a_missing_tool_fails_clearly_rather_than_crashing(self):
-        completed = subprocess.run(
-            [sys.executable, "-m", "onnx2fpga", "synth",
-             str(ROOT / "examples" / "models" / "cnn.onnx"),
-             "--device", "z7020", "--vivado", "/nonexistent/vivado",
-             "--out", str(Fixtures.build_dir("characterize_missing"))],
-            capture_output=True, text=True, timeout=600,
-            env={**os.environ, "PYTHONPATH": str(ROOT / "compiler")})
-        self.assertEqual(completed.returncode, 2)
-        self.assertIn("settings64.sh", completed.stderr)
-
-
-class RunnerTest(unittest.TestCase):
-    def test_environment_is_complete(self):
+class Runner(unittest.TestCase):
+    def test_environment(self):
         runner = VivadoRunner("xc7z020-clg400-1", period_ns=4.0, implement=True)
         subject = Subject("u", "otf_fifo", {"WIDTH": 24, "DEPTH": 2}, None, 0)
         environment = runner.environment(subject, ["rtl/otf_fifo.sv"], "synth/u")
@@ -152,23 +98,40 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(environment["OTF_IMPL"], "1")
         self.assertEqual(environment["OTF_GENERICS"], "DEPTH=2 WIDTH=24")
         self.assertEqual(environment["OTF_RTL"], "rtl/otf_fifo.sv")
-
-    def test_the_script_it_invokes_is_found_through_the_asset_locator(self):
-        runner = VivadoRunner("xc7z020-clg400-1")
         self.assertTrue(runner.script.exists(), runner.script)
         self.assertIn(str(runner.script), " ".join(runner.command()))
 
-    def test_sources_are_relative_to_the_build_directory(self):
-        """Built here rather than borrowed from another test, so the result does not depend on test order."""
-        model = OnnxModel.load(ROOT / "examples" / "models" / "cnn.onnx")
-        build = Fixtures.build_dir("characterize_sources")
-        Compiler(device="z7020", target_cycles=400).compile(
-            model, calibration_samples(model), build)
-        driver = Characterizer(VivadoRunner("xc7z020-clg400-1"), Device.get("z7020"))
-        sources = driver.sources(build)
-        self.assertTrue(sources, "no RTL found in %s" % build)
-        for source in sources:
-            self.assertFalse(pathlib.Path(source).is_absolute(), source)
+    def test_empty_generics_are_dropped(self):
+        """An empty file name would make Vivado read a file called nothing, so those parameters keep their default."""
+        subject = Subject("u", "otf_mvau",
+                          {"MW": 9, "WEIGHT_FILE": "", "BIAS_FILE": "mem/b.hex"}, None, 0)
+        self.assertNotIn("WEIGHT_FILE", subject.generic_arguments())
+
+
+@unittest.skipIf(shutil.which("tclsh") is None, "tclsh not installed")
+class EndToEnd(unittest.TestCase):
+    """The whole measurement path against a Vivado stand in; the printed numbers are canned and mean nothing."""
+
+    def test_measure(self):
+        self.assertTrue(os.access(FAKE_VIVADO, os.X_OK), "%s is not executable" % FAKE_VIVADO)
+        build = Fixtures.build_dir("characterize_e2e")
+        completed = synth("--vivado", str(FAKE_VIVADO), "--out", str(build),
+                          "--measurements", str(build / "measured.json"))
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("otf_mvau", completed.stdout)
+        self.assertIn("slowest unit runs at", completed.stdout)
+        measured = json.loads((build / "measured.json").read_text())
+        self.assertTrue(measured)
+        for row in measured:
+            self.assertIn("predicted", row)
+            self.assertGreater(row["measured"]["fmax_mhz"], 0)
+
+    def test_missing_vivado(self):
+        completed = synth("--vivado", "/nonexistent/vivado",
+                          "--out", str(Fixtures.build_dir("characterize_missing")),
+                          timeout=600)
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("settings64.sh", completed.stderr)
 
 
 if __name__ == "__main__":

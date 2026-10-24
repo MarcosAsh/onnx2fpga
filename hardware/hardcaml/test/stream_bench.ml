@@ -47,7 +47,6 @@ let random_bits rng ~width =
 let run
   (h @ local)
   ~rng
-  ?(timeout = 100_000)
   ?(each_cycle = fun () -> ())
   ~(sources : Source.t list)
   ~(sinks : Sink.t list)
@@ -58,12 +57,11 @@ let run
     List.for_all sinks ~f:(fun sink -> List.length sink.received >= sink.wanted)
   in
   while not (finished ()) do
-    if !cycles >= timeout
+    if !cycles >= 100_000
     then
       raise_s
         [%message
           "stream bench stalled"
-            (timeout : int)
             ~received:
               (List.map sinks ~f:(fun sink -> List.length sink.received) : int list)];
     List.iter sources ~f:(fun source ->

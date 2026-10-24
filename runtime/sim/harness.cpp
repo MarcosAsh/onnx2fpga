@@ -1,9 +1,7 @@
-// Verilator driver: randomised backpressure so handshake bugs surface, counts cycles, checks beats against the golden vectors.
+// Verilator driver: randomised backpressure, cycle counts, beats checked against the golden vectors.
 
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
-#include <iomanip>
 #include <iostream>
 #include <random>
 #include <string>
@@ -12,7 +10,7 @@
 #include "Votf_top.h"
 #include "verilated.h"
 
-#include "otf/hex_io.hpp"
+#include "otf/ports.hpp"
 
 namespace {
 
@@ -20,13 +18,13 @@ class Options {
 public:
     std::string input_path = "golden/input.hex";
     std::string expected_path = "golden/expected.hex";
-    int output_beats = 0;     // set instead of --expected to skip checking
+    int output_beats = 0;  // set instead of --expected to skip checking
     unsigned seed = 1;
     int input_duty = 100;   // percent of cycles the producer offers data
     int output_duty = 100;  // percent of cycles the consumer accepts data
     uint64_t timeout = 20'000'000;
     bool quiet = false;
-    std::string dump_path;   // where to write the beats that came out
+    std::string dump_path;  // where to write the beats that came out
 
     static Options parse(int argc, char** argv) {
         Options options;
@@ -60,52 +58,6 @@ public:
     }
 };
 
-// Overloads over the port type Verilator picks from the signal width.
-template <typename T>
-inline void port_write(T& port, const otf::Beat& beat) {
-    uint64_t value = 0;
-    for (size_t word = 0; word < beat.size() && word < 2; ++word) {
-        value |= static_cast<uint64_t>(beat[word]) << (32 * word);
-    }
-    port = static_cast<T>(value);
-}
-
-template <std::size_t N>
-inline void port_write(VlWide<N>& port, const otf::Beat& beat) {
-    for (std::size_t word = 0; word < N; ++word) {
-        port[word] = word < beat.size() ? beat[word] : 0u;
-    }
-}
-
-template <typename T>
-inline otf::Beat port_read(const T& port, size_t words) {
-    otf::Beat beat(words, 0u);
-    const uint64_t value = static_cast<uint64_t>(port);
-    for (size_t word = 0; word < words && word < 2; ++word) {
-        beat[word] = static_cast<uint32_t>(value >> (32 * word));
-    }
-    return beat;
-}
-
-template <std::size_t N>
-inline otf::Beat port_read(const VlWide<N>& port, size_t words) {
-    otf::Beat beat(words, 0u);
-    for (std::size_t word = 0; word < words && word < N; ++word) {
-        beat[word] = port[word];
-    }
-    return beat;
-}
-
-bool beats_equal(const otf::Beat& left, const otf::Beat& right) {
-    const size_t count = std::max(left.size(), right.size());
-    for (size_t word = 0; word < count; ++word) {
-        const uint32_t a = word < left.size() ? left[word] : 0u;
-        const uint32_t b = word < right.size() ? right[word] : 0u;
-        if (a != b) return false;
-    }
-    return true;
-}
-
 class Simulation {
 public:
     Simulation(Votf_top& design, const Options& options)
@@ -121,14 +73,14 @@ public:
             design_.clk = 0;
             const bool offer = sent < stimulus.size() && gate(options_.input_duty);
             design_.s_tvalid = offer;
-            if (offer) port_write(design_.s_tdata, stimulus[sent]);
+            if (offer) otf::port_write(design_.s_tdata, stimulus[sent]);
             design_.m_tready = gate(options_.output_duty);
             design_.eval();
 
             const bool input_fires = design_.s_tvalid && design_.s_tready;
             const bool output_fires = design_.m_tvalid && design_.m_tready;
             otf::Beat sampled;
-            if (output_fires) sampled = port_read(design_.m_tdata, out_words);
+            if (output_fires) sampled = otf::port_read(design_.m_tdata, out_words);
 
             design_.clk = 1;
             design_.eval();
@@ -141,9 +93,7 @@ public:
             ++cycles_;
         }
 
-        if (!options_.dump_path.empty()) {
-            dump(collected, out_words * 8);
-        }
+        if (!options_.dump_path.empty()) dump(collected, out_words * 8);
         return report(stimulus, expected, collected, sent, wanted_beats);
     }
 
@@ -177,7 +127,7 @@ private:
         const bool checking = !expected.empty();
         size_t mismatches = 0;
         for (size_t index = 0; checking && index < collected.size(); ++index) {
-            if (beats_equal(collected[index], expected[index])) continue;
+            if (collected[index] == expected[index]) continue;
             if (mismatches < 8) {
                 std::cerr << "  beat " << index << " expected "
                           << otf::HexVectors::render(expected[index], expected.digits())

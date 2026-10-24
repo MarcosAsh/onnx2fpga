@@ -1,4 +1,4 @@
-// Runs icepi_top in Verilator with a host on the far end of its serial line, driven by the --send/--expect style flags.
+// Runs icepi_top in Verilator with a host model on the far end of its serial line.
 
 #include <cmath>
 #include <cstdint>

@@ -103,7 +103,6 @@ let%expect_test "a design description elaborates into a working accelerator" =
   [%expect {| (cycles 733) |}]
 ;;
 
-(* The generated file keeps the hand written port and instance names. *)
 let%expect_test "the top level keeps the harness's port names" =
   let verilog = Top.verilog design in
   let lines = String.split_lines verilog in
@@ -133,7 +132,7 @@ let%expect_test "the top level keeps the harness's port names" =
     |}]
 ;;
 
-let mvau_node ~instance ~weights =
+let mvau_node ~instance ~weights ~input ~output =
   sprintf
     {|{"name": "%s", "instance": "%s", "kind": "otf_mvau",
        "params": {"MW": 2, "MH": 2, "SIMD": 2, "PE": 1, "ACT_BITS": 8, "WGT_BITS": 8,
@@ -146,6 +145,8 @@ let mvau_node ~instance ~weights =
     instance
     instance
     weights
+    input
+    output
 ;;
 
 (* Matvec units differing only in weights need a module each, hence no ROMs. *)
@@ -157,11 +158,11 @@ let%expect_test "units differing only in their constants are not shared" =
             "streams": [{"name": "x", "width": 16}, {"name": "y", "width": 8},
                         {"name": "y2", "width": 16}, {"name": "z", "width": 8}],
             "nodes": [%s, %s, %s]}|}
-         (mvau_node ~instance:"u_first" ~weights:"1, 2, 3, 4" "x" "y")
+         (mvau_node ~instance:"u_first" ~weights:"1, 2, 3, 4" ~input:"x" ~output:"y")
          {|{"name": "dwc", "instance": "u_dwc", "kind": "otf_dwc",
             "params": {"IN_ELEMS": 1, "OUT_ELEMS": 2, "ELEM_BITS": 8, "TOTAL_ELEMS": 2},
             "memories": {}, "inputs": ["y"], "outputs": ["y2"]}|}
-         (mvau_node ~instance:"u_second" ~weights:"5, 6, 7, 8" "y2" "z"))
+         (mvau_node ~instance:"u_second" ~weights:"5, 6, 7, 8" ~input:"y2" ~output:"z"))
   in
   let modules =
     String.split_lines (Top.verilog design)

@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,18 +15,17 @@ using Beat = std::vector<uint32_t>;
 
 class HexVectors {
 public:
-    HexVectors() = default;
-
     static HexVectors load(const std::string& path) {
         std::ifstream file(path);
         if (!file) throw std::runtime_error("cannot open " + path);
         HexVectors vectors;
         std::string line;
         while (std::getline(file, line)) {
-            const std::string trimmed = strip(line);
-            if (trimmed.empty()) continue;
-            vectors.beats_.push_back(parse(trimmed));
-            vectors.digits_ = std::max(vectors.digits_, trimmed.size());
+            const size_t first = line.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos || line.compare(first, 2, "//") == 0) continue;
+            const std::string text = line.substr(first, line.find_last_not_of(" \t\r\n") - first + 1);
+            vectors.beats_.push_back(parse(text));
+            vectors.digits_ = std::max(vectors.digits_, text.size());
         }
         return vectors;
     }
@@ -45,10 +43,8 @@ public:
     bool empty() const { return beats_.empty(); }
     size_t digits() const { return digits_; }
     void set_digits(size_t digits) { digits_ = digits; }
-    const std::vector<Beat>& beats() const { return beats_; }
 
     static std::string render(const Beat& beat, size_t digits) {
-        std::ostringstream out;
         std::string text;
         for (size_t word = beat.size(); word-- > 0;) {
             char buffer[9];
@@ -57,30 +53,19 @@ public:
         }
         size_t start = 0;
         while (start + 1 < text.size() && text.size() - start > digits) ++start;
-        text = text.substr(start);
-        while (text.size() < digits) text.insert(text.begin(), '0');
-        out << text;
-        return out.str();
+        text.erase(0, start);
+        if (text.size() < digits) text.insert(0, digits - text.size(), '0');
+        return text;
     }
 
 private:
-    static std::string strip(const std::string& line) {
-        size_t begin = line.find_first_not_of(" \t\r\n");
-        if (begin == std::string::npos) return "";
-        size_t end = line.find_last_not_of(" \t\r\n");
-        std::string body = line.substr(begin, end - begin + 1);
-        if (body.rfind("//", 0) == 0) return "";
-        return body;
-    }
-
     static Beat parse(const std::string& text) {
         Beat beat;
-        size_t position = text.size();
-        while (position > 0) {
-            const size_t take = position >= 8 ? 8 : position;
+        for (size_t end = text.size(); end > 0;) {
+            const size_t take = std::min<size_t>(end, 8);
             beat.push_back(static_cast<uint32_t>(
-                std::stoul(text.substr(position - take, take), nullptr, 16)));
-            position -= take;
+                std::stoul(text.substr(end - take, take), nullptr, 16)));
+            end -= take;
         }
         return beat;
     }

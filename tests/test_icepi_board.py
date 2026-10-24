@@ -4,7 +4,10 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
+import threading
+import tty
 import unittest
 
 import numpy as np
@@ -36,28 +39,28 @@ def manifest(in_bits, in_per_beat, in_beats, out_bits, out_per_beat, out_beats):
                        "beats": out_beats}}
 
 
-class LinkFramingTest(unittest.TestCase):
+class Framing(unittest.TestCase):
     BOARD_SETTINGS = {"baud": 1_000_000, "rx_depth": 2048, "tx_depth": 2048}
 
-    def test_beats_travel_least_significant_byte_first(self):
+    def test_byte_order(self):
         link = host.Link(manifest(8, 8, 4, 8, 1, 10), self.BOARD_SETTINGS)
         self.assertEqual(link.encode([0x0102030405060708]),
                          bytes([8, 7, 6, 5, 4, 3, 2, 1]))
         self.assertEqual(link.decode(bytes([0xcd, 0xe6, 0x07])), [0xcd, 0xe6, 0x07])
 
-    def test_widths_that_are_not_whole_bytes_round_up(self):
+    def test_partial_bytes_round_up(self):
         link = host.Link(manifest(4, 3, 2, 3, 3, 5), self.BOARD_SETTINGS)
         self.assertEqual((link.in_bytes, link.out_bytes), (2, 2))
         self.assertEqual(link.decode(link.encode([0xabc, 0x123]) + b"\x7f"),
                          [0xabc, 0x123])
 
-    def test_the_window_keeps_both_buffers_from_overflowing(self):
+    def test_window(self):
         link = host.Link(manifest(8, 8, 4, 8, 1, 10), self.BOARD_SETTINGS)
         self.assertEqual((link.frame_in, link.frame_out, link.window), (32, 10, 64))
         wide_out = host.Link(manifest(8, 1, 4, 8, 4, 200), self.BOARD_SETTINGS)
         self.assertEqual(wide_out.window, 2048 // 800)
 
-    def test_settings_the_board_cannot_make_are_refused(self):
+    def test_bad_settings(self):
         for mhz, baud in ((25, 1_000_000), (20, 3_000_000), (480, 200_000_000)):
             with self.subTest(mhz=mhz, baud=baud), self.assertRaises(BoardError):
                 IcepiZero("build/unused", mhz=mhz, baud=baud)
@@ -66,7 +69,7 @@ class LinkFramingTest(unittest.TestCase):
         self.assertEqual(IcepiZero("build/unused").bitstream.name, "v1.4.bit")
 
 
-class HostScriptTest(unittest.TestCase):
+class HostScript(unittest.TestCase):
     """host.py's run loop against a board stand in on a pseudo terminal, counting the most input bytes held."""
 
     @classmethod
@@ -90,10 +93,6 @@ class HostScriptTest(unittest.TestCase):
         return out
 
     def serve(self, out, corrupt_frame=None, frames=40):
-        import os
-        import threading
-        import tty
-
         master, slave = os.openpty()
         tty.setraw(master)
         link = host.Link.load(out)
@@ -120,7 +119,6 @@ class HostScriptTest(unittest.TestCase):
         thread = threading.Thread(target=board, daemon=True)
         thread.start()
         try:
-            # What host.py prints is for a person; the status is what is checked.
             with contextlib.redirect_stdout(io.StringIO()):
                 status = host.main([str(out), "--port", os.ttyname(slave),
                                     "--frames", str(frames), "--timeout", "5"])
@@ -131,18 +129,18 @@ class HostScriptTest(unittest.TestCase):
             thread.join(timeout=5)
         return status, held
 
-    def test_every_frame_checks_out_and_the_window_holds(self):
+    def test_run(self):
         status, held = self.serve(self.build())
         self.assertEqual(status, 0)
         self.assertEqual(held["frames"], 40)
         self.assertLessEqual(held["most"], 96)
 
-    def test_a_wrong_frame_fails_the_run(self):
+    def test_wrong_frame(self):
         status, _ = self.serve(self.build(), corrupt_frame=3)
         self.assertEqual(status, 1)
 
 
-class BoardSimulationTest(unittest.TestCase):
+class BoardSimulation(unittest.TestCase):
     """The generated board top, bit exact against the integer model."""
 
     FRAMES = 3
@@ -200,7 +198,7 @@ class BoardSimulationTest(unittest.TestCase):
         result, out = self.compile(name, model, shape, target)
         sent, expected = self.frames(result, out)
         link = host.Link(json.loads((out / "manifest.json").read_text()),
-                         LinkFramingTest.BOARD_SETTINGS)
+                         Framing.BOARD_SETTINGS)
         self.assertGreaterEqual(link.window, self.FRAMES)
         summary, received = self.simulate(out, link, sent, flags)
         self.assertIn("error_led 0 framing_errors 0", summary)
@@ -210,7 +208,7 @@ class BoardSimulationTest(unittest.TestCase):
         self.assertEqual((settings["mhz"], settings["baud"], settings["clocks_per_bit"]),
                          (20, 1_000_000, 20))
 
-    def test_the_build_makefile_remembers_its_settings(self):
+    def test_makefile_settings(self):
         out = Fixtures.build_dir("icepi_settings")
         board = IcepiZero(out, rev="v1.2", mhz=24, uart="header")
         text = board.write().read_text()
@@ -219,11 +217,11 @@ class BoardSimulationTest(unittest.TestCase):
             self.assertIn(line, text)
         self.assertEqual(board.bitstream.name, "v1.2-header.bit")
 
-    def test_mlp_at_the_board_folding_is_bit_exact(self):
+    def test_mlp(self):
         self.check("mlp", Fixtures.factory().mlp(), Fixtures.MLP_SHAPE, 256,
                    "--skew 2 --gap 3 --seed 1")
 
-    def test_cnn_is_bit_exact(self):
+    def test_cnn(self):
         self.check("cnn", Fixtures.factory().cnn(), Fixtures.CNN_SHAPE, 400,
                    "--skew -2 --gap 2 --seed 2")
 

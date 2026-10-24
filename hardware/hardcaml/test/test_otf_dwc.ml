@@ -9,11 +9,10 @@ module Make_test (Config : Otf_dwc.Config) = struct
   module Dut = Otf_dwc.Make (Config)
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
-  (* The elements come out in the order they went in, regrouped. *)
-  let random_traffic ?random_initial_state ~seed ~elements ~in_duty ~out_duty () =
+  let random_traffic ~seed ~elements ~in_duty ~out_duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -76,42 +75,12 @@ let%expect_test "repacking widens, narrows and passes through under random backp
     |}]
 ;;
 
-let%expect_test "random initial state is overwritten by the clear" =
-  List.iter
-    [ 2, 6; 6, 2 ]
-    ~f:(fun (in_elems, out_elems) ->
-      let module T =
-        Make_test (struct
-          let in_elems = in_elems
-          let out_elems = out_elems
-          let elem_bits = 4
-          let total_elems = 48
-        end)
-      in
-      let cycles =
-        T.random_traffic
-          ~random_initial_state:`All
-          ~seed:3
-          ~elements:96
-          ~in_duty:70
-          ~out_duty:70
-          ()
-      in
-      print_s [%message (cycles : int)]);
-  [%expect {|
-    (cycles 88)
-    (cycles 85)
-    |}]
-;;
-
-module Narrow = Otf_dwc.Make (struct
+module Narrow = Make_test (struct
     let in_elems = 4
     let out_elems = 1
     let elem_bits = 8
     let total_elems = 8
   end)
-
-module Harness = Hardcaml_test_harness.Lws_harness.Make (Narrow.I) (Narrow.O)
 
 (* The next beat is not taken until the last slice has gone. *)
 let%expect_test "waveform of a beat narrowed four to one" =
@@ -120,8 +89,8 @@ let%expect_test "waveform of a beat narrowed four to one" =
     ; Display_rule.port_name_matches (Glob "m$*") ~wave_format:(Bit_or Hex)
     ]
   in
-  Harness.run
-    ~create:Narrow.hierarchical
+  Narrow.Harness.run
+    ~create:Narrow.Dut.hierarchical
     ~trace:`Ports_only
     ~print_waves_after_test:(fun waves ->
       Waveform.print ~display_rules ~signals_width:9 ~display_width:90 ~wave_width:2 waves)

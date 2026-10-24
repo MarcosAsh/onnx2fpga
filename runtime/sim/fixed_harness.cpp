@@ -1,4 +1,4 @@
-// Verilator driver for fixed latency designs: one vector per cycle, each answer due exactly --latency cycles later.
+// Verilator driver for fixed latency designs: each answer is due exactly --latency cycles after its input.
 
 #include <cstdint>
 #include <cstdlib>
@@ -11,7 +11,7 @@
 #include "Votf_top.h"
 #include "verilated.h"
 
-#include "otf/hex_io.hpp"
+#include "otf/ports.hpp"
 
 namespace {
 
@@ -49,39 +49,6 @@ struct Options {
         return options;
     }
 };
-
-template <typename T>
-void port_write(T& port, const otf::Beat& beat) {
-    uint64_t value = 0;
-    for (size_t word = 0; word < beat.size() && word < 2; ++word) {
-        value |= static_cast<uint64_t>(beat[word]) << (32 * word);
-    }
-    port = static_cast<T>(value);
-}
-
-template <std::size_t N>
-void port_write(VlWide<N>& port, const otf::Beat& beat) {
-    for (std::size_t word = 0; word < N; ++word) {
-        port[word] = word < beat.size() ? beat[word] : 0u;
-    }
-}
-
-template <typename T>
-otf::Beat port_read(const T& port, size_t words) {
-    otf::Beat beat(words, 0u);
-    const uint64_t value = static_cast<uint64_t>(port);
-    for (size_t word = 0; word < words && word < 2; ++word) {
-        beat[word] = static_cast<uint32_t>(value >> (32 * word));
-    }
-    return beat;
-}
-
-template <std::size_t N>
-otf::Beat port_read(const VlWide<N>& port, size_t words) {
-    otf::Beat beat(words, 0u);
-    for (std::size_t word = 0; word < words && word < N; ++word) beat[word] = port[word];
-    return beat;
-}
 
 struct Sent {
     long cycle;
@@ -130,7 +97,7 @@ int main(int argc, char** argv) {
             && (options.input_duty >= 100
                 || static_cast<int>(rng() % 100) < options.input_duty);
         design.features_valid = offer;
-        if (offer) port_write(design.features, stimulus[sent]);
+        if (offer) otf::port_write(design.features, stimulus[sent]);
         design.eval();
 
         if (design.prediction_valid) {
@@ -147,7 +114,7 @@ int main(int argc, char** argv) {
                           << cycle - front.cycle << " cycles, not " << latency << "\n";
                 return 1;
             }
-            const otf::Beat got = port_read(design.prediction, out_words);
+            const otf::Beat got = otf::port_read(design.prediction, out_words);
             if (got != expected[front.index]) {
                 if (mismatches < 8) {
                     std::cerr << "  vector " << front.index << " expected "

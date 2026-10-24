@@ -1,5 +1,6 @@
 """The Python API: load a model, compile it, and get an accelerator back."""
 
+import collections.abc
 import contextlib
 import math
 import numbers
@@ -12,7 +13,7 @@ import warnings
 
 import numpy as np
 
-from .board import BOARDS
+from .board import IcepiZero
 from .compile import Compiler
 from .doctor import TOOLS
 from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
@@ -53,23 +54,19 @@ def load(model, custom_objects=None, name=None):
     try:
         onnx = OnnxModel.load(path)
     except (WireError, ValueError, IndexError, NotImplementedError) as error:
-        raise ModelError("%s is not an ONNX model the compiler can read: %s"
-                         % (path, error)) from error
+        raise ModelError("cannot read %s: %s" % (path, error)) from error
     return Accelerator(onnx, name=name or path.stem, custom_objects=custom_objects)
 
 
 def from_keras(model, path=None, custom_objects=None):
     """An Accelerator for a Keras model, exported through its own ONNX export."""
     try:
-        import keras
+        import keras  # noqa: F401
     except ImportError as error:
-        raise ToolchainError(
-            "from_keras needs Keras 3, which is not installed", tool="keras",
-            remedy="pip install keras, with the ONNX exporter for your backend "
-                   "(tf2onnx for TensorFlow and JAX, onnx for PyTorch)") from error
+        raise ToolchainError("from_keras needs Keras 3", tool="keras",
+                             remedy="pip install keras") from error
     if not hasattr(model, "export"):
-        raise ConfigError("from_keras takes a Keras model, not %s; for an .onnx file "
-                          "use otf.load(path)" % type(model).__name__)
+        raise ConfigError("from_keras takes a Keras model, not %s" % type(model).__name__)
     with contextlib.ExitStack() as stack:
         if path is None:
             folder = stack.enter_context(tempfile.TemporaryDirectory())
@@ -78,15 +75,10 @@ def from_keras(model, path=None, custom_objects=None):
         try:
             model.export(str(path), format="onnx")
         except (ImportError, NotImplementedError, TypeError, ValueError) as error:
-            backend = getattr(getattr(keras, "backend", None), "backend", lambda: "?")()
-            raise ToolchainError(
-                "Keras %s on the %s backend could not export %r to ONNX: %s"
-                % (getattr(keras, "__version__", "?"), backend, model.name, error),
-                tool="keras",
-                remedy="use a Keras 3 release whose model.export accepts "
-                       "format='onnx', with tf2onnx installed for TensorFlow and "
-                       "JAX or onnx for PyTorch; or export the model yourself and "
-                       "call otf.load(path)") from error
+            raise ToolchainError("Keras could not export %r to ONNX: %s"
+                                 % (model.name, error), tool="keras",
+                                 remedy="install tf2onnx or onnx, or export the model "
+                                        "yourself and call otf.load") from error
         return load(path, custom_objects=custom_objects, name=model.name)
 
 
@@ -99,18 +91,14 @@ def resolve_hdl(hdl=None):
         return "hardcaml" if _hardcaml_builds() else "sv"
     chosen = str(hdl).strip().lower()
     if chosen not in ProjectWriter.HDLS:
-        raise ConfigError("unknown backend %s: expected one of %s, or leave it unset "
-                          "to use hardcaml where it is available and sv otherwise"
+        raise ConfigError("unknown backend %s, expected one of %s"
                           % (source, ", ".join(ProjectWriter.HDLS)))
     if chosen == "hardcaml":
         reason = HardcamlGenerator().unavailable()
         if reason:
-            raise ToolchainError(
-                "%s needs the Hardcaml generator, which cannot run here: %s"
-                % (source, reason), tool="hardcaml",
-                remedy="%s; `onnx2fpga doctor` shows what is missing. The SystemVerilog "
-                       "backend (hdl='sv', --hdl sv) needs none of it"
-                       % TOOLS["hardcaml"][1])
+            raise ToolchainError("%s needs the Hardcaml generator: %s" % (source, reason),
+                                 tool="hardcaml",
+                                 remedy="run `onnx2fpga doctor`, or use hdl='sv'")
     return chosen
 
 
@@ -122,8 +110,7 @@ def _hardcaml_builds():
     try:
         generator.executable
     except HardcamlError as error:
-        warnings.warn("the Hardcaml generator is present but does not build, so this "
-                      "compile uses the SystemVerilog backend: %s"
+        warnings.warn("the Hardcaml generator does not build, using sv: %s"
                       % str(error).splitlines()[0])
         return False
     return True
@@ -144,8 +131,7 @@ def _translated():
     try:
         yield
     except NotImplementedError as error:
-        raise ModelError("the compiler cannot lower this model yet: %s"
-                         % error) from error
+        raise ModelError("cannot lower this model yet: %s" % error) from error
 
 
 class Accelerator:
@@ -213,8 +199,7 @@ class Accelerator:
             raise NotCompiledError("%s needs a compiled design: call "
                                    "acc.compile(device=...) first" % step)
         if self._compiled_revision != self._revision:
-            raise NotCompiledError("the layer settings changed after the last compile, "
-                                   "so the compiled design no longer matches them: call "
+            raise NotCompiledError("the layers changed since the last compile: call "
                                    "acc.compile() again before %s" % step)
 
     def compile(self, device=None, target=None, target_fps=None, target_cycles=None,
@@ -283,12 +268,10 @@ class Accelerator:
                                         ("target_cycles", target_cycles))
                  if value is not None]
         if given:
-            raise ConfigError("mode='fixed' runs every layer at one vector per cycle, so "
-                              "%s does not apply" % given[0])
+            raise ConfigError("mode='fixed' does not take %s" % given[0])
         pins = self.layers.pins()
         if pins:
-            raise ConfigError("mode='fixed' unrolls every layer, so the fold() pins on %s "
-                              "do not apply; call fold() with no arguments to drop them"
+            raise ConfigError("mode='fixed' cannot use the fold() pins on %s"
                               % ", ".join(sorted(pins)))
 
     @staticmethod
@@ -298,9 +281,8 @@ class Accelerator:
         try:
             return Device.get(name)
         except KeyError:
-            raise ConfigError("unknown device %r. Devices: %s (`onnx2fpga devices` lists "
-                              "their budgets)" % (name, ", ".join(Device.names()))) \
-                from None
+            raise ConfigError("unknown device %r, expected one of %s"
+                              % (name, ", ".join(Device.names()))) from None
 
     @staticmethod
     def _target(device, target, target_fps, target_cycles, previous):
@@ -317,13 +299,9 @@ class Accelerator:
             if value in (None, "fit"):
                 return ("fit", None, None)
             if value == "latency":
-                raise NotImplementedError(
-                    "target='latency' is not implemented: the folding allocator "
-                    "balances throughput, which the slowest stage sets, while latency "
-                    "is the sum of every stage and buffer on the path, which it does "
-                    "not model yet. Use target='fit', target_fps= or target_cycles=")
-            raise ConfigError("unknown target %r: expected 'fit', or a throughput as "
-                              "target_fps= or target_cycles=" % (value,))
+                raise NotImplementedError("target='latency' is not implemented yet")
+            raise ConfigError("unknown target %r, expected 'fit', target_fps or "
+                              "target_cycles" % (value,))
         if isinstance(value, bool) or not isinstance(value, numbers.Real) or value <= 0:
             raise ConfigError("%s must be a positive number, not %r" % (kind, value))
         if kind in ("target_fps", "fps"):
@@ -334,8 +312,7 @@ class Accelerator:
     @staticmethod
     def _utilisation(value):
         if not 0 < value <= 1:
-            raise ConfigError("utilisation is the fraction of the device the design may "
-                              "use, between 0 and 1, not %r" % (value,))
+            raise ConfigError("utilisation must be between 0 and 1, not %r" % (value,))
         return value
 
     def _check_target(self, result, goal, utilisation):
@@ -352,16 +329,13 @@ class Accelerator:
                    and "pinned at" not in line]
         slow_pins = [node for node in result.hardware_graph.nodes
                      if node.pinned_folding and node.cycles > cycles]
-        reasons += ["fold: %s is pinned at %s, %d cycles, which sets the floor"
+        reasons += ["fold: %s is pinned at %s, %d cycles"
                     % (node.name, _folding(node.folding), node.cycles)
                     for node in slow_pins]
         # A stage that cannot fold further is a floor no device lifts; otherwise more of the binding resource helps.
         binding = set(re.findall(r"the (\w+) budget", "\n".join(reasons)))
-        options = ["ask for %d cycles or more" % reached,
-                   "target='fit' for the fastest design that fits",
-                   "strict=False to keep the balanced design"]
-        options += ["acc.layers[%r].fold() to unpin %s" % (node.name, node.name)
-                    for node in slow_pins]
+        options = ["%d cycles or more" % reached, "target='fit'", "strict=False"]
+        options += ["acc.layers[%r].fold()" % node.name for node in slow_pins]
         if any(device.limits(utilisation).get(field, 1.0) < 1.0 for field in binding):
             options.append("a utilisation above %.2f" % utilisation)
         larger = [name for name in Device.names() if name not in (device.name, "sim")
@@ -370,33 +344,25 @@ class Accelerator:
         if binding and larger:
             options.append("a device with more %s (%s)"
                            % (" and ".join(sorted(binding)), ", ".join(larger)))
-        raise BudgetError(
-            "%s is out of reach on %s. The nearest balanced design runs at %d cycles a "
-            "frame, %.1f frames/s.\n%s\nTo fix: %s."
-            % (asked, device.name, reached, device.fmax_mhz * 1e6 / reached,
-               "\n".join(reasons), ", ".join(options[:-1]) + ", or " + options[-1]))
+        raise BudgetError("%s is out of reach on %s, the closest design takes %d cycles"
+                          "\n%s\nTry: %s" % (asked, device.name, reached,
+                                             "\n".join(reasons), ", ".join(options)))
 
     def _feeds(self, x, purpose):
         x = np.asarray(x)
         expected = self.input_shape[1:]
         if x.ndim == len(expected) + 1 and tuple(x.shape[1:]) == expected:
             return [{self.input_name: x[k:k + 1]} for k in range(x.shape[0])]
-        hint = ""
-        if tuple(x.shape) == expected:
-            hint = " That looks like one sample without its batch axis: pass x[None]."
-        raise ConfigError(
-            "%s takes a batch shaped (N, %s), the model's input %r with a batch axis "
-            "first, in the model's own layout. Got %s.%s"
-            % (purpose, ", ".join(str(d) for d in expected), self.input_name,
-               tuple(x.shape), hint))
+        hint = " (missing batch axis? use x[None])" if tuple(x.shape) == expected else ""
+        raise ConfigError("%s takes a batch shaped (N, %s), not %s%s"
+                          % (purpose, ", ".join(str(d) for d in expected),
+                             tuple(x.shape), hint))
 
     def _default_samples(self):
         if not self._float_view.annotations:
-            warnings.warn(
-                "calibrating %s on %d random normal inputs because compile() was given "
-                "no calibration data. The scales will fit noise rather than your data: "
-                "pass calibration=x_train[:64] for an accurate model"
-                % (self.name, DEFAULT_CALIBRATION), stacklevel=3)
+            warnings.warn("calibrating %s on random inputs; pass "
+                          "calibration=x_train[:64] for accurate scales" % self.name,
+                          stacklevel=3)
         return calibration_samples(self.model, DEFAULT_CALIBRATION, 0)
 
     def summary(self, print_fn=None):
@@ -557,10 +523,9 @@ class Accelerator:
         if on not in ("reference", "board"):
             raise ConfigError("predict runs on='reference' or on='board', not %r" % (on,))
         if on == "board" and not self.deployed:
-            raise NotDeployedError(
-                "predict(on='board') needs the accelerator on a board: call "
-                "acc.build(board='icepi_zero') and then acc.deploy(port=...). Until "
-                "then predict(x) runs on the integer reference model")
+            raise NotDeployedError("predict(on='board') needs "
+                                   "acc.build(board='icepi_zero') and "
+                                   "acc.deploy(port=...) first")
         feeds = self._feeds(x, "predict")
         codes = self._reference(feeds) if on == "reference" else self._on_board(feeds)
         return codes if quantized else self._dequantize(codes)
@@ -653,40 +618,30 @@ class Accelerator:
 
     def build(self, board="icepi_zero", verbose=False, **options):
         """A bitstream for `board` using the open source flow; compiles first if nothing is compiled yet."""
-        board_class = board if not isinstance(board, str) else BOARDS.get(board)
-        if board_class is None:
-            raise ConfigError("unknown board %r. Boards: %s"
-                              % (board, ", ".join(sorted(BOARDS))))
+        if isinstance(board, str) and board != IcepiZero.NAME:
+            raise ConfigError("unknown board %r, expected icepi_zero" % board)
+        board_class = IcepiZero if isinstance(board, str) else board
         if self.result is None:
             self.compile(device=board_class.DEVICE, hdl="hardcaml")
         self._require_compiled("build")
         if self.mode == "fixed":
-            raise ConfigError("build(board=...) streams frames over a serial port, which a "
-                              "fixed latency design does not speak yet; compile with "
-                              "mode='stream' for a board build")
+            raise ConfigError("build(board=...) needs mode='stream'")
         name = board_class.NAME
         if self.device.name != board_class.DEVICE:
-            raise ConfigError("%s carries %s, but this design was compiled for %s: call "
-                              "acc.compile(device=%r, ...) first"
-                              % (name, board_class.DEVICE, self.device.name,
-                                 board_class.DEVICE))
+            raise ConfigError("%s carries %s, but this design was compiled for %s"
+                              % (name, board_class.DEVICE, self.device.name))
         if self.hdl != "hardcaml":
-            raise ConfigError(
-                "build(board=%r) needs the Hardcaml backend: yosys synthesises the "
-                "Verilog the Hardcaml generator prints and cannot read the "
-                "SystemVerilog library. Call acc.compile(hdl='hardcaml', ...) first"
-                % name)
+            raise ConfigError("build(board=%r) needs the Hardcaml backend" % name)
         missing = board_class.missing_tools()
         if missing:
-            raise ToolchainError(
-                "build(board=%r) needs %s, not found on PATH or in %s"
-                % (name, " and ".join(missing), ", ".join(board_class.TOOL_DIRS)),
-                tool=missing[0], remedy=TOOLS[missing[0]][1])
+            raise ToolchainError("build(board=%r) needs %s, which is not on PATH"
+                                 % (name, " and ".join(missing)),
+                                 tool=missing[0], remedy=TOOLS[missing[0]][1])
         if isinstance(board, str):
             board = board_class(self.out_dir, **options)
         elif pathlib.Path(board.out).resolve() != self.out_dir.resolve():
-            raise ConfigError("the board writes to %s but the design is in %s: make it "
-                              "with that directory" % (board.out, self.out_dir))
+            raise ConfigError("the board writes to %s but the design is in %s"
+                              % (board.out, self.out_dir))
         board.run("bit")
         if verbose:
             print(board.render_report())
@@ -696,31 +651,26 @@ class Accelerator:
     def deploy(self, port=None, program=True, timeout=2.0):
         """Loads the bitstream into the board SRAM with openFPGALoader and opens its serial port."""
         if self.board is None:
-            raise NotCompiledError("deploy needs a bitstream: call "
-                                   "acc.build(board='icepi_zero') first")
+            raise NotCompiledError("deploy needs acc.build(board='icepi_zero') first")
         self._require_compiled("deploy")
         if program:
             if self.board.tool("openFPGALoader") is None:
-                raise ToolchainError("deploy needs openFPGALoader to load the "
-                                     "bitstream, and it is not on PATH",
+                raise ToolchainError("deploy needs openFPGALoader, which is not on PATH",
                                      tool="openFPGALoader",
-                                     remedy="%s; or load it yourself and call "
-                                            "deploy(program=False)"
-                                            % TOOLS["openFPGALoader"][1])
+                                     remedy="install it, or load the bitstream yourself "
+                                            "and call deploy(program=False)")
             self.board.run("prog")
         try:
             import serial  # noqa: F401
         except ImportError as error:
-            raise ToolchainError("deploy talks to the board with pyserial, which is "
-                                 "not installed", tool="pyserial",
+            raise ToolchainError("deploy needs pyserial", tool="pyserial",
                                  remedy=TOOLS["pyserial"][1]) from error
         self.disconnect()
         link = Link.load(self.out_dir, self.board.NAME)
         if link.window < 1:
-            raise ConfigError("a frame is %d bytes in and %d out but the board buffers "
-                              "hold %d and %d: rebuild with larger buffers"
-                              % (link.frame_in, link.frame_out, link.rx_depth,
-                                 link.tx_depth))
+            raise ConfigError("a frame of %d bytes in and %d out does not fit the board "
+                              "buffers of %d and %d" % (link.frame_in, link.frame_out,
+                                                        link.rx_depth, link.tx_depth))
         self.session = Session(link, port, timeout).open()
         return self
 
@@ -796,9 +746,7 @@ class Layer:
     def fold(self, **factors):
         """Pins how parallel this layer is (simd, pe), overriding the allocator; none hands it back."""
         if not self.factors:
-            raise ConfigError("%s is a %s, a relabelling of the stream with no hardware "
-                              "of its own, so there is nothing to fold"
-                              % (self.name, self.kind))
+            raise ConfigError("%s (%s) has nothing to fold" % (self.name, self.kind))
         unknown = sorted(set(factors) - set(self.factors))
         if unknown:
             raise ConfigError("%s (%s) folds by %s, not %s"
@@ -807,7 +755,7 @@ class Layer:
         for key, value in factors.items():
             if isinstance(value, bool) or not isinstance(value, (int, np.integer)) \
                     or value < 1:
-                raise ConfigError("%s=%r for %s: folding factors are positive integers"
+                raise ConfigError("%s=%r for %s must be a positive integer"
                                   % (key, value, self.name))
         self.pinned = {key: int(value) for key, value in factors.items()}
         self._accelerator._changed()
@@ -816,13 +764,9 @@ class Layer:
     def quantize(self, weights=None, activations=None):
         """Sets the weight precision of this layer, "int2" to "int8"; none restores the default."""
         if activations is not None:
-            raise ConfigError(
-                "activation precision cannot be set per layer: every stream between "
-                "layers is one width (int8), and a layer of its own would need a "
-                "converter on each side that the compiler does not insert")
+            raise ConfigError("activation precision cannot be set per layer")
         if weights is not None and not self.has_weights:
-            raise ConfigError("%s is a %s, which has no weights to quantize"
-                              % (self.name, self.kind))
+            raise ConfigError("%s (%s) has no weights" % (self.name, self.kind))
         self.weight_dtype = None if weights is None else _weight_dtype(weights, self.name)
         self._accelerator._changed()
         return self
@@ -880,13 +824,12 @@ class Layer:
                                       ": " + ", ".join(parts) if parts else "")
 
 
-class Layers:
+class Layers(collections.abc.Mapping):
     """The model's layers by name, in pipeline order."""
 
     def __init__(self, accelerator, graph):
-        self._layers = {}
-        for node in graph.topological_order():
-            self._layers[node.name] = Layer(accelerator, node, graph)
+        self._layers = {node.name: Layer(accelerator, node, graph)
+                        for node in graph.topological_order()}
 
     def __getitem__(self, name):
         try:
@@ -895,23 +838,11 @@ class Layers:
             raise UnknownLayerError("the model has no layer named %r. Layers: %s"
                                     % (name, ", ".join(self._layers))) from None
 
-    def __contains__(self, name):
-        return name in self._layers
-
     def __iter__(self):
         return iter(self._layers)
 
     def __len__(self):
         return len(self._layers)
-
-    def keys(self):
-        return self._layers.keys()
-
-    def values(self):
-        return self._layers.values()
-
-    def items(self):
-        return self._layers.items()
 
     def pins(self):
         return {name: dict(layer.pinned) for name, layer in self._layers.items()
@@ -928,18 +859,14 @@ class Layers:
 def _fixed_hdl(hdl):
     chosen = hdl if hdl is not None else os.environ.get(HDL_ENV) or "hardcaml"
     if str(chosen).strip().lower() == "sv":
-        raise ConfigError("mode='fixed' has Hardcaml units only, and the SystemVerilog "
-                          "library stays the reference for streaming designs, so use "
-                          "hdl='hardcaml'")
+        raise ConfigError("mode='fixed' needs hdl='hardcaml'")
     return resolve_hdl(chosen)
 
 
 def _weight_dtype(text, layer):
     found = re.fullmatch(r"int(\d+)", str(text).strip().lower())
     if not found or not 2 <= int(found.group(1)) <= 8:
-        raise ConfigError("weights=%r for %s: expected a signed width from 'int2' to "
-                          "'int8'; weights are symmetric, so unsigned types do not apply"
-                          % (text, layer))
+        raise ConfigError("weights=%r for %s, expected 'int2' to 'int8'" % (text, layer))
     bits = int(found.group(1))
     return DataType._registry.get("INT%d" % bits) or IntType(bits, True)
 

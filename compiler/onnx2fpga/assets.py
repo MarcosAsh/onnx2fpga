@@ -32,22 +32,16 @@ class AssetLocator:
         yield here / "assets"          # installed from a wheel
         yield here.parents[1]          # running from a checkout
 
-    @staticmethod
-    def holds_assets(root):
-        return all((root / marker).is_file() for marker in AssetLocator.MARKERS)
-
     @property
     def root(self):
         if self._root is None:
             for candidate in self.candidates():
-                if self.holds_assets(candidate):
+                if all((candidate / marker).is_file() for marker in self.MARKERS):
                     self._root = candidate
                     break
             else:
-                raise AssetError(
-                    "cannot find the RTL library and C++ runtime. Looked in %s. "
-                    "Set %s to the directory holding hardware/ and runtime/."
-                    % (", ".join(str(c) for c in self.candidates()), self.ENV))
+                raise AssetError("cannot find hardware/ and runtime/ in %s; set %s"
+                                 % (", ".join(map(str, self.candidates())), self.ENV))
         return self._root
 
     @property
@@ -64,9 +58,3 @@ class AssetLocator:
 
     def rtl_sources(self):
         return sorted(self.rtl_dir.glob("otf_*.sv"))
-
-    def __repr__(self):
-        try:
-            return "AssetLocator(%s)" % self.root
-        except AssetError:
-            return "AssetLocator(unresolved)"

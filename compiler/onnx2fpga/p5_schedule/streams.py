@@ -122,7 +122,7 @@ class InsertWidthConverters(Pass):
                 producer = graph.producer(name)
                 if producer is None:
                     continue
-                supplied = self._supplied_elems(producer, graph, name)
+                supplied = producer.output_beat_elems(graph)[producer.outputs.index(name)]
                 wanted = node.input_beat_elems(graph)[slot]
                 if supplied == wanted:
                     continue
@@ -139,10 +139,6 @@ class InsertWidthConverters(Pass):
                 slot = consumer.stream_inputs(graph).index(name)
                 graph.tensor(name).elems_per_beat = consumer.input_beat_elems(graph)[slot]
                 break
-
-    @staticmethod
-    def _supplied_elems(producer, graph, name):
-        return producer.output_beat_elems(graph)[producer.outputs.index(name)]
 
     @staticmethod
     def _stages(supplied, wanted):
@@ -174,8 +170,7 @@ class InsertFifos(Pass):
 
     name = "insert-fifo"
 
-    def __init__(self, minimum_depth=2, cap=None):
-        self.minimum_depth = minimum_depth
+    def __init__(self, cap=None):
         self.cap = cap
 
     def run(self, graph, context):
@@ -189,7 +184,10 @@ class InsertFifos(Pass):
                 producer = graph.producer(name)
                 if producer is None or isinstance(producer, StreamFifo):
                     continue
-                planned[name] = (producer, node, self.depth_for(analysis, name))
+                depth = analysis.depth_for(name)
+                if self.cap is not None:
+                    depth = min(depth, self.cap)
+                planned[name] = (producer, node, max(1, depth))
 
         for name, (producer, consumer, depth) in planned.items():
             self._splice(graph, producer, consumer, name, depth)
@@ -200,12 +198,6 @@ class InsertFifos(Pass):
                          % (len(planned), deepest[2]))
         graph.infer()
         return graph
-
-    def depth_for(self, analysis, name):
-        depth = analysis.depth_for(name, self.minimum_depth)
-        if self.cap is not None:
-            depth = min(depth, self.cap)
-        return max(1, depth)
 
     @staticmethod
     def _splice(graph, producer, consumer, name, depth):

@@ -28,9 +28,6 @@ val python_requant
   -> mult:int
   -> int
 
-(** Each word as the signed value of its [bits] bits. *)
-val signed_words : bits:int -> int list -> int list
-
 (** Each value masked to [bits] bits, as a memory word. *)
 val words_of_ints : bits:int -> int list -> Bits.t list
 

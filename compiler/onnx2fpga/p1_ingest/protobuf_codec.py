@@ -1,4 +1,4 @@
-"""Protobuf wire-format codec. Enough of proto3 to read and write ONNX."""
+"""Protobuf wire format, enough of proto3 to read and write ONNX."""
 
 import struct
 
@@ -36,10 +36,6 @@ class Decoder:
             shift += 7
             if shift > 63:
                 raise WireError("varint too long")
-
-    def zigzag(self):
-        raw = self.varint()
-        return (raw >> 1) ^ -(raw & 1)
 
     def fixed32(self):
         value = self._buf[self._pos:self._pos + 4]
@@ -85,22 +81,15 @@ class Encoder:
     def to_bytes(self):
         return b"".join(self._parts)
 
-    def _raw(self, data):
-        self._parts.append(data)
-
     def _varint(self, value):
         if value < 0:
             value += 1 << 64
         out = bytearray()
-        while True:
-            byte = value & 0x7F
+        while value > 0x7F:
+            out.append((value & 0x7F) | 0x80)
             value >>= 7
-            if value:
-                out.append(byte | 0x80)
-            else:
-                out.append(byte)
-                break
-        self._raw(bytes(out))
+        out.append(value)
+        self._parts.append(bytes(out))
 
     def _key(self, number, wire_type):
         self._varint((number << 3) | wire_type)
@@ -112,14 +101,14 @@ class Encoder:
     def blob_field(self, number, data):
         self._key(number, LEN)
         self._varint(len(data))
-        self._raw(data)
+        self._parts.append(data)
 
     def string_field(self, number, text):
         self.blob_field(number, text.encode("utf-8"))
 
     def float_field(self, number, value):
         self._key(number, FIXED32)
-        self._raw(struct.pack("<f", value))
+        self._parts.append(struct.pack("<f", value))
 
     def packed_field(self, number, values, fmt):
         self.blob_field(number, struct.pack("<%d%s" % (len(values), fmt), *values))

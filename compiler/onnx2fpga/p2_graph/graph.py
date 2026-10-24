@@ -1,4 +1,4 @@
-"""The compiler's working graph: tensors, nodes, and structural edits."""
+"""The compiler's working graph of tensors and nodes."""
 
 from .tensor import Tensor
 
@@ -35,9 +35,9 @@ class Graph:
     def has_tensor(self, name):
         return name in self._tensors
 
-    def ensure_tensor(self, name, **kwargs):
+    def ensure_tensor(self, name):
         if name not in self._tensors:
-            self.add_tensor(Tensor(name, **kwargs))
+            self.add_tensor(Tensor(name))
         return self._tensors[name]
 
     def fresh_name(self, stem):
@@ -74,10 +74,8 @@ class Graph:
     def consumers(self, tensor_name):
         return [n for n in self._nodes if tensor_name in n.inputs]
 
-    def rewire(self, old_name, new_name, only=None):
+    def rewire(self, old_name, new_name):
         for node in self._nodes:
-            if only is not None and node not in only:
-                continue
             node.inputs = [new_name if i == old_name else i for i in node.inputs]
         self.outputs = [new_name if o == old_name else o for o in self.outputs]
 

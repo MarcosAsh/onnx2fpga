@@ -55,7 +55,7 @@ module Make (Config : Config) = struct
     [@@deriving hardcaml]
   end
 
-  let addr_bits = Sv_int.counter_width total_in
+  let addr_bits = address_bits_for total_in
 
   let create (scope : Scope.t) (i : Signal.t I.t) =
     let spec = Clocking.to_spec i.clocking in
@@ -95,9 +95,9 @@ module Make (Config : Config) = struct
       -: Sv_int.int32 pad_l
     in
     let%hw in_bounds =
-      ~:(Sv_int.is_negative row)
+      ~:(msb row)
       &: (row <+ Sv_int.int32 ifm_h)
-      &: ~:(Sv_int.is_negative col)
+      &: ~:(msb col)
       &: (col <+ Sv_int.int32 ifm_w)
     in
     let%hw raddr =

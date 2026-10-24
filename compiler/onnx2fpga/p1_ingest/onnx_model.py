@@ -1,10 +1,10 @@
-"""Numpy-facing view over the raw ONNX protos, plus a builder for fixtures."""
+"""A numpy view of the ONNX protos, and a builder for small models."""
 
 import numpy as np
 
 from .onnx_schema import (AttributeProto, GraphProto, ModelProto, NodeProto,
-                    OperatorSetIdProto, TensorProto, TensorShapeDimension,
-                    TensorShapeProto, TypeProto, TypeTensor, ValueInfoProto)
+                          OperatorSetIdProto, TensorProto, TensorShapeDimension,
+                          TensorShapeProto, TypeProto, TypeTensor, ValueInfoProto)
 
 _NUMPY_TO_ONNX = {
     np.dtype("float32"): TensorProto.FLOAT,
@@ -16,42 +16,31 @@ _NUMPY_TO_ONNX = {
 }
 
 
-class TensorCodec:
-    """Converts between TensorProto payloads and numpy arrays."""
+def tensor_to_numpy(proto):
+    dtype = TensorProto.NUMPY_DTYPE.get(proto.data_type)
+    if dtype is None:
+        raise NotImplementedError("ONNX data_type %d" % proto.data_type)
+    if proto.raw_data:
+        array = np.frombuffer(proto.raw_data, dtype=dtype)
+    else:
+        typed = (proto.float_data or proto.double_data or proto.int64_data
+                 or proto.int32_data or proto.uint64_data)
+        array = np.asarray(typed, dtype=dtype)
+    return array.reshape(tuple(int(d) for d in proto.dims))
 
-    @staticmethod
-    def to_numpy(proto):
-        dtype = TensorProto.NUMPY_DTYPE.get(proto.data_type)
-        if dtype is None:
-            raise NotImplementedError("ONNX data_type %d" % proto.data_type)
-        shape = tuple(int(d) for d in proto.dims)
-        if proto.raw_data:
-            array = np.frombuffer(proto.raw_data, dtype=np.dtype(dtype))
-        else:
-            array = TensorCodec._from_typed_fields(proto, dtype)
-        return array.reshape(shape) if shape else array.reshape(())
 
-    @staticmethod
-    def _from_typed_fields(proto, dtype):
-        for source in (proto.float_data, proto.double_data, proto.int64_data,
-                       proto.int32_data, proto.uint64_data):
-            if source:
-                return np.asarray(source, dtype=np.dtype(dtype))
-        return np.zeros(0, dtype=np.dtype(dtype))
-
-    @staticmethod
-    def from_numpy(array, name):
-        array = np.ascontiguousarray(array)
-        data_type = _NUMPY_TO_ONNX.get(array.dtype)
-        if data_type is None:
-            raise NotImplementedError("numpy dtype %s" % array.dtype)
-        return TensorProto(name=name, data_type=data_type,
-                           dims=list(array.shape), raw_data=array.tobytes())
+def tensor_from_numpy(array, name):
+    array = np.ascontiguousarray(array)
+    data_type = _NUMPY_TO_ONNX.get(array.dtype)
+    if data_type is None:
+        raise NotImplementedError("numpy dtype %s" % array.dtype)
+    return TensorProto(name=name, data_type=data_type,
+                       dims=list(array.shape), raw_data=array.tobytes())
 
 
 class OnnxModel:
     def __init__(self, proto):
-        self._proto = proto
+        self.proto = proto
         self._initializers = {t.name: t for t in proto.graph.initializer}
 
     @classmethod
@@ -61,52 +50,42 @@ class OnnxModel:
 
     def save(self, path):
         with open(path, "wb") as handle:
-            handle.write(self._proto.encode())
-
-    @property
-    def proto(self):
-        return self._proto
+            handle.write(self.proto.encode())
 
     @property
     def graph(self):
-        return self._proto.graph
+        return self.proto.graph
 
     @property
     def opset(self):
-        for entry in self._proto.opset_import:
+        for entry in self.proto.opset_import:
             if entry.domain in ("", "ai.onnx"):
                 return int(entry.version)
         return 0
 
     def nodes(self):
-        return list(self._proto.graph.node)
+        return list(self.graph.node)
 
     def has_initializer(self, name):
         return name in self._initializers
 
     def initializer(self, name):
-        return TensorCodec.to_numpy(self._initializers[name])
+        return tensor_to_numpy(self._initializers[name])
 
     def initializer_dtype(self, name):
-        """The ONNX data_type code, which tells a quantized weight from a float one."""
         return int(self._initializers[name].data_type)
 
     def value_shape(self, name):
         for collection in (self.graph.input, self.graph.output, self.graph.value_info):
             for info in collection:
-                if info.name == name:
-                    return self._shape_of(info)
+                if info.name != name:
+                    continue
+                tensor = info.type and info.type.tensor_type
+                if tensor is None or tensor.shape is None:
+                    return None
+                return tuple(int(d.dim_value) if d.dim_value else d.dim_param or 1
+                             for d in tensor.shape.dim)
         return None
-
-    @staticmethod
-    def _shape_of(info):
-        if info.type is None or info.type.tensor_type is None:
-            return None
-        shape = info.type.tensor_type.shape
-        if shape is None:
-            return None
-        return tuple(int(d.dim_value) if d.dim_value else d.dim_param or 1
-                     for d in shape.dim)
 
     def graph_inputs(self):
         return [i.name for i in self.graph.input if i.name not in self._initializers]
@@ -116,7 +95,7 @@ class OnnxModel:
 
 
 class ModelBuilder:
-    """Assembles small ONNX models without the reference onnx package."""
+    """Builds ONNX models without the onnx package."""
 
     def __init__(self, name="model", opset=13, ir_version=8):
         self._graph = GraphProto(name=name)
@@ -132,7 +111,7 @@ class ModelBuilder:
         return self
 
     def add_initializer(self, name, array):
-        self._graph.initializer.append(TensorCodec.from_numpy(array, name))
+        self._graph.initializer.append(tensor_from_numpy(array, name))
         return self
 
     def add_node(self, op_type, inputs, outputs, name=None, **attributes):
@@ -151,12 +130,9 @@ class ModelBuilder:
 
     @staticmethod
     def _value_info(name, shape, elem_type):
-        dims = TensorShapeProto()
-        for extent in shape:
-            if isinstance(extent, str):
-                dims.dim.append(TensorShapeDimension(dim_param=extent))
-            else:
-                dims.dim.append(TensorShapeDimension(dim_value=int(extent)))
+        dims = TensorShapeProto(dim=[
+            TensorShapeDimension(dim_param=extent) if isinstance(extent, str)
+            else TensorShapeDimension(dim_value=int(extent)) for extent in shape])
         return ValueInfoProto(name=name,
                               type=TypeProto(tensor_type=TypeTensor(elem_type=elem_type,
                                                                     shape=dims)))
@@ -174,7 +150,7 @@ class ModelBuilder:
                                   s=value.encode("utf-8"))
         if isinstance(value, np.ndarray):
             return AttributeProto(name=name, type=AttributeProto.TENSOR,
-                                  t=TensorCodec.from_numpy(value, name))
+                                  t=tensor_from_numpy(value, name))
         if isinstance(value, (list, tuple)):
             return AttributeProto(name=name, type=AttributeProto.INTS,
                                   ints=[int(v) for v in value])

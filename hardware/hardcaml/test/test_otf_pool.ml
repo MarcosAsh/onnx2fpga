@@ -20,10 +20,10 @@ module Make_test (Config : Otf_pool.Config) = struct
         |> Stream_bench.of_signed_lanes ~lane_bits:data_bits))
   ;;
 
-  let random_traffic ?random_initial_state ~seed ~windows ~in_duty ~out_duty () =
+  let random_traffic ~seed ~windows ~in_duty ~out_duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -88,27 +88,4 @@ let%expect_test "max over windows under random backpressure" =
     ((channels 4) (pe 4) (window 2) (cycles (40 131 192 115)))
     ((channels 3) (pe 1) (window 3) (cycles (180 474 983 425)))
     |}]
-;;
-
-let%expect_test "random initial state is overwritten by the clear" =
-  let module T =
-    Make_test (struct
-      let channels = 6
-      let pe = 2
-      let window = 4
-      let data_bits = 8
-      let data_min = -128
-    end)
-  in
-  let cycles =
-    T.random_traffic
-      ~random_initial_state:`All
-      ~seed:11
-      ~windows:10
-      ~in_duty:60
-      ~out_duty:60
-      ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 201) |}]
 ;;

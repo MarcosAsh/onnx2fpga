@@ -89,11 +89,11 @@ def prove(build, width, latency):
 
 class Errors(unittest.TestCase):
     def test_sv(self):
-        with self.assertRaisesRegex(ConfigError, "Hardcaml units only"):
+        with self.assertRaisesRegex(ConfigError, "needs hdl='hardcaml'"):
             mlp(hdl="sv")
 
     def test_target(self):
-        with self.assertRaisesRegex(ConfigError, "target_cycles does not apply"):
+        with self.assertRaisesRegex(ConfigError, "does not take target_cycles"):
             mlp(target_cycles=64)
 
     def test_unknown_mode(self):
@@ -109,7 +109,7 @@ class Errors(unittest.TestCase):
 
     @unittest.skipIf(HARDCAML, HARDCAML)
     def test_too_big(self):
-        with self.assertRaisesRegex(BudgetError, "largest layer fc0 alone has 2048"):
+        with self.assertRaisesRegex(BudgetError, "largest layer fc0 has 2048"):
             mlp(device="icepi25")
 
     @unittest.skipIf(HARDCAML, HARDCAML)
@@ -143,7 +143,7 @@ class Mlp(unittest.TestCase):
         self.assertIn("Latency: 9 cycles, 30.0 ns at 300 MHz", text)
 
     def test_board(self):
-        with self.assertRaisesRegex(ConfigError, "does not speak yet"):
+        with self.assertRaisesRegex(ConfigError, "needs mode='stream'"):
             self.acc.build(board="icepi_zero")
 
     @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")

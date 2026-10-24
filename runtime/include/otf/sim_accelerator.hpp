@@ -1,67 +1,72 @@
-// Accelerator backed by the Verilator model; it writes hex stimulus, runs the harness and reads the beats back.
+// Runs one frame through the Verilator model: writes hex stimulus, runs the harness and reads the beats back.
 #pragma once
 
-#include <cstdio>
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "otf/accelerator.hpp"
 #include "otf/hex_io.hpp"
+#include "otf/manifest.hpp"
 
 namespace otf {
 
-class SimulationAccelerator : public Accelerator {
+class SimulationAccelerator {
 public:
     explicit SimulationAccelerator(const std::string& build_dir)
-        : build_dir_(build_dir),
-          manifest_(Manifest::load(build_dir + "/manifest.json")) {
+        : build_dir_(build_dir), manifest_(Manifest::load(build_dir + "/manifest.json")) {
         binary_ = "./obj_dir/V" + manifest_.name();
-        if (!std::filesystem::exists(build_dir_ + "/obj_dir/V" + manifest_.name())) {
-            throw std::runtime_error(
-                "simulation binary for " + manifest_.name() +
-                " not built; run make in " + build_dir_);
+        if (!std::filesystem::exists(build_dir_ + "/" + binary_)) {
+            throw std::runtime_error("simulation binary for " + manifest_.name() +
+                                     " not built; run make in " + build_dir_);
         }
     }
 
-    const Manifest& manifest() const override { return manifest_; }
+    const Manifest& manifest() const { return manifest_; }
 
-    std::vector<int8_t> infer(const std::vector<int8_t>& input) override {
+    std::vector<float> infer_float(const std::vector<float>& values) {
         const PortSpec& in = manifest_.input();
         const PortSpec& out = manifest_.output();
-        if (input.size() != in.elements()) {
+        if (values.size() != in.elements()) {
             throw std::runtime_error("expected " + std::to_string(in.elements()) +
                                      " input elements");
         }
-        write_beats(build_dir_ + "/golden/host_input.hex", input, in);
+        std::vector<int8_t> quantized;
+        for (float value : values) {
+            const double raw = std::nearbyint(value / in.scale) + in.zero_point;
+            quantized.push_back(static_cast<int8_t>(std::clamp(raw, -128.0, 127.0)));
+        }
+        write_beats(build_dir_ + "/golden/host_input.hex", quantized, in);
 
         // $readmemh paths in the netlist are relative to the build directory, so run from there.
         const std::string command =
             "cd " + build_dir_ + " && " + binary_ +
             " --input golden/host_input.hex --output-beats " +
             std::to_string(out.beats) + " --quiet --dump golden/host_output.hex";
-        if (std::system(command.c_str()) != 0) {
-            throw std::runtime_error("simulation run failed");
+        if (std::system(command.c_str()) != 0) throw std::runtime_error("simulation run failed");
+
+        std::vector<float> result;
+        for (int8_t value : read_beats(build_dir_ + "/golden/host_output.hex", out)) {
+            result.push_back(static_cast<float>((value - out.zero_point) * out.scale));
         }
-        return read_beats(build_dir_ + "/golden/host_output.hex", out);
+        return result;
     }
 
 private:
     static void write_beats(const std::string& path,
                             const std::vector<int8_t>& values, const PortSpec& port) {
+        const int beat_bits = port.elems_per_beat * port.elem_bits;
         HexVectors vectors;
-        vectors.set_digits(static_cast<size_t>(
-            (port.elems_per_beat * port.elem_bits + 3) / 4));
-        for (size_t base = 0; base < values.size();
-             base += static_cast<size_t>(port.elems_per_beat)) {
-            Beat beat((port.elems_per_beat * port.elem_bits + 31) / 32, 0u);
+        vectors.set_digits((beat_bits + 3) / 4);
+        for (size_t base = 0; base < values.size(); base += port.elems_per_beat) {
+            Beat beat((beat_bits + 31) / 32, 0u);
             for (int lane = 0; lane < port.elems_per_beat; ++lane) {
-                const uint32_t raw =
-                    static_cast<uint8_t>(values[base + static_cast<size_t>(lane)]);
                 const int bit = lane * port.elem_bits;
-                beat[static_cast<size_t>(bit / 32)] |= raw << (bit % 32);
+                beat[bit / 32] |= static_cast<uint32_t>(static_cast<uint8_t>(values[base + lane]))
+                                  << (bit % 32);
             }
             vectors.push(std::move(beat));
         }
@@ -71,13 +76,10 @@ private:
     static std::vector<int8_t> read_beats(const std::string& path, const PortSpec& port) {
         const HexVectors vectors = HexVectors::load(path);
         std::vector<int8_t> values;
-        values.reserve(vectors.size() * static_cast<size_t>(port.elems_per_beat));
         for (size_t index = 0; index < vectors.size(); ++index) {
-            const Beat& beat = vectors[index];
             for (int lane = 0; lane < port.elems_per_beat; ++lane) {
                 const int bit = lane * port.elem_bits;
-                const uint32_t word = beat[static_cast<size_t>(bit / 32)];
-                values.push_back(static_cast<int8_t>((word >> (bit % 32)) & 0xffu));
+                values.push_back(static_cast<int8_t>((vectors[index][bit / 32] >> (bit % 32)) & 0xffu));
             }
         }
         return values;

@@ -21,31 +21,83 @@ module type Instance = sig
   val circuit : Scope.t -> name:string -> Circuit.t
 end
 
+module type Stream_unit = sig
+  module In : sig
+    type 'a t =
+      { data : 'a
+      ; valid : 'a
+      }
+  end
+
+  module Out : sig
+    type 'a t =
+      { data : 'a
+      ; valid : 'a
+      }
+  end
+
+  module I : sig
+    type 'a t =
+      { clocking : 'a Clocking.t
+      ; s : 'a In.t
+      ; m : 'a Stream.Dest.t
+      }
+    [@@deriving hardcaml]
+  end
+
+  module O : sig
+    type 'a t =
+      { s : 'a Stream.Dest.t
+      ; m : 'a Out.t
+      }
+    [@@deriving hardcaml]
+  end
+
+  val hierarchical : ?instance:string -> Scope.t -> Signal.t I.t -> Signal.t O.t
+end
+
+module Circuit_of (M : sig
+    module I : Interface.S
+    module O : Interface.S
+
+    val hierarchical : ?instance:string -> Scope.t -> Signal.t I.t -> Signal.t O.t
+  end) =
+struct
+  let circuit scope ~name =
+    let module C = Circuit.With_interface (M.I) (M.O) in
+    C.create_exn ~name (M.hierarchical scope)
+  ;;
+end
+
 let drive (port : Port.t) ~data ~valid =
   port.data <-- data;
   port.valid <-- valid
 ;;
 
-let only (ports : Port.t list) ~what node =
+let only (ports : Port.t list) ~what (node : Design.Node.t) =
   match ports with
   | [ port ] -> port
-  | _ ->
-    raise_s [%message "design.json: unit needs exactly one stream" what (node : string)]
+  | _ -> raise_s [%message "design.json: unit needs exactly one stream" what node.name]
 ;;
 
 (* Units with one stream in and one out all wire up the same way. *)
-let single
-  (node : Design.Node.t)
-  ~(inputs : Port.t list)
-  ~(outputs : Port.t list)
-  ~(f :
-      data:Signal.t -> valid:Signal.t -> ready:Signal.t -> Signal.t * Signal.t * Signal.t)
-  =
-  let s = only inputs ~what:"input" node.name in
-  let m = only outputs ~what:"output" node.name in
-  let ready, data, valid = f ~data:s.data ~valid:s.valid ~ready:m.ready in
-  s.ready <-- ready;
-  drive m ~data ~valid
+let stream (node : Design.Node.t) (module M : Stream_unit) : (module Instance) =
+  (module struct
+    include Circuit_of (M)
+
+    let connect scope clocking ~inputs ~outputs =
+      let s = only inputs ~what:"input" node in
+      let m = only outputs ~what:"output" node in
+      let o =
+        M.hierarchical
+          ~instance:node.instance
+          scope
+          { clocking; s = { data = s.data; valid = s.valid }; m = { ready = m.ready } }
+      in
+      s.ready <-- o.s.ready;
+      drive m ~data:o.m.data ~valid:o.m.valid
+    ;;
+  end)
 ;;
 
 let of_node (node : Design.Node.t) : (module Instance) =
@@ -54,31 +106,21 @@ let of_node (node : Design.Node.t) : (module Instance) =
   let instance = node.instance in
   match node.kind with
   | "otf_fifo" ->
-    (module struct
-      module M = Otf_fifo.Make (struct
-          let width = param "WIDTH"
-          let depth = param "DEPTH"
-        end)
+    stream
+      node
+      (module struct
+        include Otf_fifo.Make (struct
+            let width = param "WIDTH"
+            let depth = param "DEPTH"
+          end)
 
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        module In = Beat
+        module Out = Beat
+      end)
   | "otf_act" ->
-    (module struct
-      module M = Otf_act.Make (struct
+    stream
+      node
+      (module Otf_act.Make (struct
           let channels = param "CHANNELS"
           let pe = param "PE"
           let in_bits = param "IN_BITS"
@@ -90,24 +132,7 @@ let of_node (node : Design.Node.t) : (module Instance) =
           let in_zp = param "IN_ZP"
           let out_zp = param "OUT_ZP"
           let mult = words "mult"
-        end)
-
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        end))
   | "otf_add" ->
     (module struct
       module M = Otf_add.Make (struct
@@ -124,15 +149,12 @@ let of_node (node : Design.Node.t) : (module Instance) =
           let out_zp = param "OUT_ZP"
         end)
 
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
+      include Circuit_of (M)
 
       let connect scope clocking ~inputs ~outputs =
         match inputs with
         | [ (a : Port.t); (b : Port.t) ] ->
-          let m = only outputs ~what:"output" node.name in
+          let m = only outputs ~what:"output" node in
           let o =
             M.hierarchical
               ~instance
@@ -156,13 +178,10 @@ let of_node (node : Design.Node.t) : (module Instance) =
           let fanout = param "FANOUT"
         end)
 
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
+      include Circuit_of (M)
 
       let connect scope clocking ~inputs ~(outputs : Port.t list) =
-        let s = only inputs ~what:"input" node.name in
+        let s = only inputs ~what:"input" node in
         if List.length outputs <> param "FANOUT"
         then
           raise_s
@@ -183,59 +202,33 @@ let of_node (node : Design.Node.t) : (module Instance) =
       ;;
     end)
   | "otf_dwc" ->
-    (module struct
-      module M = Otf_dwc.Make (struct
+    stream
+      node
+      (module Otf_dwc.Make (struct
           let in_elems = param "IN_ELEMS"
           let out_elems = param "OUT_ELEMS"
           let elem_bits = param "ELEM_BITS"
           let total_elems = param "TOTAL_ELEMS"
-        end)
-
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        end))
   | "otf_pool" ->
-    (module struct
-      module M = Otf_pool.Make (struct
-          let channels = param "CHANNELS"
-          let pe = param "PE"
-          let window = param "WINDOW"
-          let data_bits = param "DATA_BITS"
-          let data_min = param "DATA_MIN"
-        end)
+    stream
+      node
+      (module struct
+        include Otf_pool.Make (struct
+            let channels = param "CHANNELS"
+            let pe = param "PE"
+            let window = param "WINDOW"
+            let data_bits = param "DATA_BITS"
+            let data_min = param "DATA_MIN"
+          end)
 
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        module In = Beat
+        module Out = Beat
+      end)
   | "otf_mvau" ->
-    (module struct
-      module M = Otf_mvau.Make (struct
+    stream
+      node
+      (module Otf_mvau.Make (struct
           let mw = param "MW"
           let mh = param "MH"
           let simd = param "SIMD"
@@ -252,64 +245,37 @@ let of_node (node : Design.Node.t) : (module Instance) =
           let weights = words "weights"
           let bias = words "bias"
           let mult = words "mult"
-        end)
-
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        end))
   | "otf_swu" ->
-    (module struct
-      module M = Otf_swu.Make (struct
-          let ifm_h = param "IFM_H"
-          let ifm_w = param "IFM_W"
-          let ifm_ch = param "IFM_CH"
-          let ofm_h = param "OFM_H"
-          let ofm_w = param "OFM_W"
-          let kh = param "KH"
-          let kw = param "KW"
-          let stride_h = param "STRIDE_H"
-          let stride_w = param "STRIDE_W"
-          let pad_t = param "PAD_T"
-          let pad_l = param "PAD_L"
-          let dil_h = param "DIL_H"
-          let dil_w = param "DIL_W"
-          let simd = param "SIMD"
-          let data_bits = param "DATA_BITS"
-          let pad_value = param "PAD_VALUE"
-        end)
+    stream
+      node
+      (module struct
+        include Otf_swu.Make (struct
+            let ifm_h = param "IFM_H"
+            let ifm_w = param "IFM_W"
+            let ifm_ch = param "IFM_CH"
+            let ofm_h = param "OFM_H"
+            let ofm_w = param "OFM_W"
+            let kh = param "KH"
+            let kw = param "KW"
+            let stride_h = param "STRIDE_H"
+            let stride_w = param "STRIDE_W"
+            let pad_t = param "PAD_T"
+            let pad_l = param "PAD_L"
+            let dil_h = param "DIL_H"
+            let dil_w = param "DIL_W"
+            let simd = param "SIMD"
+            let data_bits = param "DATA_BITS"
+            let pad_value = param "PAD_VALUE"
+          end)
 
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        module In = Beat
+        module Out = Beat
+      end)
   | "otf_swu_line" ->
-    (module struct
-      module M = Otf_swu_line.Make (struct
+    stream
+      node
+      (module Otf_swu_line.Make (struct
           let ifm_h = param "IFM_H"
           let ifm_w = param "IFM_W"
           let ifm_ch = param "IFM_CH"
@@ -327,24 +293,7 @@ let of_node (node : Design.Node.t) : (module Instance) =
           let par = param "PAR"
           let data_bits = param "DATA_BITS"
           let pad_value = param "PAD_VALUE"
-        end)
-
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
-
-      let connect scope clocking ~inputs ~outputs =
-        single node ~inputs ~outputs ~f:(fun ~data ~valid ~ready ->
-          let o =
-            M.hierarchical
-              ~instance
-              scope
-              { clocking; s = { data; valid }; m = { ready } }
-          in
-          o.s.ready, o.m.data, o.m.valid)
-      ;;
-    end)
+        end))
   | kind -> raise_s [%message "design.json: no Hardcaml unit for" kind node.name]
 ;;
 
@@ -363,7 +312,6 @@ end
 let of_fixed_node (node : Design.Node.t) : (module Fixed_instance) =
   let param = Design.Node.param node in
   let words = Design.Node.words node in
-  let instance = node.instance in
   match node.kind with
   | "otf_dense" ->
     (module struct
@@ -386,12 +334,11 @@ let of_fixed_node (node : Design.Node.t) : (module Fixed_instance) =
 
       let latency = M.latency
 
-      let circuit scope ~name =
-        let module C = Circuit.With_interface (M.I) (M.O) in
-        C.create_exn ~name (M.hierarchical scope)
-      ;;
+      include Circuit_of (M)
 
-      let connect scope clocking x = (M.hierarchical ~instance scope { clocking; x }).y
+      let connect scope clocking x =
+        (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+      ;;
     end)
   | kind ->
     raise_s [%message "design.json: no fixed latency Hardcaml unit for" kind node.name]

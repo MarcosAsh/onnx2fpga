@@ -7,7 +7,7 @@ module Make_test (Config : Otf_requant.Config) = struct
   module Dut = Otf_requant.Make (Config)
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
-  (* Returns the pairs where the unit and the unbounded definition disagree. *)
+  (* Raises on a model mismatch; counts the pairs where the compiler disagrees. *)
   let check ?random_initial_state ?samples () =
     let open Config in
     let range bits = List.range (-(1 lsl (bits - 1))) (1 lsl (bits - 1)) in

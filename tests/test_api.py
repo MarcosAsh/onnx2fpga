@@ -53,27 +53,15 @@ def summary_text(acc):
     return "\n".join(lines)
 
 
-def skip_without(*tools):
-    missing = [tool for tool in tools if shutil.which(tool) is None]
-    return unittest.skipIf(missing, "%s not on PATH" % " and ".join(missing))
-
-
 @contextlib.contextmanager
 def environment(**values):
-    previous = {key: os.environ.get(key) for key in values}
-    for key, value in values.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-    try:
-        yield
-    finally:
-        for key, value in previous.items():
+    with mock.patch.dict(os.environ):
+        for key, value in values.items():
             if value is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+        yield
 
 
 def without_hardcaml():
@@ -171,7 +159,7 @@ def custom_model(op_type, **attributes):
     return builder.add_output("y", (1, 10)).build()
 
 
-class EasyPathTest(unittest.TestCase):
+class Basics(unittest.TestCase):
     """load, compile, summary, evaluate, predict, on the integer model."""
 
     def check(self, name):
@@ -222,7 +210,7 @@ class EasyPathTest(unittest.TestCase):
     def test_cnn(self):
         self.check("cnn")
 
-    def test_summary_before_compile_lists_layers_and_overrides(self):
+    def test_summary_before_compile(self):
         acc = otf.load(model("cnn"))
         acc.layers["conv0"].fold(pe=2)
         acc.layers["fc1"].quantize(weights="int4")
@@ -232,14 +220,14 @@ class EasyPathTest(unittest.TestCase):
             self.assertIn(part, text)
         self.assertEqual(repr(acc), '<Accelerator "cnn": 4 layers, not compiled>')
 
-    def test_a_quantized_model_needs_no_calibration_and_warns_about_none(self):
+    def test_qdq_needs_no_calibration(self):
         acc = otf.load(example_model("qdq_mlp_uint8"))
         with warnings_caught() as caught:
             acc.compile(hdl="sv", out_dir=Fixtures.build_dir("api_qdq"))
         self.assertEqual(caught, [])
         self.assertIn("from the model's QDQ nodes", summary_text(acc))
 
-    def test_a_float_model_without_calibration_warns(self):
+    def test_calibration_warning(self):
         acc = otf.load(model("mlp"))
         with self.assertWarnsRegex(UserWarning, "calibration=x_train"):
             acc.compile(hdl="sv", out_dir=Fixtures.build_dir("api_nocal"))
@@ -271,8 +259,8 @@ def warnings_caught():
         yield caught
 
 
-class FoldOverrideTest(unittest.TestCase):
-    def test_a_full_pin_is_honoured_and_the_rest_still_balance(self):
+class Fold(unittest.TestCase):
+    def test_full_pin(self):
         acc = otf.load(model("mlp"))
         acc.layers["fc1"].fold(simd=4, pe=2)
         acc.compile(device="vu9p", hdl="sv", target_cycles=128,
@@ -285,7 +273,7 @@ class FoldOverrideTest(unittest.TestCase):
                       "\n".join(acc.result.context.log))
         self.assertIn("pinned pe=2,simd=4", repr(acc.layers["fc1"]))
 
-    def test_a_pin_slower_than_the_target_is_named_as_the_floor(self):
+    def test_pin_sets_floor(self):
         acc = otf.load(model("mlp"))
         acc.layers["fc1"].fold(simd=4, pe=2)
         with self.assertRaises(BudgetError) as caught:
@@ -293,11 +281,10 @@ class FoldOverrideTest(unittest.TestCase):
                         calibration=batch(Fixtures.MLP_SHAPE),
                         out_dir=Fixtures.build_dir("api_pin_floor"))
         message = str(caught.exception)
-        self.assertIn("fc1 is pinned at pe=2,simd=4, 128 cycles, which sets the floor",
-                      message)
-        self.assertIn("acc.layers['fc1'].fold() to unpin fc1", message)
+        self.assertIn("fc1 is pinned at pe=2,simd=4, 128 cycles", message)
+        self.assertIn("acc.layers['fc1'].fold()", message)
 
-    def test_a_partial_pin_leaves_the_other_factor_to_the_allocator(self):
+    def test_partial_pin(self):
         acc = otf.load(model("cnn"))
         acc.layers["conv0"].fold(pe=4)
         acc.compile(device="vu9p", hdl="sv", target_cycles=100,
@@ -306,7 +293,7 @@ class FoldOverrideTest(unittest.TestCase):
         self.assertEqual(acc.layers["conv0"].folding["pe"], 4)
         self.assertEqual(acc.layers["conv0"].units, ["conv0_swu", "conv0"])
 
-    def test_changing_a_layer_needs_a_compile_which_keeps_the_rest(self):
+    def test_recompile(self):
         acc = compiled("mlp", device="icepi25", target_cycles=256)
         acc.layers["fc2"].fold(pe=2)
         with self.assertRaisesRegex(NotCompiledError, r"acc\.compile\(\) again"):
@@ -319,27 +306,25 @@ class FoldOverrideTest(unittest.TestCase):
         acc.compile()
         self.assertNotIn("pinned", "\n".join(acc.result.context.log))
 
-    def test_a_value_the_layer_cannot_take_names_the_valid_ones(self):
+    def test_invalid_value(self):
         acc = otf.load(model("mlp"))
         acc.layers["fc1"].fold(simd=5)
         with self.assertRaises(ConfigError) as caught:
             acc.compile(hdl="sv", calibration=batch(Fixtures.MLP_SHAPE),
                         out_dir=Fixtures.build_dir("api_pin_bad"))
-        message = str(caught.exception)
-        for part in ("fc1 cannot fold to simd=5", "1, 2, 4, 8, 16, 32, 64",
-                     "the 64 inputs each output sums over"):
-            self.assertIn(part, message)
+        self.assertIn("fc1 cannot fold to simd=5, valid values: 1, 2, 4, 8, 16, 32, 64",
+                      str(caught.exception))
 
-    def test_bad_factors_are_refused_when_given(self):
+    def test_bad_factors(self):
         acc = otf.load(model("cnn"))
         with self.assertRaisesRegex(ConfigError,
                                     "pool0 \\(MaxPool\\) folds by pe, not simd"):
             acc.layers["pool0"].fold(simd=2)
-        with self.assertRaisesRegex(ConfigError, "positive integers"):
+        with self.assertRaisesRegex(ConfigError, "positive integer"):
             acc.layers["conv0"].fold(pe=0)
-        with self.assertRaisesRegex(ConfigError, "positive integers"):
+        with self.assertRaisesRegex(ConfigError, "positive integer"):
             acc.layers["conv0"].fold(pe=2.5)
-        with self.assertRaisesRegex(ConfigError, "relabelling"):
+        with self.assertRaisesRegex(ConfigError, "nothing to fold"):
             acc.layers["flat0"].fold(pe=2)
         with self.assertRaises(UnknownLayerError) as caught:
             acc.layers["conv9"]
@@ -347,7 +332,7 @@ class FoldOverrideTest(unittest.TestCase):
         self.assertEqual(str(caught.exception), "the model has no layer named 'conv9'. "
                                                 "Layers: conv0, pool0, flat0, fc1")
 
-    def test_a_pin_past_the_budget_says_which_and_by_how_much(self):
+    def test_pin_over_budget(self):
         acc = otf.load(model("mlp"))
         acc.layers["fc0"].fold(simd=32, pe=64)
         with self.assertRaises(BudgetError) as caught:
@@ -356,11 +341,10 @@ class FoldOverrideTest(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("folding fc0 to pe=64,simd=32 by hand", message)
         self.assertIn("dsp", message)
-        self.assertIn("drop the pin", message)
 
 
-class PrecisionOverrideTest(unittest.TestCase):
-    def test_int4_weights_narrow_one_layer(self):
+class Precision(unittest.TestCase):
+    def test_int4(self):
         acc = otf.load(model("mlp"))
         acc.layers["fc1"].quantize(weights="int4")
         acc.compile(hdl="sv", calibration=batch(Fixtures.MLP_SHAPE),
@@ -375,11 +359,11 @@ class PrecisionOverrideTest(unittest.TestCase):
         self.assertEqual(manifest["quantization"]["layer_weights"], {"fc1": "INT4"})
         self.assertIn("weights int8 (fc1 int4)", summary_text(acc))
 
-    def test_what_cannot_be_quantized_says_why(self):
+    def test_invalid(self):
         acc = otf.load(model("cnn"))
         with self.assertRaisesRegex(ConfigError, "'int2' to 'int8'"):
             acc.layers["fc1"].quantize(weights="int16")
-        with self.assertRaisesRegex(ConfigError, "one width"):
+        with self.assertRaisesRegex(ConfigError, "per layer"):
             acc.layers["fc1"].quantize(activations="int4")
         with self.assertRaisesRegex(ConfigError, "no weights"):
             acc.layers["pool0"].quantize(weights="int4")
@@ -390,19 +374,19 @@ class PrecisionOverrideTest(unittest.TestCase):
             qdq.compile(hdl="sv", out_dir=Fixtures.build_dir("api_qdq_int4"))
 
 
-class ErrorMessageTest(unittest.TestCase):
-    def test_an_unsupported_op_names_itself_its_node_and_the_alternatives(self):
+class Errors(unittest.TestCase):
+    def test_unsupported_op(self):
         with self.assertRaises(UnsupportedOpError) as caught:
             otf.load(custom_model("Softmax", axis=1))
         error = caught.exception
         self.assertEqual((error.op_type, error.node), ("Softmax", "custom"))
         message = str(error)
         for part in ("'Softmax'", "'custom'", "Conv", "Gemm", "MaxPool",
-                     "otf.HardwareLayer", "custom_objects={'Softmax'"):
+                     "custom_objects={'Softmax'"):
             self.assertIn(part, message)
         self.assertIsInstance(error, ValueError)
 
-    def test_a_target_the_budget_cannot_hold_surfaces_the_allocator_reason(self):
+    def test_budget(self):
         acc = otf.load(model("mlp"))
         with self.assertRaises(BudgetError) as caught:
             acc.compile(device="icepi25", hdl="sv", target_cycles=64,
@@ -410,14 +394,14 @@ class ErrorMessageTest(unittest.TestCase):
                         out_dir=Fixtures.build_dir("api_budget"))
         message = str(caught.exception)
         for part in ("target_cycles=64 is out of reach on icepi25",
-                     "does not fit the dsp budget of icepi25", "ask for 256 cycles",
+                     "does not fit the dsp budget of icepi25", "256 cycles or more",
                      "strict=False", "a device with more dsp"):
             self.assertIn(part, message)
         self.assertIsNone(acc.result)
         acc.compile(target_cycles=64, strict=False)
         self.assertEqual(acc.result.folding.bottleneck_cycles, 256)
 
-    def test_a_structural_floor_does_not_blame_the_device(self):
+    def test_structural_floor(self):
         acc = otf.load(model("cnn"))
         with self.assertRaises(BudgetError) as caught:
             acc.compile(device="vu9p", hdl="sv", target_cycles=25,
@@ -439,7 +423,7 @@ class ErrorMessageTest(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "between 0 and 1"):
             acc.compile(utilisation=80)
 
-    def test_calls_out_of_order(self):
+    def test_out_of_order(self):
         acc = otf.load(model("mlp"))
         x = batch(Fixtures.MLP_SHAPE)
         for call in (lambda: acc.predict(x), lambda: acc.evaluate(x),
@@ -455,16 +439,16 @@ class ErrorMessageTest(unittest.TestCase):
         with self.assertRaisesRegex(NotCompiledError, "acc.build"):
             acc.deploy()
 
-    def test_inputs_of_the_wrong_shape(self):
+    def test_input_shape(self):
         acc = compiled("cnn")
         with self.assertRaises(ConfigError) as caught:
             acc.predict(np.zeros((1, 12, 12)))
         self.assertIn("(N, 1, 12, 12)", str(caught.exception))
-        self.assertIn("pass x[None]", str(caught.exception))
+        self.assertIn("x[None]", str(caught.exception))
         with self.assertRaisesRegex(ConfigError, "8 inputs but 3 labels"):
             acc.evaluate(batch(Fixtures.CNN_SHAPE), [1, 2, 3])
 
-    def test_a_missing_simulator_says_how_to_get_it(self):
+    def test_missing_simulator(self):
         acc = compiled("mlp")
         real = shutil.which
         with mock.patch.object(api.shutil, "which",
@@ -474,7 +458,7 @@ class ErrorMessageTest(unittest.TestCase):
         self.assertEqual(caught.exception.tool, "verilator")
         self.assertIn("sudo apt install verilator", str(caught.exception))
 
-    def test_a_missing_board_flow_says_how_to_get_it(self):
+    def test_missing_board_flow(self):
         reason = Hdl.skip_reason("hardcaml")
         if reason:
             self.skipTest(reason)
@@ -485,7 +469,7 @@ class ErrorMessageTest(unittest.TestCase):
         self.assertIn("nextpnr-ecp5", str(caught.exception))
         self.assertIn("OSS CAD Suite", str(caught.exception))
 
-    def test_a_board_needs_its_device_and_the_hardcaml_backend(self):
+    def test_board_mismatch(self):
         acc = compiled("mlp")
         with self.assertRaisesRegex(ConfigError, "icepi_zero carries icepi25.*vu9p"):
             acc.build()
@@ -495,13 +479,13 @@ class ErrorMessageTest(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unknown board 'de10'"):
             acc.build(board="de10")
 
-    def test_every_error_is_one_family(self):
+    def test_family(self):
         for error in (BudgetError, ConfigError, ModelError, NotCompiledError,
                       NotDeployedError, ToolchainError, UnsupportedOpError):
             self.assertTrue(issubclass(error, otf.Onnx2FpgaError), error)
 
 
-class KerasTest(unittest.TestCase):
+class Keras(unittest.TestCase):
     def test_from_keras(self):
         try:
             import keras
@@ -522,8 +506,8 @@ class KerasTest(unittest.TestCase):
         self.assertGreaterEqual(acc.evaluate(x)["agreement"], 0.75)
 
 
-class BackendSelectionTest(unittest.TestCase):
-    def test_the_environment_variable_picks_the_backend(self):
+class Backend(unittest.TestCase):
+    def test_environment(self):
         with environment(ONNX2FPGA_HDL="sv"):
             self.assertEqual(api.resolve_hdl(), "sv")
             acc = otf.load(model("mlp"))
@@ -531,16 +515,18 @@ class BackendSelectionTest(unittest.TestCase):
                         out_dir=Fixtures.build_dir("api_env_sv"))
             self.assertEqual(acc.hdl, "sv")
 
-    def test_the_argument_wins_over_the_environment(self):
+    def test_argument_wins_and_fallback(self):
         with environment(ONNX2FPGA_HDL="hardcaml"), without_hardcaml():
             self.assertEqual(api.resolve_hdl("sv"), "sv")
+        with environment(ONNX2FPGA_HDL=None), without_hardcaml():
+            self.assertEqual(api.resolve_hdl(), "sv")
 
-    def test_an_unknown_name_says_where_it_came_from(self):
+    def test_unknown(self):
         with environment(ONNX2FPGA_HDL="vhdl"):
             with self.assertRaisesRegex(ConfigError, "ONNX2FPGA_HDL=vhdl.*sv, hardcaml"):
                 api.resolve_hdl()
 
-    def test_asking_for_hardcaml_where_it_cannot_run_says_what_to_do(self):
+    def test_hardcaml_missing(self):
         with environment(ONNX2FPGA_HDL="hardcaml"), without_hardcaml():
             with self.assertRaises(ToolchainError) as caught:
                 api.resolve_hdl()
@@ -549,11 +535,7 @@ class BackendSelectionTest(unittest.TestCase):
                      "hdl='sv'"):
             self.assertIn(part, message)
 
-    def test_the_default_falls_back_to_sv_where_hardcaml_cannot_run(self):
-        with environment(ONNX2FPGA_HDL=None), without_hardcaml():
-            self.assertEqual(api.resolve_hdl(), "sv")
-
-    def test_the_default_is_hardcaml_where_it_runs(self):
+    def test_default_hardcaml(self):
         reason = Hdl.skip_reason("hardcaml")
         if reason:
             self.skipTest(reason)
@@ -561,13 +543,13 @@ class BackendSelectionTest(unittest.TestCase):
             self.assertEqual(api.resolve_hdl(), "hardcaml")
 
 
-class HardwareLayerTest(unittest.TestCase):
+class CustomLayer(unittest.TestCase):
     def load(self, layer, **attributes):
         op = {"Clip": "Clip", "Neg": "Neg"}[layer.__name__]
         return otf.load(custom_model(op, **attributes), custom_objects={op: layer},
                         name="custom_" + op.lower())
 
-    def test_the_layer_runs_on_both_references(self):
+    def test_references(self):
         acc = self.load(Clip, min=0.0, max=0.5)
         x = batch((1, 32))
         acc.compile(hdl="sv", calibration=x, out_dir=Fixtures.build_dir("api_clip_ref"))
@@ -581,7 +563,7 @@ class HardwareLayerTest(unittest.TestCase):
         self.assertGreaterEqual(acc.evaluate(x)["agreement"], 0.75)
         self.assertEqual(acc.predict(x).shape, (len(x), 10))
 
-    def test_a_layer_with_its_own_rtl_cannot_go_through_hardcaml(self):
+    def test_own_rtl_needs_sv(self):
         reason = Hdl.skip_reason("hardcaml")
         if reason:
             self.skipTest(reason)
@@ -590,7 +572,7 @@ class HardwareLayerTest(unittest.TestCase):
             acc.compile(hdl="hardcaml", calibration=batch((1, 32)),
                         out_dir=Fixtures.build_dir("api_neg_hc"))
 
-    def test_custom_objects_must_be_layers(self):
+    def test_must_be_layer(self):
         with self.assertRaisesRegex(ConfigError, "HardwareLayer subclass"):
             otf.load(custom_model("Clip"), custom_objects={"Clip": np.clip})
 
@@ -609,7 +591,7 @@ class SimulationCases:
         if reason:
             raise unittest.SkipTest(reason)
 
-    def test_models_are_bit_exact_on_their_inputs(self):
+    def test_bit_exact(self):
         for name, (shape, _) in MODELS.items():
             with self.subTest(model=name):
                 acc = compiled(name, hdl=self.HDL)
@@ -620,7 +602,7 @@ class SimulationCases:
                 self.assertEqual(report.frames, 4)
                 self.assertIn("bit exact: 4 frames", repr(report))
 
-    def test_a_pinned_folding_stays_bit_exact_under_backpressure(self):
+    def test_pinned_backpressure(self):
         acc = otf.load(model("mlp"), name="mlp_pinned")
         acc.layers["fc1"].fold(simd=4, pe=2)
         acc.layers["fc2"].quantize(weights="int4")
@@ -631,7 +613,7 @@ class SimulationCases:
         self.assertTrue(report.ok, report)
         self.assertEqual(len(report.sweep), 15)
 
-    def test_the_clip_layer_is_bit_exact(self):
+    def test_clip(self):
         acc = otf.load(custom_model("Clip", min=0.0, max=0.5),
                        custom_objects={"Clip": Clip}, name="clip_" + self.HDL)
         acc.layers["custom"].fold(pe=4)
@@ -643,10 +625,10 @@ class SimulationCases:
         self.assertTrue(report.ok, report)
 
 
-class SystemVerilogSimulationTest(SimulationCases, unittest.TestCase):
+class SvSimulation(SimulationCases, unittest.TestCase):
     HDL = "sv"
 
-    def test_a_layer_bringing_its_own_rtl_is_bit_exact(self):
+    def test_own_rtl(self):
         acc = otf.load(custom_model("Neg"), custom_objects={"Neg": Neg}, name="neg")
         x = batch((1, 32))
         acc.compile(device="vu9p", hdl="sv", target_cycles=64, calibration=x,
@@ -656,7 +638,7 @@ class SystemVerilogSimulationTest(SimulationCases, unittest.TestCase):
         self.assertTrue(report.ok, report)
 
 
-class HardcamlSimulationTest(SimulationCases, unittest.TestCase):
+class HardcamlSimulation(SimulationCases, unittest.TestCase):
     HDL = "hardcaml"
 
 
@@ -711,7 +693,7 @@ class Board:
         self.thread.join(timeout=5)
 
 
-class DeployTest(unittest.TestCase):
+class Deploy(unittest.TestCase):
     """build and deploy with the flow and loader mocked, and predict over a real serial line to the stand in."""
 
     @classmethod
@@ -742,7 +724,7 @@ class DeployTest(unittest.TestCase):
             {"baud": 1_000_000, "rx_depth": 2048, "tx_depth": 2048, "mhz": 20,
              "clocks_per_bit": 20}))
 
-    def test_predict_runs_on_the_board_after_deploy(self):
+    def test_predict_on_board(self):
         x = batch(Fixtures.MLP_SHAPE, count=12)
         acc = compiled("mlp", hdl="hardcaml", device="icepi25", target_cycles=256)
         stack, run = self.mocked()
@@ -767,7 +749,7 @@ class DeployTest(unittest.TestCase):
         self.assertFalse(acc.deployed)
         acc.predict(x[:1])
 
-    def test_build_compiles_for_the_board_when_nothing_is_compiled(self):
+    def test_build_compiles_first(self):
         acc = otf.load(model("mlp"))
         stack, run = self.mocked()
         with stack, warnings_caught():
@@ -775,7 +757,7 @@ class DeployTest(unittest.TestCase):
         self.assertEqual((acc.device.name, acc.hdl), ("icepi25", "hardcaml"))
         self.assertEqual(run.call_args_list[0].args, ("bit",))
 
-    def test_deploy_without_a_loader_says_how_to_get_one(self):
+    def test_no_loader(self):
         acc = compiled("mlp", hdl="hardcaml", device="icepi25", target_cycles=256)
         stack, _ = self.mocked()
         with stack:
@@ -787,7 +769,7 @@ class DeployTest(unittest.TestCase):
         self.assertIn("deploy(program=False)", str(caught.exception))
 
 
-class BitstreamTest(unittest.TestCase):
+class Bitstream(unittest.TestCase):
     """The real open flow, where yosys, nextpnr-ecp5 and ecppack are present."""
 
     @classmethod
@@ -799,7 +781,7 @@ class BitstreamTest(unittest.TestCase):
         if missing:
             raise unittest.SkipTest("%s not found" % ", ".join(missing))
 
-    def test_build_makes_a_bitstream(self):
+    def test_build(self):
         acc = compiled("mlp", hdl="hardcaml", device="icepi25", target_cycles=256)
         with contextlib.redirect_stdout(io.StringIO()):
             bitstream = acc.build(board="icepi_zero", seeds=(1, 2, 3))

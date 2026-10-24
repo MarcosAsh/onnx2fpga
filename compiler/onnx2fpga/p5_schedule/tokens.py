@@ -4,8 +4,7 @@
 class EdgeOccupancy:
     """Peak number of beats in flight on one edge."""
 
-    def __init__(self, name, produced, consumed):
-        self.name = name
+    def __init__(self, produced, consumed):
         self.produced = produced
         self.consumed = consumed
 
@@ -19,14 +18,10 @@ class EdgeOccupancy:
             peak = max(peak, index + 1 - taken)
         return peak
 
-    def __repr__(self):
-        return "EdgeOccupancy(%s, peak=%d)" % (self.name, self.peak)
-
 
 class TokenAnalysis:
-    def __init__(self, graph, source_rate=1):
+    def __init__(self, graph):
         self.graph = graph
-        self.source_rate = source_rate
         self.arrivals = {}
         self.edges = {}
 
@@ -35,7 +30,7 @@ class TokenAnalysis:
         for name in graph.inputs:
             tensor = graph.tensor(name)
             beats = tensor.numel // max(tensor.elems_per_beat, 1)
-            self.arrivals[name] = [i * self.source_rate for i in range(beats)]
+            self.arrivals[name] = list(range(beats))
 
         for node in graph.topological_order():
             start = self._start_of(node)
@@ -50,7 +45,7 @@ class TokenAnalysis:
                 start = self._start_of(node)
                 consumed = [start + offset
                             for offset in node.input_schedule(graph, index)]
-                self.edges[name] = EdgeOccupancy(name, self.arrivals[name], consumed)
+                self.edges[name] = EdgeOccupancy(self.arrivals[name], consumed)
         return self.edges
 
     def _start_of(self, node):
@@ -65,12 +60,6 @@ class TokenAnalysis:
                 start = max(start, arrival - offset)
         return start
 
-    def depth_for(self, tensor_name, minimum=2):
-        edge = self.edges.get(tensor_name)
-        return minimum if edge is None else max(minimum, edge.peak)
-
-    def report(self):
-        rows = ["%-28s %8s" % ("edge", "peak")]
-        for name, edge in sorted(self.edges.items()):
-            rows.append("%-28s %8d" % (name, edge.peak))
-        return "\n".join(rows)
+    def depth_for(self, name):
+        edge = self.edges.get(name)
+        return 2 if edge is None else max(2, edge.peak)

@@ -18,13 +18,8 @@ val of_unsigned : Signal.t -> Signal.t
 (** [mul x v] is the wrapping 32 bit product, as in SystemVerilog. *)
 val mul : Signal.t -> int -> Signal.t
 
-val is_negative : Signal.t -> Signal.t
-
 (** [x < 0 ? 0 : x] on a 32 bit signal. *)
 val clamp_at_zero : Signal.t -> Signal.t
-
-(** [(count <= 1) ? 1 : $clog2(count)], the width every loop counter is declared with. *)
-val counter_width : int -> int
 
 (** [value == count - 1] at the counter's own width. *)
 val is_last : Signal.t -> count:int -> Signal.t

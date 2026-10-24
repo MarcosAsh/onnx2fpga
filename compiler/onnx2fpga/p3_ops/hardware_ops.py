@@ -1,10 +1,12 @@
-"""Streaming hardware nodes, each mapping one-to-one onto a SystemVerilog module."""
+"""Streaming hardware nodes, each one SystemVerilog module."""
+
+from abc import abstractmethod
 
 import numpy as np
 
-from ..targets.resources import MemoryStyle, Resources
-from ..p2_graph.datatype import INT32, IntType
-from ..p2_graph.node import HwNode, MemorySpec
+from ..targets.resources import Resources, memory_cost
+from ..p2_graph.datatype import IntType
+from ..p2_graph.node import MemorySpec, Node
 from .onnx_ops import Im2Col
 
 
@@ -13,25 +15,59 @@ def divisors(value, limit=None):
     return [d for d in range(1, limit + 1) if value % d == 0]
 
 
-class StreamingNode(HwNode):
-    """Common plumbing: beat geometry, cycle cost, and per-beat input and output schedules for buffer sizing."""
+def multiplier_bits(requant):
+    return int(max(2, int(np.abs(requant.multipliers).max()).bit_length() + 1))
+
+
+class StreamingNode(Node):
+    """A node that maps to one streaming module: folding, cycle cost, ports and beat schedules."""
+
+    module = None
+    input_ports = ("s",)
+
+    def __init__(self, name, inputs, outputs, **attrs):
+        Node.__init__(self, name, inputs, outputs, **attrs)
+        self.folding = dict(self.default_folding())
+
+    def default_folding(self):
+        return {}
+
+    def folding_options(self):
+        """Legal folding assignments, cheapest first."""
+        return [{}]
+
+    def apply_folding(self, choice):
+        self.folding.update(choice)
 
     @property
-    def frames(self):
-        return int(self.attrs.get("frames", 1))
+    def pinned_folding(self):
+        """Factors a user fixed by hand; the scheduler chooses the rest."""
+        return dict(self.attrs.get("pinned_folding", {}))
+
+    def allowed_foldings(self):
+        pinned = self.pinned_folding
+        return [option for option in self.folding_options()
+                if all(option.get(key) == value for key, value in pinned.items())]
+
+    def starting_folding(self):
+        if not self.pinned_folding:
+            return self.default_folding()
+        return dict(self.allowed_foldings()[0])
+
+    @property
+    @abstractmethod
+    def cycles(self):
+        """Cycles to process one frame once the pipeline is primed."""
 
     def input_beats(self, graph, index=0):
         name = self.stream_inputs(graph)[index]
         return graph.tensor(name).numel // self.input_beat_elems(graph)[index]
 
     def output_beats(self, graph, index=0):
-        name = self.outputs[index]
-        return graph.tensor(name).numel // self.output_beat_elems(graph)[index]
+        return graph.tensor(self.outputs[index]).numel // self.output_beat_elems(graph)[index]
 
     def _uniform(self, beats):
         """Evenly spread, never faster than one beat per cycle."""
-        if beats <= 0:
-            return []
         span = max(self.cycles, beats)
         return [i * span // beats for i in range(beats)]
 
@@ -41,38 +77,56 @@ class StreamingNode(HwNode):
     def output_schedule(self, graph, index=0):
         return self._uniform(self.output_beats(graph, index))
 
-    def throughput_cycles(self):
-        return self.cycles
+    def input_beat_elems(self, graph):
+        return [1] * len(self.stream_inputs(graph))
+
+    def output_beat_elems(self, graph):
+        return [1] * len(self.outputs)
 
     def resources(self, device):
-        """A device with its own cost model prices the unit itself; the rest use the AMD model."""
-        model = device.cost_model
-        if model is not None:
-            return model.estimate(self)
+        """Priced by the device's own cost model if it has one, else by the AMD model."""
+        if device.cost_model is not None:
+            return device.cost_model.estimate(self)
         return self.amd_resources(device)
 
     def amd_resources(self, device):
-        return Resources.zero()
+        return Resources()
 
-    def sv_params(self, graph):
+    def memories(self, graph):
+        """MemorySpec entries by name, written as $readmemh images."""
         return {}
+
+    def memory_paths(self):
+        return self.attrs.get("mem_paths", {})
+
+    def rtl_files(self):
+        """SystemVerilog sources this unit brings beyond the library, by file name."""
+        return {}
+
+    def sv_connections(self, graph, net):
+        wiring = {"clk": "clk", "rst_n": "rst_n"}
+        ports = list(zip(self.input_ports, self.stream_inputs(graph)))
+        for prefix, name in ports + [("m", self.outputs[0])]:
+            for signal in ("tdata", "tvalid", "tready"):
+                wiring["%s_%s" % (prefix, signal)] = net(name, signal)
+        return wiring
 
 
 class MatVecUnit(StreamingNode):
-    """Folded matrix-vector engine with fused bias and rescale; a vector costs (MW/SIMD) * (MH/PE) cycles."""
+    """Folded matrix-vector engine with fused bias and rescale; (MW/SIMD) * (MH/PE) cycles a vector."""
 
     module = "otf_mvau"
 
     def __init__(self, name, inputs, outputs, weights, bias, requant,
-                 act_dtype, out_dtype, weight_dtype, vectors=1, **attrs):
+                 act_dtype, out_dtype, weight_dtype, vectors=1):
         self.weights = np.asarray(weights, dtype=np.int64)
         self.bias = np.asarray(bias, dtype=np.int64)
         self.requant = requant
         self.act_dtype = act_dtype
         self.out_dtype = out_dtype
         self.weight_dtype = weight_dtype
-        attrs.setdefault("vectors", vectors)
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
+        self.vectors = int(vectors)
+        StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
     def mw(self):
@@ -81,10 +135,6 @@ class MatVecUnit(StreamingNode):
     @property
     def mh(self):
         return int(self.weights.shape[1])
-
-    @property
-    def vectors(self):
-        return int(self.attrs["vectors"])
 
     @property
     def simd(self):
@@ -106,12 +156,9 @@ class MatVecUnit(StreamingNode):
         return {"simd": 1, "pe": 1}
 
     def folding_options(self):
-        options = []
-        for simd in divisors(self.mw):
-            for pe in divisors(self.mh):
-                options.append({"simd": simd, "pe": pe})
-        options.sort(key=lambda c: (c["simd"] * c["pe"], c["pe"]))
-        return options
+        options = [{"simd": simd, "pe": pe}
+                   for simd in divisors(self.mw) for pe in divisors(self.mh)]
+        return sorted(options, key=lambda c: (c["simd"] * c["pe"], c["pe"]))
 
     @property
     def cycles(self):
@@ -129,26 +176,24 @@ class MatVecUnit(StreamingNode):
         hi += int(self.bias.max(initial=0))
         return IntType.smallest_for(lo, hi)
 
+    @property
+    def mult_bits(self):
+        return multiplier_bits(self.requant)
+
     def amd_resources(self, device):
         acc_bits = self.accumulator_dtype.bits
-        macs = self.pe * self.simd
-        dsp = device.dsp_cost(macs, self.act_dtype.bits, self.weight_dtype.bits)
+        dsp = device.dsp_cost(self.pe * self.simd, self.act_dtype.bits, self.weight_dtype.bits)
         dsp += self.pe if acc_bits > 18 else 0
-        adder_lut = self.pe * max(0, self.simd - 1) * acc_bits * 0.7
-        control_ff = self.pe * acc_bits + self.simd * self.act_dtype.bits
-        compute = Resources(lut=adder_lut, ff=control_ff, dsp=dsp)
-
+        compute = Resources(lut=self.pe * max(0, self.simd - 1) * acc_bits * 0.7,
+                            ff=self.pe * acc_bits + self.simd * self.act_dtype.bits,
+                            dsp=dsp)
         depth = self.synapse_fold * self.neuron_fold
         width = self.simd * self.weight_dtype.bits
-        style = MemoryStyle.select(depth, width)
-        weight_mem = style.cost(depth, width) * self.pe
-
-        buffer_cost = Resources.zero()
+        cost = compute + memory_cost(depth, width) * self.pe
         if self.neuron_fold > 1:
-            buffer_cost = MemoryStyle.select(
-                self.synapse_fold, self.simd * self.act_dtype.bits
-            ).cost(self.synapse_fold, self.simd * self.act_dtype.bits)
-        return compute + weight_mem + buffer_cost
+            width = self.simd * self.act_dtype.bits
+            cost = cost + memory_cost(self.synapse_fold, width)
+        return cost
 
     def input_beat_elems(self, graph):
         return [self.simd]
@@ -157,7 +202,7 @@ class MatVecUnit(StreamingNode):
         return [self.pe]
 
     def infer(self, graph):
-        """Spatial structure survives only when the innermost axis is already the multiplied vector, as after a window unit."""
+        """Keeps the spatial shape only when the innermost axis is already the multiplied vector."""
         source = graph.tensor(self.inputs[0])
         out = graph.ensure_tensor(self.outputs[0])
         if source.shape and int(source.shape[-1]) == self.mw:
@@ -169,10 +214,8 @@ class MatVecUnit(StreamingNode):
 
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64).reshape(-1, self.mw)
-        acc = x @ self.weights + self.bias
-        out = self.requant.apply(acc)
-        shape = graph.tensor(self.outputs[0]).shape
-        return [out.reshape(shape)]
+        out = self.requant.apply(x @ self.weights + self.bias)
+        return [out.reshape(graph.tensor(self.outputs[0]).shape)]
 
     def input_schedule(self, graph, index=0):
         stride = self.synapse_fold * self.neuron_fold
@@ -187,15 +230,13 @@ class MatVecUnit(StreamingNode):
                 for nf in range(self.neuron_fold)]
 
     def memories(self, graph):
-        """Weight layout mirrors the RTL: one memory per PE, addressed by (neuron fold, synapse fold)."""
+        """One weight memory per PE, addressed by (neuron fold, synapse fold)."""
         pe, simd = self.pe, self.simd
         packed = np.zeros((pe, self.neuron_fold * self.synapse_fold, simd), dtype=np.int64)
         for p in range(pe):
             for nf in range(self.neuron_fold):
-                out_channel = nf * pe + p
-                for sf in range(self.synapse_fold):
-                    window = self.weights[sf * simd:(sf + 1) * simd, out_channel]
-                    packed[p, nf * self.synapse_fold + sf, :] = window
+                column = self.weights[:, nf * pe + p].reshape(self.synapse_fold, simd)
+                packed[p, nf * self.synapse_fold:(nf + 1) * self.synapse_fold] = column
         return {
             "weights": MemorySpec(packed, self.weight_dtype.bits, packed=True),
             "bias": MemorySpec(self.bias.reshape(self.neuron_fold, pe).T,
@@ -203,10 +244,6 @@ class MatVecUnit(StreamingNode):
             "mult": MemorySpec(self.requant.broadcast_to(self.mh).multipliers.reshape(
                 self.neuron_fold, pe).T, self.mult_bits),
         }
-
-    @property
-    def mult_bits(self):
-        return int(max(2, int(np.abs(self.requant.multipliers).max()).bit_length() + 1))
 
     def sv_params(self, graph):
         paths = self.memory_paths()
@@ -226,7 +263,7 @@ class MatVecUnit(StreamingNode):
 
 
 class DenseUnit(MatVecUnit):
-    """A matvec unrolled to one vector per cycle with no handshake, for fixed latency designs; Hardcaml only."""
+    """A matvec unrolled to one vector per cycle with no handshake; Hardcaml only."""
 
     module = "otf_dense"
     hardcaml_only = True
@@ -273,12 +310,14 @@ class DenseUnit(MatVecUnit):
 
 
 class SlidingWindowUnit(StreamingNode):
-    """Turns a channel-last image stream into flattened windows; `line` keeps a span, `frame` the whole map."""
+    """Flattened windows of a channel-last image; `line` buffers a span, `frame` the whole map."""
 
-    STRATEGIES = {"line": "otf_swu_line", "frame": "otf_swu"}
+    MODULES = {"line": "otf_swu_line", "frame": "otf_swu"}
 
     def __init__(self, name, inputs, outputs, ifm_dim, ifm_ch, kernel, strides,
-                 pads, dilations, dtype, strategy="line", pad_value=0, **attrs):
+                 pads, dilations, dtype, strategy="line", pad_value=0):
+        if strategy not in self.MODULES:
+            raise NotImplementedError("sliding window strategy %r" % strategy)
         self.ifm_dim = tuple(ifm_dim)
         self.ifm_ch = int(ifm_ch)
         self.kernel = tuple(kernel)
@@ -288,13 +327,11 @@ class SlidingWindowUnit(StreamingNode):
         self.dtype = dtype
         self.strategy = strategy
         self.pad_value = int(pad_value)
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
-        if strategy not in self.STRATEGIES:
-            raise NotImplementedError("sliding window strategy %r" % strategy)
+        StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
     def module(self):
-        return self.STRATEGIES[self.strategy]
+        return self.MODULES[self.strategy]
 
     def window(self):
         return Im2Col(self.kernel, self.strides, self.pads, self.dilations)
@@ -315,13 +352,11 @@ class SlidingWindowUnit(StreamingNode):
 
     @property
     def backward_reach(self):
-        """How far the reader walks back on wrapping to the next output row; the buffer must still hold it."""
-        out_w = self.ofm_dim[1]
-        return max(0, (out_w - 1) * self.strides[1] - self.pads[1])
+        """How far the reader walks back when it wraps to the next output row."""
+        return max(0, (self.ofm_dim[1] - 1) * self.strides[1] - self.pads[1])
 
     @property
     def buffer_pixels(self):
-        """Depth of the pixel buffer the chosen strategy needs, in pixels."""
         if self.strategy == "frame":
             return self.ifm_dim[0] * self.ifm_dim[1]
         required = self.span_pixels + self.backward_reach + 1
@@ -341,17 +376,17 @@ class SlidingWindowUnit(StreamingNode):
 
     @property
     def simd(self):
-        """Elements per output beat, counted along the flattened window."""
+        """Elements per output beat, along the flattened window."""
         return self.folding["simd"]
 
     @property
     def sub_elems(self):
-        """Elements per input beat, capped at one pixel; the unit widens by reading more columns."""
+        """Elements per input beat, at most one pixel; wider beats read more columns."""
         return min(self.simd, self.ifm_ch)
 
     @property
     def parallel_columns(self):
-        """Adjacent kernel columns emitted per beat; one is the classic channel folded mode."""
+        """Adjacent kernel columns emitted per beat."""
         return self.simd // self.sub_elems
 
     def default_folding(self):
@@ -367,19 +402,16 @@ class SlidingWindowUnit(StreamingNode):
 
     @property
     def cycles(self):
-        """The line strategy overlaps capture and replay; the frame strategy serialises them."""
+        """The line buffer overlaps capture and replay; the frame buffer does not."""
         if self.strategy == "frame":
             return self.capture_cycles + self.replay_cycles
         return max(self.capture_cycles, self.replay_cycles)
 
     def amd_resources(self, device):
-        """Column parallelism replicates the buffer, so memory scales with it and control logic does not."""
         depth = self.buffer_pixels * self.ifm_ch // self.sub_elems
         width = self.sub_elems * self.dtype.bits
-        style = MemoryStyle.select(depth, width)
-        memory = style.cost(depth, width) * self.parallel_columns
-        counters = Resources(lut=260 + 40 * self.parallel_columns, ff=200)
-        return memory + counters
+        memory = memory_cost(depth, width) * self.parallel_columns
+        return memory + Resources(lut=260 + 40 * self.parallel_columns, ff=200)
 
     def input_beat_elems(self, graph):
         return [self.sub_elems]
@@ -416,20 +448,12 @@ class SlidingWindowUnit(StreamingNode):
         return params
 
 
-class ActivationUnit(StreamingNode):
-    """Standalone rescale and clamp, used where no matvec absorbed it."""
+class ChannelUnit(StreamingNode):
+    """Folded by `pe` lanes across the channels, `pe` elements per beat on every port."""
 
-    module = "otf_act"
-
-    def __init__(self, name, inputs, outputs, channels, elements, requant,
-                 in_dtype, out_dtype, in_zero_point=0, **attrs):
+    def __init__(self, name, inputs, outputs, channels):
         self.channels = int(channels)
-        self.elements = int(elements)
-        self.requant = requant
-        self.in_dtype = in_dtype
-        self.out_dtype = out_dtype
-        self.in_zero_point = int(in_zero_point)
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
+        StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
     def pe(self):
@@ -441,20 +465,39 @@ class ActivationUnit(StreamingNode):
     def folding_options(self):
         return [{"pe": p} for p in divisors(self.channels)]
 
+    def input_beat_elems(self, graph):
+        return [self.pe] * len(self.input_ports)
+
+    def output_beat_elems(self, graph):
+        return [self.pe]
+
+
+class ActivationUnit(ChannelUnit):
+    """Standalone rescale and clamp, where no matvec absorbed it."""
+
+    module = "otf_act"
+
+    def __init__(self, name, inputs, outputs, channels, elements, requant,
+                 in_dtype, out_dtype, in_zero_point=0):
+        self.elements = int(elements)
+        self.requant = requant
+        self.in_dtype = in_dtype
+        self.out_dtype = out_dtype
+        self.in_zero_point = int(in_zero_point)
+        ChannelUnit.__init__(self, name, inputs, outputs, channels)
+
     @property
     def cycles(self):
         return self.elements // self.pe
+
+    @property
+    def mult_bits(self):
+        return multiplier_bits(self.requant)
 
     def amd_resources(self, device):
         dsp = self.pe if self.in_dtype.bits > 18 else 0
         return Resources(lut=self.pe * self.in_dtype.bits * 2.0,
                          ff=self.pe * self.out_dtype.bits, dsp=dsp)
-
-    def input_beat_elems(self, graph):
-        return [self.pe]
-
-    def output_beat_elems(self, graph):
-        return [self.pe]
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])
@@ -466,10 +509,6 @@ class ActivationUnit(StreamingNode):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64)
         flat = x.reshape(-1, self.channels) - self.in_zero_point
         return [self.requant.apply(flat).reshape(x.shape)]
-
-    @property
-    def mult_bits(self):
-        return int(max(2, int(np.abs(self.requant.multipliers).max()).bit_length() + 1))
 
     def memories(self, graph):
         table = self.requant.broadcast_to(self.channels).multipliers.reshape(
@@ -488,28 +527,16 @@ class ActivationUnit(StreamingNode):
         }
 
 
-class PoolUnit(StreamingNode):
-    """Max reduction over the windows produced by a SlidingWindowUnit."""
+class PoolUnit(ChannelUnit):
+    """Max over the windows a SlidingWindowUnit produces."""
 
     module = "otf_pool"
 
-    def __init__(self, name, inputs, outputs, channels, window_size, windows,
-                 dtype, **attrs):
-        self.channels = int(channels)
+    def __init__(self, name, inputs, outputs, channels, window_size, windows, dtype):
         self.window_size = int(window_size)
         self.windows = int(windows)
         self.dtype = dtype
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
-
-    @property
-    def pe(self):
-        return self.folding["pe"]
-
-    def default_folding(self):
-        return {"pe": 1}
-
-    def folding_options(self):
-        return [{"pe": p} for p in divisors(self.channels)]
+        ChannelUnit.__init__(self, name, inputs, outputs, channels)
 
     @property
     def cycles(self):
@@ -518,12 +545,6 @@ class PoolUnit(StreamingNode):
     def amd_resources(self, device):
         return Resources(lut=self.pe * self.dtype.bits * 3.0,
                          ff=self.pe * self.dtype.bits * 2)
-
-    def input_beat_elems(self, graph):
-        return [self.pe]
-
-    def output_beat_elems(self, graph):
-        return [self.pe]
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])
@@ -540,8 +561,7 @@ class PoolUnit(StreamingNode):
 
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64)
-        windows = x.reshape(-1, self.window_size, self.channels)
-        reduced = windows.max(axis=1)
+        reduced = x.reshape(-1, self.window_size, self.channels).max(axis=1)
         return [reduced.reshape(graph.tensor(self.outputs[0]).shape)]
 
     def sv_params(self, graph):
@@ -550,16 +570,15 @@ class PoolUnit(StreamingNode):
                 "DATA_BITS": self.dtype.bits, "DATA_MIN": self.dtype.min}
 
 
-class AddUnit(StreamingNode):
-    """Two-input elementwise add. Each side is rescaled to the output grid."""
+class AddUnit(ChannelUnit):
+    """Elementwise add of two streams, each rescaled to the output grid."""
 
     module = "otf_add"
+    input_ports = ("a", "b")
 
     def __init__(self, name, inputs, outputs, elements, channels, left_mult,
-                 right_mult, shift, in_dtype, out_dtype, lower_clamp=None,
-                 bias=0, zero_point=0, **attrs):
+                 right_mult, shift, in_dtype, out_dtype, bias=0, zero_point=0):
         self.elements = int(elements)
-        self.channels = int(channels)
         self.left_mult = int(left_mult)
         self.right_mult = int(right_mult)
         self.shift = int(shift)
@@ -567,18 +586,7 @@ class AddUnit(StreamingNode):
         self.out_dtype = out_dtype
         self.bias = int(bias)
         self.zero_point = int(zero_point)
-        self.lower_clamp = out_dtype.min if lower_clamp is None else lower_clamp
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
-
-    @property
-    def pe(self):
-        return self.folding["pe"]
-
-    def default_folding(self):
-        return {"pe": 1}
-
-    def folding_options(self):
-        return [{"pe": p} for p in divisors(self.channels)]
+        ChannelUnit.__init__(self, name, inputs, outputs, channels)
 
     @property
     def cycles(self):
@@ -587,15 +595,6 @@ class AddUnit(StreamingNode):
     def amd_resources(self, device):
         return Resources(lut=self.pe * self.out_dtype.bits * 4.0,
                          ff=self.pe * self.out_dtype.bits)
-
-    def sv_input_prefixes(self):
-        return ["a", "b"]
-
-    def input_beat_elems(self, graph):
-        return [self.pe, self.pe]
-
-    def output_beat_elems(self, graph):
-        return [self.pe]
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])
@@ -609,7 +608,7 @@ class AddUnit(StreamingNode):
         acc = left * self.left_mult + right * self.right_mult + self.bias
         if self.shift > 0:
             acc = (acc + (1 << (self.shift - 1))) >> self.shift
-        return [np.clip(acc + self.zero_point, self.lower_clamp, self.out_dtype.max)]
+        return [np.clip(acc + self.zero_point, self.out_dtype.min, self.out_dtype.max)]
 
     def sv_params(self, graph):
         span = self.in_dtype.bits + max(
@@ -618,20 +617,20 @@ class AddUnit(StreamingNode):
                 "IN_BITS": self.in_dtype.bits, "OUT_BITS": self.out_dtype.bits,
                 "ACC_BITS": span,
                 "LEFT_MULT": self.left_mult, "RIGHT_MULT": self.right_mult,
-                "SHIFT": self.shift, "OUT_MIN": self.lower_clamp,
+                "SHIFT": self.shift, "OUT_MIN": self.out_dtype.min,
                 "OUT_MAX": self.out_dtype.max,
                 "BIAS": self.bias, "OUT_ZP": self.zero_point}
 
 
 class DuplicateUnit(StreamingNode):
-    """Fork for skip connections; holds each beat until every branch has taken it, so branches stall each other."""
+    """Fork for skip connections; a beat leaves only once every branch has taken it."""
 
     module = "otf_dup"
 
-    def __init__(self, name, inputs, outputs, elements, dtype, **attrs):
+    def __init__(self, name, inputs, outputs, elements, dtype):
         self.elements = int(elements)
         self.dtype = dtype
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
+        StreamingNode.__init__(self, name, inputs, outputs)
 
     def beat_elems(self, graph):
         return graph.tensor(self.inputs[0]).elems_per_beat
@@ -659,21 +658,17 @@ class DuplicateUnit(StreamingNode):
             out.elems_per_beat = source.elems_per_beat
 
     def execute(self, graph, values):
-        x = values[self.inputs[0]]
-        return [x for _ in self.outputs]
+        return [values[self.inputs[0]] for _ in self.outputs]
 
-    def sv_connections(self, graph, nets):
+    def sv_connections(self, graph, net):
         source = self.stream_inputs(graph)[0]
         branches = list(reversed(self.outputs))
-        return {
-            "clk": "clk", "rst_n": "rst_n",
-            "s_tdata": nets.data(source),
-            "s_tvalid": nets.valid(source),
-            "s_tready": nets.ready(source),
-            "m_tdata": "{%s}" % ", ".join(nets.data(b) for b in branches),
-            "m_tvalid": "{%s}" % ", ".join(nets.valid(b) for b in branches),
-            "m_tready": "{%s}" % ", ".join(nets.ready(b) for b in branches),
-        }
+        wiring = {"clk": "clk", "rst_n": "rst_n"}
+        for signal in ("tdata", "tvalid", "tready"):
+            wiring["s_" + signal] = net(source, signal)
+        for signal in ("tdata", "tvalid", "tready"):
+            wiring["m_" + signal] = "{%s}" % ", ".join(net(b, signal) for b in branches)
+        return wiring
 
     def sv_params(self, graph):
         return {"WIDTH": self.beat_elems(graph) * self.dtype.bits,
@@ -683,18 +678,17 @@ class DuplicateUnit(StreamingNode):
 class StreamFifo(StreamingNode):
     module = "otf_fifo"
 
-    def __init__(self, name, inputs, outputs, depth, width, **attrs):
+    def __init__(self, name, inputs, outputs, depth, width):
         self.depth = int(depth)
         self.width = int(width)
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
+        StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
     def cycles(self):
         return 0
 
     def amd_resources(self, device):
-        style = MemoryStyle.select(self.depth, self.width)
-        return style.cost(self.depth, self.width) + Resources(ff=32)
+        return memory_cost(self.depth, self.width) + Resources(ff=32)
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])
@@ -716,22 +710,16 @@ class StreamFifo(StreamingNode):
 
 
 class WidthConverter(StreamingNode):
-    """Repacks beats when neighbouring folding factors disagree."""
+    """Repacks beats where neighbouring folding factors disagree, always at an integer ratio."""
 
     module = "otf_dwc"
 
-    def __init__(self, name, inputs, outputs, in_elems, out_elems, elem_bits,
-                 total_elems, **attrs):
+    def __init__(self, name, inputs, outputs, in_elems, out_elems, elem_bits, total_elems):
         self.in_elems = int(in_elems)
         self.out_elems = int(out_elems)
         self.elem_bits = int(elem_bits)
         self.total_elems = int(total_elems)
-        StreamingNode.__init__(self, name, inputs, outputs, **attrs)
-        wide, narrow = max(self.in_elems, self.out_elems), min(self.in_elems, self.out_elems)
-        if wide % narrow:
-            raise NotImplementedError(
-                "width conversion %d -> %d is not an integer ratio"
-                % (self.in_elems, self.out_elems))
+        StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
     def cycles(self):
@@ -739,13 +727,11 @@ class WidthConverter(StreamingNode):
 
     @property
     def ratio(self):
-        wide, narrow = max(self.in_elems, self.out_elems), min(self.in_elems, self.out_elems)
-        return wide // narrow
+        return max(self.in_elems, self.out_elems) // min(self.in_elems, self.out_elems)
 
     def input_schedule(self, graph, index=0):
-        beats = self.input_beats(graph, index)
         step = self.ratio if self.in_elems > self.out_elems else 1
-        return [i * step for i in range(beats)]
+        return [i * step for i in range(self.input_beats(graph, index))]
 
     def output_schedule(self, graph, index=0):
         beats = self.output_beats(graph, index)

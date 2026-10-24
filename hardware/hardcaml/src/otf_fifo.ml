@@ -35,7 +35,7 @@ module Make (Config : Config) = struct
     [@@deriving hardcaml]
   end
 
-  let ptr_bits = Sv_int.counter_width depth
+  let ptr_bits = address_bits_for depth
   let cnt_bits = num_bits_to_represent depth
 
   let create (scope : Scope.t) (i : Signal.t I.t) =

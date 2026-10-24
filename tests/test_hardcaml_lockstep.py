@@ -1,4 +1,4 @@
-"""Every Hardcaml unit against the SystemVerilog module it ports, compared on every output port each cycle."""
+"""Every Hardcaml unit against the SystemVerilog module it ports, every port, every cycle."""
 
 import json
 import re
@@ -70,7 +70,7 @@ CASES = (
         ("full", (6, 6), {"out_min": 0, "shift": 30}),
         ("narrow", (3, 1), {"in_bits": 8, "mult_bits": 4, "shift": 2, "out_bits": 4,
                             "out_min": -8, "out_max": 7}),
-        # Shifts at and past the requant working width, ACC_BITS + MULT_BITS + 1, where rounding used to overflow.
+        # Shifts at and past ACC_BITS + MULT_BITS + 1, where rounding used to overflow.
         ("past_width", (4, 2), {"in_bits": 8, "mult_bits": 4, "shift": 15,
                                 "out_zp": 3}),
         ("max_shift", (4, 4), {"in_bits": 8, "mult_bits": 4, "shift": 62,
@@ -110,7 +110,7 @@ CASES = (
 
 
 class Pair:
-    """One SystemVerilog instance, its Hardcaml twin, their stimulus and the comparison, as a lockstep block."""
+    """A SystemVerilog unit and its Hardcaml port on the same stimulus."""
 
     def __init__(self, index, label, kind, params, memories, folder, rng):
         self.index = index
@@ -143,9 +143,7 @@ class Pair:
             return p["IN_ELEMS"] * p["ELEM_BITS"], p["OUT_ELEMS"] * p["ELEM_BITS"]
         if kind == "otf_pool":
             return p["PE"] * p["DATA_BITS"], p["PE"] * p["DATA_BITS"]
-        if kind == "otf_act":
-            return p["PE"] * p["IN_BITS"], p["PE"] * p["OUT_BITS"]
-        if kind == "otf_add":
+        if kind in ("otf_act", "otf_add"):
             return p["PE"] * p["IN_BITS"], p["PE"] * p["OUT_BITS"]
         if kind == "otf_mvau":
             return p["SIMD"] * p["ACT_BITS"], p["PE"] * p["OUT_BITS"]
@@ -155,9 +153,8 @@ class Pair:
     def render(self):
         i, (win, wout) = self.index, self.widths()
         fanout = self.params.get("FANOUT", 1)
-        params = dict(self.params)
         files = {"weights": "WEIGHT_FILE", "bias": "BIAS_FILE", "mult": "MULT_FILE"}
-        overrides = ["    .%s(%d)" % (k, v) for k, v in params.items()]
+        overrides = ["    .%s(%d)" % (k, v) for k, v in self.params.items()]
         overrides += ['    .%s("%s")' % (files[key], self.folder / (
             "%s_%s.hex" % (self.instance, key))) for key in self.images]
         lines = ["  // %s" % self.label]
@@ -244,7 +241,7 @@ endmodule
 @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
 @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
 class HardcamlLockstepTest(unittest.TestCase):
-    def test_every_unit_matches_its_systemverilog_cycle_for_cycle(self):
+    def test_units_match_cycle_for_cycle(self):
         folder = Fixtures.build_dir("hardcaml_lockstep")
         rng = np.random.default_rng(11)
         pairs = [Pair(index, *case, folder=folder, rng=rng)
@@ -273,7 +270,7 @@ class HardcamlLockstepTest(unittest.TestCase):
 @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
 @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
 class HardcamlTopLevelTest(unittest.TestCase):
-    """Whole designs on both backends under backpressure; identical first/last output cycles and beats mean cycle for cycle."""
+    """Whole designs under backpressure must give the same cycles and beats on both backends."""
 
     MODELS = {
         "mlp": ("mlp", Fixtures.MLP_SHAPE, 64),
@@ -302,7 +299,7 @@ class HardcamlTopLevelTest(unittest.TestCase):
                                 build.joinpath("dumped.hex").read_text()))
         return reports
 
-    def test_both_backends_report_the_same_cycles(self):
+    def test_backends_agree(self):
         for name in self.MODELS:
             with self.subTest(model=name):
                 sv, hardcaml = self._reports(name, "sv"), self._reports(name, "hardcaml")
@@ -312,7 +309,7 @@ class HardcamlTopLevelTest(unittest.TestCase):
 
 
 def _units_verilog(design):
-    """The Hardcaml modules share names with the library they port, so they are renamed apart before meeting in one model."""
+    """The Hardcaml modules are renamed apart from the library modules they port."""
     completed = run([str(HardcamlGenerator().executable), "units", str(design)])
     if completed.returncode != 0:
         raise AssertionError(completed.stderr[-4000:])

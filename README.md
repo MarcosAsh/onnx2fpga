@@ -171,7 +171,7 @@ compiler/onnx2fpga/         Python. Graph rewriting. Runs once, in milliseconds.
 hardware/rtl/               SystemVerilog. Hand written, parameterised, linted.
 hardware/hardcaml/          The same units in Hardcaml, and the generator behind --hdl hardcaml.
 runtime/                    C++. Everything that runs per inference.
-  include/otf/                kernels, manifest, accelerator interface
+  include/otf/                kernels, manifest, simulated accelerator
   sim/harness.cpp             the Verilator driver loop
   kernels/                    bit exact integer reference and its checker
   host/otf_run.cpp            host driver over a compiled design
@@ -313,7 +313,7 @@ See `hardware/boards/icepi_zero`.
 
 ## Requirements
 
-- Python 3.9 or newer, numpy
+- Python 3.10 or newer, numpy
 - Verilator 5 for simulation
 - A C++17 compiler for the runtime
 - Vivado only to measure resources and timing on Xilinx parts

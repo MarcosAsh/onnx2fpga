@@ -1,6 +1,5 @@
-"""The Hardcaml backend: the same netlist written as design.json and elaborated to Verilog in OCaml."""
+"""The Hardcaml backend: the netlist as design.json, turned into Verilog by OCaml."""
 
-import json
 import os
 import pathlib
 import re
@@ -9,71 +8,49 @@ import subprocess
 
 from ..assets import AssetError, AssetLocator
 from ..errors import Onnx2FpgaError
+from .systemverilog import identifier
 
 
-class DesignDescription:
-    """The scheduled hardware graph as the generator reads it."""
+def design(graph, name="otf_top", latency=None):
+    """The scheduled hardware graph as the generator reads it, in a fixed key order."""
+    nodes = graph.topological_order()
+    streams, seen = [], set()
+    for tensor in [graph.inputs[0]] + [out for node in nodes for out in node.outputs]:
+        if tensor not in seen:
+            seen.add(tensor)
+            streams.append({"name": tensor, "width": graph.tensor(tensor).stream_width})
+    described = {"format": 1, "top": name}
+    if latency is not None:
+        described.update(mode="fixed", latency=latency)
+    described.update({
+        "input": graph.inputs[0],
+        "output": graph.outputs[0],
+        "streams": streams,
+        "nodes": [_node(graph, node) for node in nodes],
+    })
+    return described
 
-    FORMAT = 1
 
-    def __init__(self, graph, name="otf_top", latency=None):
-        self.graph = graph
-        self.name = name
-        self.latency = latency
+def _node(graph, node):
+    params = {key: int(value) for key, value in node.sv_params(graph).items()
+              if not isinstance(value, str)}
+    return {
+        "name": node.name,
+        "instance": "u_" + identifier(node.name),
+        "kind": node.module,
+        "params": params,
+        "memories": {key: _memory(spec) for key, spec in node.memories(graph).items()},
+        "inputs": node.stream_inputs(graph),
+        "outputs": list(node.outputs),
+    }
 
-    def build(self):
-        graph = self.graph
-        streams, seen = [], set()
-        for name in [graph.inputs[0]] + [out for node in graph.topological_order()
-                                         for out in node.outputs]:
-            if name not in seen:
-                seen.add(name)
-                streams.append({"name": name, "width": self._width(name)})
-        design = {"format": self.FORMAT, "top": self.name}
-        if self.latency is not None:
-            design.update(mode="fixed", latency=self.latency)
-        design.update({
-            "input": graph.inputs[0],
-            "output": graph.outputs[0],
-            "streams": streams,
-            "nodes": [self._node(node) for node in graph.topological_order()],
-        })
-        return design
 
-    def render(self):
-        """Key order is insertion order and values are ints or strings, so output bytes are deterministic."""
-        return json.dumps(self.build(), indent=1) + "\n"
-
-    def _node(self, node):
-        graph = self.graph
-        params = {key: int(value) for key, value in node.sv_params(graph).items()
-                  if not isinstance(value, str)}
-        return {
-            "name": node.name,
-            "instance": "u_" + self._identifier(node.name),
-            "kind": node.module,
-            "params": params,
-            "memories": {key: self._memory(spec)
-                         for key, spec in node.memories(graph).items()},
-            "inputs": node.stream_inputs(graph),
-            "outputs": list(node.outputs),
-        }
-
-    @staticmethod
-    def _memory(spec):
-        """Masked to the element width like the hex images, matching what $readmemh would load."""
-        lanes = int(spec.array.shape[-1]) if spec.packed else 1
-        mask = (1 << spec.elem_bits) - 1
-        flat = [int(v) & mask for v in spec.array.reshape(-1).tolist()]
-        return {"elem_bits": spec.elem_bits, "lanes": lanes, "values": flat}
-
-    def _width(self, tensor_name):
-        tensor = self.graph.tensor(tensor_name)
-        return tensor.elems_per_beat * tensor.dtype.bits
-
-    @staticmethod
-    def _identifier(name):
-        return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+def _memory(spec):
+    """Masked to the element width, as $readmemh would load the hex image."""
+    mask = (1 << spec.elem_bits) - 1
+    return {"elem_bits": spec.elem_bits,
+            "lanes": int(spec.array.shape[-1]) if spec.packed else 1,
+            "values": [int(v) & mask for v in spec.array.reshape(-1).tolist()]}
 
 
 class HardcamlError(Onnx2FpgaError):
@@ -81,7 +58,7 @@ class HardcamlError(Onnx2FpgaError):
 
 
 class HardcamlGenerator:
-    """Builds and runs hardware/hardcaml/bin/generate.exe, found beside the RTL library, in the checkout, or at OTF_HARDCAML."""
+    """Builds and runs the generator in the Hardcaml project at OTF_HARDCAML, the assets or the checkout."""
 
     ENV = "OTF_HARDCAML"
     PROJECT = pathlib.Path("hardware") / "hardcaml"
@@ -113,21 +90,18 @@ class HardcamlGenerator:
         return None
 
     def unavailable(self):
-        """None if the backend can run, else why not; a project that fails to build is broken, not unavailable."""
+        """Why the backend cannot run, or None; a build error counts as broken, not unavailable."""
         project = self.project
         if project is None:
             return ("no Hardcaml project in %s"
                     % ", ".join(str(c) for c in self.candidates()))
         if shutil.which(self.dune) is None:
-            return "dune is not on PATH; activate the opam switch with hardcaml"
+            return "dune is not on PATH"
         returncode, errors = self._build(project)
         missing = sorted(set(self.MISSING_LIBRARY.findall(errors)))
         if returncode != 0 and missing:
             return "the active opam switch has no %s" % ", ".join(missing)
         return None
-
-    def available(self):
-        return self.unavailable() is None
 
     @property
     def executable(self):
@@ -149,9 +123,7 @@ class HardcamlGenerator:
                     capture_output=True, text=True, timeout=self.BUILD_TIMEOUT)
                 self._built[key] = (completed.returncode, completed.stderr.strip())
             except subprocess.TimeoutExpired:
-                self._built[key] = (-1, "dune build timed out after %ds; is another "
-                                        "dune holding %s/_build?"
-                                    % (self.BUILD_TIMEOUT, project))
+                self._built[key] = (-1, "dune build timed out after %ds" % self.BUILD_TIMEOUT)
         return self._built[key]
 
     def verilog(self, design_path):
@@ -161,19 +133,3 @@ class HardcamlGenerator:
             raise HardcamlError("the Hardcaml generator rejected %s:\n%s"
                                 % (design_path, completed.stderr.strip()[-4000:]))
         return completed.stdout
-
-
-class HardcamlEmitter:
-    """Writes design.json and the Verilog the generator makes of it."""
-
-    def __init__(self, graph, name="otf_top", assets=None, latency=None):
-        self.graph = graph
-        self.name = name
-        self.latency = latency
-        self.generator = HardcamlGenerator(assets)
-
-    def write(self, build):
-        design = build.write("design.json", DesignDescription(
-            self.graph, self.name, self.latency).render())
-        build.write("rtl/top.v", self.generator.verilog(design.resolve()))
-        return build

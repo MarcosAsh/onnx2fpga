@@ -27,8 +27,6 @@ let python_requant ~shift ~out_min ~out_max ~out_zp ~acc ~mult =
   Int.clamp_exn (scaled + out_zp) ~min:out_min ~max:out_max
 ;;
 
-let signed_words ~bits words = List.map words ~f:(fun word -> wrap ~bits word)
-
 let words_of_ints ~bits values =
   List.map values ~f:(fun value ->
     Bits.of_unsigned_int ~width:bits (value land ((1 lsl bits) - 1)))

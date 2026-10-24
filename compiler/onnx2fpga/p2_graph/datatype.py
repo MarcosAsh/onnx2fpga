@@ -5,6 +5,7 @@ import numpy as np
 
 class DataType:
     _registry = {}
+    is_integer = False
 
     def __init__(self, name, bits):
         self.name = name
@@ -19,21 +20,6 @@ class DataType:
     def __hash__(self):
         return hash(self.name)
 
-    @property
-    def is_integer(self):
-        return False
-
-    @property
-    def signed(self):
-        raise NotImplementedError
-
-    def clamp(self, values):
-        raise NotImplementedError
-
-    @classmethod
-    def get(cls, name):
-        return cls._registry[name]
-
     @classmethod
     def register(cls, instance):
         cls._registry[instance.name] = instance
@@ -41,45 +27,27 @@ class DataType:
 
 
 class IntType(DataType):
+    is_integer = True
+
     def __init__(self, bits, signed):
         DataType.__init__(self, ("INT%d" if signed else "UINT%d") % bits, bits)
-        self._signed = signed
-
-    @property
-    def is_integer(self):
-        return True
-
-    @property
-    def signed(self):
-        return self._signed
+        self.signed = signed
 
     @property
     def min(self):
-        return -(1 << (self.bits - 1)) if self._signed else 0
+        return -(1 << (self.bits - 1)) if self.signed else 0
 
     @property
     def max(self):
-        return (1 << (self.bits - 1)) - 1 if self._signed else (1 << self.bits) - 1
-
-    def numpy_dtype(self):
-        for width in (8, 16, 32, 64):
-            if self.bits <= width:
-                return np.dtype(("i%d" if self._signed else "u%d") % (width // 8))
-        return np.dtype("int64")
+        return (1 << (self.bits - 1)) - 1 if self.signed else (1 << self.bits) - 1
 
     def clamp(self, values):
         return np.clip(values, self.min, self.max).astype(np.int64)
 
-    def to_unsigned_bits(self, values):
-        """Two's complement bit pattern, for hex weight files and stream packing."""
-        mask = (1 << self.bits) - 1
-        return np.asarray(values, dtype=np.int64) & mask
-
     @staticmethod
     def smallest_for(low, high):
         if low >= 0:
-            bits = max(1, int(high).bit_length())
-            return IntType(bits, False)
+            return IntType(max(1, int(high).bit_length()), False)
         bits = 1
         while not (-(1 << (bits - 1)) <= low and high <= (1 << (bits - 1)) - 1):
             bits += 1
@@ -87,15 +55,10 @@ class IntType(DataType):
 
 
 class FloatType(DataType):
+    signed = True
+
     def __init__(self, bits=32):
         DataType.__init__(self, "FLOAT%d" % bits, bits)
-
-    @property
-    def signed(self):
-        return True
-
-    def numpy_dtype(self):
-        return np.dtype("float%d" % self.bits)
 
     def clamp(self, values):
         return values
@@ -110,48 +73,30 @@ FLOAT32 = DataType.register(FloatType(32))
 
 
 class QuantSpec:
-    """Affine quantization, real = scale * (integer - zero_point); unsigned specs are rebased onto the signed grid."""
+    """Affine quantization, real = scale * (integer - zero_point)."""
 
     REBASE = 128
 
-    def __init__(self, scale, zero_point=0, axis=None, dtype=None, rebased=False):
+    def __init__(self, scale, zero_point=0, dtype=None, rebased=False):
         self.scale = np.atleast_1d(np.asarray(scale, dtype=np.float64))
         self.zero_point = np.atleast_1d(np.asarray(zero_point, dtype=np.int64))
-        self.axis = axis
         self.dtype = dtype
         self.rebased = rebased
 
     def to_signed(self):
-        """Signed equivalent of this spec, shifting the zero point if the grid was unsigned."""
+        """The same grid on a signed type, shifting the zero point if it was unsigned."""
         if self.dtype is None or self.dtype.signed:
             return self
-        return QuantSpec(self.scale, self.zero_point - self.REBASE, self.axis,
+        return QuantSpec(self.scale, self.zero_point - self.REBASE,
                          IntType(self.dtype.bits, True), rebased=True)
-
-    @property
-    def offset(self):
-        """What the host subtracts from an incoming value, and adds to an outgoing one."""
-        return self.REBASE if self.rebased else 0
-
-    @property
-    def per_channel(self):
-        return self.scale.size > 1
 
     def dequantize(self, integers):
         return self.scale * (np.asarray(integers, dtype=np.float64) - self.zero_point)
-
-    def quantize(self, reals, dtype):
-        raw = np.rint(np.asarray(reals, dtype=np.float64) / self.scale) + self.zero_point
-        return dtype.clamp(raw)
 
     @property
     def is_symmetric(self):
         return bool(np.all(self.zero_point == 0))
 
     def __repr__(self):
-        tail = ", rebased" if self.rebased else ""
-        if self.per_channel:
-            return "QuantSpec(per-channel[%d], zp=%d%s)" % (
-                self.scale.size, int(self.zero_point.flat[0]), tail)
-        return "QuantSpec(scale=%.6g, zp=%d%s)" % (
-            float(self.scale.flat[0]), int(self.zero_point.flat[0]), tail)
+        return "QuantSpec(scale=%s, zp=%s%s)" % (
+            self.scale, self.zero_point, ", rebased" if self.rebased else "")

@@ -3,8 +3,34 @@ open! Hardcaml
 open Hardcaml_lws
 open Onnx2fpga_hardcaml
 
-let dense ~name ~input ~output ~mw ~mh ~weights ~bias ~mult ~out_min =
+(* Weights are listed channel by channel, [c][k] flattened. *)
+type layer =
+  { weights : int list
+  ; bias : int list
+  ; mult : int list
+  ; out_min : int
+  }
+
+let fc0 =
+  { weights = [ 3; -7; 12; 5; -1; 9 ]
+  ; bias = [ 100; -50; 7 ]
+  ; mult = [ 40; 90; 127 ]
+  ; out_min = 0
+  }
+;;
+
+let fc1 =
+  { weights = [ -4; 6; 2; 11; -8; 1 ]
+  ; bias = [ -3; 20 ]
+  ; mult = [ 70; 33 ]
+  ; out_min = -128
+  }
+;;
+
+let dense ~name ~input ~output { weights; bias; mult; out_min } =
   let ints values = String.concat ~sep:", " (List.map values ~f:Int.to_string) in
+  let mh = List.length bias in
+  let mw = List.length weights / mh in
   sprintf
     {|{"name": "%s", "instance": "u_%s", "kind": "otf_dense",
        "params": {"MW": %d, "MH": %d, "ACT_BITS": 8, "WGT_BITS": 8, "ACC_BITS": 18,
@@ -27,10 +53,6 @@ let dense ~name ~input ~output ~mw ~mh ~weights ~bias ~mult ~out_min =
     output
 ;;
 
-(* Weights are listed channel by channel, so [w0] is [c][k] flattened. *)
-let w0 = [ 3; -7; 12; 5; -1; 9 ]
-let w1 = [ -4; 6; 2; 11; -8; 1 ]
-
 let description ~latency =
   sprintf
     {|{"format": 1, "top": "otf_top", "mode": "fixed", "latency": %d,
@@ -39,29 +61,11 @@ let description ~latency =
                    {"name": "y", "width": 16}],
        "nodes": [%s, %s]}|}
     latency
-    (dense
-       ~name:"fc0"
-       ~input:"x"
-       ~output:"h"
-       ~mw:2
-       ~mh:3
-       ~weights:w0
-       ~bias:[ 100; -50; 7 ]
-       ~mult:[ 40; 90; 127 ]
-       ~out_min:0)
-    (dense
-       ~name:"fc1"
-       ~input:"h"
-       ~output:"y"
-       ~mw:3
-       ~mh:2
-       ~weights:w1
-       ~bias:[ -3; 20 ]
-       ~mult:[ 70; 33 ]
-       ~out_min:(-128))
+    (dense ~name:"fc0" ~input:"x" ~output:"h" fc0)
+    (dense ~name:"fc1" ~input:"h" ~output:"y" fc1)
 ;;
 
-let layer x ~weights ~bias ~mult ~out_min =
+let layer x { weights; bias; mult; out_min } =
   List.mapi bias ~f:(fun c b ->
     let dot =
       List.foldi x ~init:b ~f:(fun k sum a ->
@@ -78,10 +82,7 @@ let layer x ~weights ~bias ~mult ~out_min =
       ~mult:(List.nth_exn mult c))
 ;;
 
-let model x =
-  layer x ~weights:w0 ~bias:[ 100; -50; 7 ] ~mult:[ 40; 90; 127 ] ~out_min:0
-  |> layer ~weights:w1 ~bias:[ -3; 20 ] ~mult:[ 70; 33 ] ~out_min:(-128)
-;;
+let model x = layer (layer x fc0) fc1
 
 module Mlp = Fixed_top.Make (struct
     let design = Design.of_string (description ~latency:6)

@@ -17,7 +17,6 @@ module Make_test (Config : Uart_rx.Config) = struct
     }
   [@@deriving sexp_of]
 
-  (* Plays [levels] into [rxd], one per cycle, and collects what comes out. *)
   let receive ?random_initial_state ?print_waves_after_test levels =
     Harness.run
       ?random_initial_state

@@ -33,10 +33,10 @@ struct
 
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
-  let random_traffic ?random_initial_state ~frames ~in_duty ~out_duty () =
+  let random_traffic ~frames ~in_duty ~out_duty () =
     let rng = Random.State.make [| String.hash g.name |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -103,17 +103,4 @@ let%expect_test "every channel folded geometry against im2col, two frames" =
     (kernel_eq_ifm (cycles (101 250 280 235)))
     (non_square (cycles (1201 3045 4642 1553)))
     |}]
-;;
-
-let%expect_test "random initial state is overwritten by the clear" =
-  let module T =
-    Make_test (struct
-      let geometry = List.nth_exn Window_bench.all 4
-    end)
-  in
-  let cycles =
-    T.random_traffic ~random_initial_state:`All ~frames:2 ~in_duty:60 ~out_duty:60 ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 1036) |}]
 ;;

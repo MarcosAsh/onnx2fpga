@@ -10,17 +10,14 @@ class ModelError(Onnx2FpgaError, ValueError):
 
 
 class UnsupportedOpError(ModelError):
-    def __init__(self, op_type, node, supported, custom_hint=True):
+    def __init__(self, op_type, node, supported):
         self.op_type = op_type
         self.node = node
         self.supported = tuple(supported)
-        message = ("unsupported ONNX op %r in node %r. Supported ops: %s."
-                   % (op_type, node, ", ".join(self.supported)))
-        if custom_hint:
-            message += (" Remove it from the exported graph, or implement it as an "
-                        "otf.HardwareLayer and pass custom_objects={%r: YourLayer} "
-                        "to otf.load." % op_type)
-        ModelError.__init__(self, message)
+        ModelError.__init__(
+            self, "unsupported op %r in node %r (supported: %s); add it with "
+            "custom_objects={%r: YourHardwareLayer}"
+            % (op_type, node, ", ".join(self.supported), op_type))
 
 
 class ConfigError(Onnx2FpgaError, ValueError):

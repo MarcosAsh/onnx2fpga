@@ -33,10 +33,10 @@ module Make_test (Config : Params) = struct
   ;;
 
   (* The data path is a wire, so the handshake is too: checked on every cycle. *)
-  let random_traffic ?random_initial_state ~seed ~beats ~in_duty ~out_duty () =
+  let random_traffic ~seed ~beats ~in_duty ~out_duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -137,20 +137,4 @@ let%expect_test "per channel rescale under random backpressure" =
     ("unfolded relu" (cycles (240 982 1338 1173)))
     (narrow (cycles (240 935 1286 1197)))
     |}]
-;;
-
-let%expect_test "random initial state is overwritten by the clear" =
-  let (module Config) = config ~channels:12 ~pe:3 ~in_zp:1 5 in
-  let module T = Make_test (Config) in
-  let cycles =
-    T.random_traffic
-      ~random_initial_state:`All
-      ~seed:9
-      ~beats:120
-      ~in_duty:70
-      ~out_duty:70
-      ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 249) |}]
 ;;

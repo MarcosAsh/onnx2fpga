@@ -67,14 +67,14 @@ class MatVecFixture:
 
 
 @unittest.skipIf(shutil.which("g++") is None, "no C++ compiler")
-class CppContractTest(unittest.TestCase):
+class CppContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         built = run(["make", "-s"], cwd=ROOT / "runtime")
         assert built.returncode == 0, built.stderr[-4000:]
         cls.checker = ROOT / "runtime" / "bin" / "check_matvec"
 
-    def test_kernels_reproduce_the_python_model(self):
+    def test_matches_python(self):
         cases = [(16, 8, 4, 0, 0), (64, 32, 3, 1, 0), (100, 10, 1, 2, 0),
                  (9, 4, 25, 3, 0), (32, 16, 4, 4, -37), (24, 12, 3, 5, 64)]
         for mw, mh, vectors, seed, zero_point in cases:
@@ -87,7 +87,7 @@ class CppContractTest(unittest.TestCase):
                                  result.stdout + result.stderr)
                 self.assertIn("PASS", result.stdout)
 
-    def test_a_tiny_multiplier_rounds_to_the_zero_point(self):
+    def test_tiny_multiplier(self):
         fixture = MatVecFixture.tiny_multiplier()
         self.assertEqual(fixture.requant.shift, 62)
         np.testing.assert_array_equal(fixture.expected, fixture.zero_point)
@@ -96,7 +96,7 @@ class CppContractTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS", result.stdout)
 
-    def test_a_deliberate_mismatch_is_caught(self):
+    def test_mismatch_fails(self):
         """The checker has to be able to fail, or it proves nothing."""
         fixture = MatVecFixture(16, 8, 2, 9)
         fixture.expected = fixture.expected.copy()

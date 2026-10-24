@@ -43,7 +43,6 @@ type result =
   }
 [@@deriving sexp_of]
 
-(* Plays [levels] into [rxd], then idles until [txd] has been quiet for a while. *)
 let exchange ?random_initial_state ?(error_bit = 0.) levels =
   Harness.run
     ?random_initial_state

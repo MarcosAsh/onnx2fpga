@@ -15,57 +15,14 @@ FAST = ("test_ingest.py", "test_numerics.py", "test_pipeline.py",
         "test_characterize.py", "test_synth_script.py", "test_hardcaml_backend.py")
 
 
-class Run:
-    def __init__(self, index, seed, pattern, ok, seconds, output):
-        self.index = index
-        self.seed = seed
-        self.pattern = pattern
-        self.ok = ok
-        self.seconds = seconds
-        self.output = output
-
-    @property
-    def reproduce(self):
-        return ("PYTHONHASHSEED=%d PYTHONPATH=compiler:tests:examples "
-                "python3 tests/shuffled_runner.py --seed %d --pattern '%s'"
-                % (self.seed, self.seed, self.pattern))
-
-
-class FlakeCheck:
-    def __init__(self, repeat=3, patterns=("test_*.py",), verbosity=0):
-        self.repeat = repeat
-        self.patterns = tuple(patterns)
-        self.verbosity = verbosity
-
-    def environment(self, seed):
-        environment = dict(os.environ)
-        environment["PYTHONHASHSEED"] = str(seed)
-        environment["PYTHONPATH"] = "compiler:tests:examples"
-        return environment
-
-    def once(self, index, seed, pattern):
-        started = time.perf_counter()
-        completed = subprocess.run(
-            [sys.executable, str(RUNNER), "--seed", str(seed),
-             "--pattern", pattern, "--verbosity", str(self.verbosity)],
-            cwd=ROOT, env=self.environment(seed), capture_output=True, text=True)
-        return Run(index, seed, pattern, completed.returncode == 0,
-                   time.perf_counter() - started,
-                   completed.stdout + completed.stderr)
-
-    def run(self):
-        runs = []
-        for index in range(self.repeat):
-            for pattern in self.patterns:
-                seed = 1000 + index
-                run = self.once(index, seed, pattern)
-                runs.append(run)
-                print("run %d  seed %-5d %-24s %-6s %6.1fs"
-                      % (index + 1, seed, pattern,
-                         "ok" if run.ok else "FAILED", run.seconds))
-                if not run.ok:
-                    print(run.output[-4000:])
-        return runs
+def run_once(seed, pattern):
+    env = dict(os.environ, PYTHONHASHSEED=str(seed), PYTHONPATH="compiler:tests:examples")
+    started = time.perf_counter()
+    done = subprocess.run(
+        [sys.executable, str(RUNNER), "--seed", str(seed), "--pattern", pattern,
+         "--verbosity", "0"],
+        cwd=ROOT, env=env, capture_output=True, text=True)
+    return done.returncode == 0, time.perf_counter() - started, done.stdout + done.stderr
 
 
 def main(argv=None):
@@ -83,17 +40,27 @@ def main(argv=None):
     else:
         patterns = ("test_*.py",)
 
-    checker = FlakeCheck(args.repeat, patterns)
-    runs = checker.run()
-    failures = [run for run in runs if not run.ok]
+    failed = []
+    for index in range(args.repeat):
+        seed = 1000 + index
+        for pattern in patterns:
+            ok, seconds, output = run_once(seed, pattern)
+            print("run %d  seed %-5d %-24s %-6s %6.1fs"
+                  % (index + 1, seed, pattern, "ok" if ok else "FAILED", seconds))
+            if not ok:
+                print(output[-4000:])
+                failed.append((seed, pattern))
 
+    total = args.repeat * len(patterns)
     print()
-    if failures:
-        print("%d of %d runs failed. Reproduce the first with:"
-              % (len(failures), len(runs)))
-        print("  " + failures[0].reproduce)
+    if failed:
+        seed, pattern = failed[0]
+        print("%d of %d runs failed. Reproduce the first with:" % (len(failed), total))
+        print("  PYTHONHASHSEED=%d PYTHONPATH=compiler:tests:examples "
+              "python3 tests/shuffled_runner.py --seed %d --pattern '%s'"
+              % (seed, seed, pattern))
         return 1
-    print("%d runs, %d orderings, all agreed" % (len(runs), args.repeat))
+    print("%d runs, %d orderings, all agreed" % (total, args.repeat))
     return 0
 
 

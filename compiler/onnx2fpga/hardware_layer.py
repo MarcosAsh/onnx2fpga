@@ -55,16 +55,12 @@ class HardwareLayer:
     def from_onnx(cls, attributes, constants):
         """The layer for one ONNX node: attributes by name and constant inputs after the first in order."""
         if constants:
-            raise ModelError(
-                "%s receives %d constant inputs besides its stream; override "
-                "%s.from_onnx(attributes, constants) to read them"
-                % (cls.__name__, len(constants), cls.__name__))
+            raise ModelError("%s got %d constant inputs; override from_onnx to read them"
+                             % (cls.__name__, len(constants)))
         try:
             return cls(**attributes)
         except TypeError as error:
-            raise ModelError(
-                "%s(**%r) failed: %s. Accept these ONNX attributes in __init__, or "
-                "override from_onnx" % (cls.__name__, attributes, error))
+            raise ModelError("%s(**%r) failed: %s" % (cls.__name__, attributes, error))
 
     def build(self, input_shape, grid):
         """Called with the channel-last input shape and the grid, which the output shares."""
@@ -77,13 +73,11 @@ class HardwareLayer:
 
     def call(self, x):
         """The float function, on a numpy array."""
-        raise NotImplementedError("%s.call(x) is the float reference and must be "
-                                  "defined" % type(self).__name__)
+        raise NotImplementedError("%s must define call(x)" % type(self).__name__)
 
     def call_integer(self, q):
         """The integer function on codes of self.grid, which the hardware must reproduce exactly."""
-        raise NotImplementedError("%s.call_integer(q) is the integer reference and "
-                                  "must be defined" % type(self).__name__)
+        raise NotImplementedError("%s must define call_integer(q)" % type(self).__name__)
 
     def parameters(self, pe):
         """Module parameters for a unit `pe` lanes wide; each memory gets a <NAME>_FILE parameter."""

@@ -31,11 +31,10 @@ module Sink : sig
   val received : t -> Bits.t list
 end
 
-(** Runs until every sink has its beats; raises after [timeout] cycles. *)
+(** Runs until every sink has its beats; raises after 100000 cycles. *)
 val run
   :  Hardcaml_lws.Lws.Handler.t @ local
   -> rng:Random.State.t
-  -> ?timeout:int
   -> ?each_cycle:(unit -> unit)
   -> sources:Source.t list
   -> sinks:Sink.t list

@@ -49,8 +49,8 @@ module Make (Config : Config) = struct
 
   let create (scope : Scope.t) (i : Signal.t I.t) =
     let spec = Clocking.to_spec i.clocking in
-    let%hw nf = wire (Sv_int.counter_width nf_count) in
-    let%hw w = wire (Sv_int.counter_width window) in
+    let%hw nf = wire (address_bits_for nf_count) in
+    let%hw w = wire (address_bits_for window) in
     let%hw first_pass = w ==:. 0 in
     let%hw last_pass = Sv_int.is_last w ~count:window in
     let%hw s_ready = mux2 last_pass i.m.ready vdd in

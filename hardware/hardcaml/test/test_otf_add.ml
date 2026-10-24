@@ -28,16 +28,10 @@ module Make_test (Config : Otf_add.Config) = struct
   ;;
 
   (* Both inputs arrive with their own random gaps; the join takes them together. *)
-  let random_traffic
-    ?random_initial_state
-    ~seed
-    ~beats
-    ~duties:(a_duty, b_duty, m_duty)
-    ()
-    =
+  let random_traffic ~seed ~beats ~duties:(a_duty, b_duty, m_duty) () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -134,14 +128,4 @@ let%expect_test "two streams join under independent backpressure" =
     ("unshifted relu" (cycles (200 1051 1861 4555)))
     (wrapping (cycles (200 1072 1948 4331)))
     |}]
-;;
-
-let%expect_test "random initial state is overwritten by the clear" =
-  let (module Config) = config ~pe:2 ~left:7 ~right:(-9) ~shift:3 ~bias:(-40) () in
-  let module T = Make_test (Config) in
-  let cycles =
-    T.random_traffic ~random_initial_state:`All ~seed:5 ~beats:100 ~duties:(70, 60, 80) ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 304) |}]
 ;;

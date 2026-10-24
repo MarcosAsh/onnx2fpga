@@ -37,10 +37,6 @@ CONFIGS = [
 FRAME_REGRESSION = {"basic", "same_pad", "pool_window"}
 
 
-def uses_parallel_columns(config):
-    return config[7] > config[2]
-
-
 def make_unit(config, strategy):
     _, ifm, channels, kernel, stride, pads, dilation, simd = config
     unit = SlidingWindowUnit("swu", ["uin"], ["uout"], ifm_dim=ifm, ifm_ch=channels,
@@ -56,7 +52,7 @@ class SlidingWindowRtlCases:
     def _simulate(self, config, strategy, duties=((100, 100),)):
         name, ifm, channels = config[0], config[1], config[2]
         unit = make_unit(config, strategy)
-        # crc32 not hash(): string hashing is randomised per process, so failures would not reproduce.
+        # crc32, not hash(), which is randomised per process.
         rng = np.random.default_rng(zlib.crc32(name.encode()))
         image = rng.integers(-128, 128, (1, ifm[0], ifm[1], channels), dtype=np.int64)
 
@@ -78,13 +74,13 @@ class SlidingWindowRtlCases:
                                                       result.stdout, result.stderr))
         return unit
 
-    def test_line_buffer_matches_numpy(self):
+    def test_line_buffer(self):
         for config in CONFIGS:
             with self.subTest(config=config[0]):
                 self._simulate(config, "line",
                                duties=((100, 100), (40, 40), (100, 25), (25, 100)))
 
-    def test_frame_buffer_still_matches_numpy(self):
+    def test_frame_buffer(self):
         for config in CONFIGS:
             if config[0] not in FRAME_REGRESSION:
                 continue
@@ -104,51 +100,38 @@ class HardcamlSlidingWindowRtlTest(SlidingWindowRtlCases, unittest.TestCase):
 
 
 class SlidingWindowModelTest(unittest.TestCase):
-    def test_line_buffer_never_costs_more_cycles_than_frame(self):
+    def test_line_buffer_is_never_slower_than_frame(self):
         for config in CONFIGS:
-            if uses_parallel_columns(config):
+            if config[7] > config[2]:
                 continue
             with self.subTest(config=config[0]):
-                line = make_unit(config, "line")
-                frame = make_unit(config, "frame")
-                self.assertLessEqual(line.cycles, frame.cycles)
+                self.assertLessEqual(make_unit(config, "line").cycles,
+                                     make_unit(config, "frame").cycles)
+        unit = make_unit(("c", (28, 28), 16, (3, 3), (1, 1), (1, 1, 1, 1), (1, 1), 4), "line")
+        self.assertEqual(unit.cycles, unit.replay_cycles)
 
-    def test_parallel_columns_are_offered_only_by_the_line_buffer(self):
-        config = ("c", (12, 12), 1, (3, 3), (1, 1), (0, 0, 0, 0), (1, 1), 1)
-        line = make_unit(config, "line")
-        frame = make_unit(config, "frame")
-        self.assertEqual([o["simd"] for o in frame.folding_options()], [1])
-        self.assertEqual([o["simd"] for o in line.folding_options()], [1, 3])
-
-    def test_parallel_columns_fold_a_single_channel_layer(self):
-        """One input channel leaves nothing to fold on channels, which pinned the example CNN."""
+    def test_parallel_columns(self):
+        """One input channel leaves nothing to fold on channels, so only columns can widen it."""
         config = ("c", (12, 12), 1, (3, 3), (1, 1), (0, 0, 0, 0), (1, 1), 3)
+        self.assertEqual([o["simd"] for o in make_unit(config, "frame").folding_options()], [1])
         wide = make_unit(config, "line")
-        narrow = make_unit(("c",) + config[1:7] + (1,), "line")
-        self.assertEqual(wide.parallel_columns, 3)
-        self.assertEqual(narrow.parallel_columns, 1)
+        narrow = make_unit(config[:7] + (1,), "line")
+        self.assertEqual([o["simd"] for o in wide.folding_options()], [1, 3])
+        self.assertEqual((wide.parallel_columns, narrow.parallel_columns), (3, 1))
         self.assertEqual(wide.cycles * 3, narrow.cycles)
         self.assertEqual(wide.sub_elems, narrow.sub_elems)
 
-    def test_line_buffer_is_sized_for_liveness_without_waste(self):
-        """The buffer covers the window span plus the backward reach at a row wrap plus one; power of two rounding at most doubles it."""
+    def test_line_buffer_size(self):
+        """Window span plus backward reach plus one, rounded up to a power of two."""
         for config in CONFIGS:
             with self.subTest(config=config[0]):
                 unit = make_unit(config, "line")
                 required = unit.span_pixels + unit.backward_reach + 1
                 self.assertGreaterEqual(unit.buffer_pixels, required)
                 self.assertLess(unit.buffer_pixels, 2 * required)
-
-    def test_line_buffer_is_far_smaller_than_a_frame_on_a_tall_image(self):
         config = ("c", (224, 224), 8, (3, 3), (1, 1), (1, 1, 1, 1), (1, 1), 8)
-        line = make_unit(config, "line")
-        frame = make_unit(config, "frame")
-        self.assertLess(line.buffer_pixels * 8, frame.buffer_pixels)
-
-    def test_line_buffer_cost_is_the_replay_term(self):
-        config = ("c", (28, 28), 16, (3, 3), (1, 1), (1, 1, 1, 1), (1, 1), 4)
-        unit = make_unit(config, "line")
-        self.assertEqual(unit.cycles, unit.replay_cycles)
+        self.assertLess(make_unit(config, "line").buffer_pixels * 8,
+                        make_unit(config, "frame").buffer_pixels)
 
 
 if __name__ == "__main__":

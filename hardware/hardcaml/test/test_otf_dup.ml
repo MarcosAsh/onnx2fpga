@@ -10,10 +10,10 @@ module Make_test (Config : Otf_dup.Config) = struct
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
   (* Valids and ready follow a per-branch mask, modelled cycle by cycle. *)
-  let random_traffic ?random_initial_state ~seed ~beats ~in_duty ~out_duties () =
+  let random_traffic ~seed ~beats ~in_duty ~out_duties () =
     let rng = Random.State.make [| seed |] in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -88,32 +88,10 @@ let%expect_test "every branch gets every beat under independent backpressure" =
     |}]
 ;;
 
-let%expect_test "random initial state is overwritten by the clear" =
-  let module T =
-    Make_test (struct
-      let width = 4
-      let fanout = 2
-    end)
-  in
-  let cycles =
-    T.random_traffic
-      ~random_initial_state:`All
-      ~seed:1
-      ~beats:100
-      ~in_duty:70
-      ~out_duties:[ 50; 50 ]
-      ()
-  in
-  print_s [%message (cycles : int)];
-  [%expect {| (cycles 400) |}]
-;;
-
-module Two = Otf_dup.Make (struct
+module Two = Make_test (struct
     let width = 8
     let fanout = 2
   end)
-
-module Harness = Hardcaml_test_harness.Lws_harness.Make (Two.I) (Two.O)
 
 (* Branch 1 takes 0xa1 two cycles after branch 0, which releases the input. *)
 let%expect_test "waveform of branches accepting on different cycles" =
@@ -122,8 +100,8 @@ let%expect_test "waveform of branches accepting on different cycles" =
     ; Display_rule.port_name_matches (Glob "m$*") ~wave_format:(Bit_or Hex)
     ]
   in
-  Harness.run
-    ~create:Two.hierarchical
+  Two.Harness.run
+    ~create:Two.Dut.hierarchical
     ~trace:`Ports_only
     ~print_waves_after_test:(fun waves ->
       Waveform.print

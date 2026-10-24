@@ -30,50 +30,36 @@ class ResidualStructureTest(unittest.TestCase):
         cls.result = compile_residual("residual_structure")
         cls.graph = cls.result.hardware_graph
 
-    def test_the_fork_becomes_a_duplicate_unit(self):
+    def test_fork_and_join_become_duplicate_and_add(self):
         forks = [n for n in self.graph.nodes if isinstance(n, DuplicateUnit)]
-        self.assertEqual(len(forks), 1)
-        self.assertEqual(len(forks[0].outputs), 2)
-
-    def test_the_join_becomes_an_add_unit_with_two_streams(self):
+        self.assertEqual([len(n.outputs) for n in forks], [2])
         joins = [n for n in self.graph.nodes if isinstance(n, AddUnit)]
-        self.assertEqual(len(joins), 1)
-        self.assertEqual(len(joins[0].stream_inputs(self.graph)), 2)
+        self.assertEqual([len(n.stream_inputs(self.graph)) for n in joins], [2])
 
-    def test_no_stream_feeds_two_consumers(self):
-        """Verilator accepts a doubly driven ready line silently, so it has to be checked here."""
-        StreamsAreSingleConsumer().run(self.graph, self.result.context)
-
-    def test_the_check_actually_rejects_a_bad_graph(self):
+    def test_single_consumer_check(self):
+        """Verilator accepts a doubly driven ready line silently, so it is checked here."""
         graph = self.graph
+        StreamsAreSingleConsumer().run(graph, self.result.context)
         join = next(n for n in graph.nodes if isinstance(n, AddUnit))
-        shared = join.stream_inputs(graph)[0]
-        victim = next(n for n in graph.nodes
-                      if isinstance(n, StreamFifo) and n is not join)
+        victim = next(n for n in graph.nodes if isinstance(n, StreamFifo))
         original = list(victim.inputs)
-        victim.inputs = [shared]
+        victim.inputs = [join.stream_inputs(graph)[0]]
         try:
             with self.assertRaises(GraphError):
                 StreamsAreSingleConsumer().run(graph, self.result.context)
         finally:
             victim.inputs = original
 
-    def test_the_skip_branch_gets_the_deepest_buffer(self):
-        analysis = self.result.context.artifacts["tokens"]
-        peaks = {name: edge.peak for name, edge in analysis.edges.items()}
-        self.assertTrue(peaks)
-        self.assertGreater(max(peaks.values()), 2,
-                           "a reconvergent path should need more than the minimum")
+    def test_skip_branch_needs_a_deep_buffer(self):
+        peaks = [edge.peak for edge in self.result.context.artifacts["tokens"].edges.values()]
+        self.assertGreater(max(peaks), 2)
 
 
 class ResidualNumericsTest(unittest.TestCase):
-    """How far int8 drifts from float across a residual, set against a well calibrated model since few samples clip."""
-
-    CALIBRATION = 256
-    EVAL_SEEDS = (4, 5, 6, 7)
+    """How far int8 drifts from float across a residual."""
 
     @staticmethod
-    def worst_drift(result, seeds, trials=20):
+    def worst_drift(result, seeds=(4, 5, 6, 7), trials=20):
         graph, plan = result.hardware_graph, result.plan
         source, sink = graph.inputs[0], graph.outputs[0]
         worst = 0.0
@@ -89,24 +75,13 @@ class ResidualNumericsTest(unittest.TestCase):
                 worst = max(worst, float(np.max(np.abs(actual - expected))))
         return worst / plan.scale(sink)
 
-    def test_a_well_calibrated_residual_tracks_float(self):
-        result = compile_residual(
-            "residual_numerics",
-            samples=Fixtures.samples((1, 16), count=self.CALIBRATION))
-        steps = self.worst_drift(result, self.EVAL_SEEDS)
-        self.assertLess(steps, 16.0,
-                        "int8 residual drifted %.1f output steps from float" % steps)
-
-    def test_more_calibration_narrows_the_drift(self):
-        """Guards the calibration path: if it stopped widening the fitted range as samples arrive, this ordering breaks."""
-        drifts = []
-        for count in (16, 256):
-            result = compile_residual(
-                "residual_calib_%d" % count,
-                samples=Fixtures.samples((1, 16), count=count))
-            drifts.append(self.worst_drift(result, self.EVAL_SEEDS, trials=10))
-        self.assertLess(drifts[1], drifts[0],
-                        "more calibration should not drift further: %s" % drifts)
+    def test_drift_is_small_and_shrinks_with_calibration(self):
+        """Few samples clip, so more calibration must narrow the drift."""
+        drifts = [self.worst_drift(compile_residual(
+            "residual_calib_%d" % count, samples=Fixtures.samples((1, 16), count=count)))
+            for count in (16, 256)]
+        self.assertLess(drifts[1], 16.0)
+        self.assertLess(drifts[1], drifts[0])
 
 
 class ResidualSimulationCases:
@@ -120,13 +95,13 @@ class ResidualSimulationCases:
         built = run(["make", "-s"], cwd=cls.build)
         assert built.returncode == 0, built.stderr[-4000:]
 
-    def test_duplicate_and_add_units_work_end_to_end(self):
+    def test_passes(self):
         result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
                       "--expected", "golden/expected.hex"], cwd=self.build)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS", result.stdout)
 
-    def test_survives_randomised_backpressure(self):
+    def test_survives_backpressure(self):
         for input_duty, output_duty in BACKPRESSURE:
             for seed in (1, 2, 3):
                 with self.subTest(duty=(input_duty, output_duty), seed=seed):
@@ -141,11 +116,11 @@ class ResidualSimulationCases:
 
 
 class BufferSizingCases:
-    """The negative control: without it the sizing analysis is unfalsifiable; on both backends it also checks timing."""
+    """The negative control for buffer sizing, which also checks timing on both backends."""
 
     HDL = "sv"
 
-    def test_capping_every_buffer_at_the_minimum_deadlocks(self):
+    def test_minimal_buffers_deadlock(self):
         name = "residual_capped" + Hdl.suffix(self.HDL)
         build = Fixtures.build_dir(name)
         compile_residual(name, fifo_cap=2, hdl=self.HDL)
@@ -158,7 +133,7 @@ class BufferSizingCases:
                             "starved buffers should deadlock, but the run passed")
         self.assertIn("stalled", result.stderr)
 
-    def test_the_computed_sizes_do_not(self):
+    def test_computed_buffers_do_not(self):
         name = "residual_sized" + Hdl.suffix(self.HDL)
         build = Fixtures.build_dir(name)
         compile_residual(name, hdl=self.HDL)

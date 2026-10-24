@@ -1,4 +1,4 @@
-// Minimal JSON reader for the manifest, so the host runtime has no third party dependency.
+// Minimal JSON reader for the manifest, so the runtime has no third party dependency.
 #pragma once
 
 #include <cctype>
@@ -9,17 +9,13 @@
 
 namespace otf {
 
+// true, false and null all read as Null; the manifest has no use for them.
 class JsonValue {
 public:
-    enum class Kind { Null, Bool, Number, String, Array, Object };
-
-    JsonValue() = default;
-
-    Kind kind() const { return kind_; }
-    bool is_null() const { return kind_ == Kind::Null; }
+    enum class Kind { Null, Number, String, Array, Object };
 
     double number() const { expect(Kind::Number); return number_; }
-    bool boolean() const { expect(Kind::Bool); return boolean_; }
+    int as_int() const { return static_cast<int>(number()); }
     const std::string& string() const { expect(Kind::String); return string_; }
     const std::vector<JsonValue>& array() const { expect(Kind::Array); return array_; }
 
@@ -34,13 +30,9 @@ public:
         return kind_ == Kind::Object && object_.count(key) > 0;
     }
 
-    int as_int() const { return static_cast<int>(number()); }
-
     static JsonValue parse(const std::string& text) {
         size_t cursor = 0;
-        JsonValue value = parse_value(text, cursor);
-        skip_space(text, cursor);
-        return value;
+        return parse_value(text, cursor);
     }
 
 private:
@@ -54,6 +46,13 @@ private:
         }
     }
 
+    // Consumes one character if it is the wanted one.
+    static bool eat(const std::string& text, size_t& cursor, char wanted) {
+        skip_space(text, cursor);
+        if (cursor < text.size() && text[cursor] == wanted) { ++cursor; return true; }
+        return false;
+    }
+
     static JsonValue parse_value(const std::string& text, size_t& cursor) {
         skip_space(text, cursor);
         if (cursor >= text.size()) throw std::runtime_error("unexpected end of json");
@@ -61,26 +60,17 @@ private:
             case '{': return parse_object(text, cursor);
             case '[': return parse_array(text, cursor);
             case '"': return parse_string(text, cursor);
-            case 't': cursor += 4; return make_bool(true);
-            case 'f': cursor += 5; return make_bool(false);
+            case 't': cursor += 4; return JsonValue();
+            case 'f': cursor += 5; return JsonValue();
             case 'n': cursor += 4; return JsonValue();
             default:  return parse_number(text, cursor);
         }
     }
 
-    static JsonValue make_bool(bool value) {
-        JsonValue node;
-        node.kind_ = Kind::Bool;
-        node.boolean_ = value;
-        return node;
-    }
-
     static JsonValue parse_number(const std::string& text, size_t& cursor) {
         size_t end = cursor;
-        while (end < text.size() &&
-               (std::isdigit(static_cast<unsigned char>(text[end])) ||
-                text[end] == '-' || text[end] == '+' || text[end] == '.' ||
-                text[end] == 'e' || text[end] == 'E')) {
+        while (end < text.size() && (std::isdigit(static_cast<unsigned char>(text[end])) ||
+                                     std::string("-+.eE").find(text[end]) != std::string::npos)) {
             ++end;
         }
         JsonValue node;
@@ -91,22 +81,18 @@ private:
     }
 
     static JsonValue parse_string(const std::string& text, size_t& cursor) {
-        ++cursor;
-        std::string out;
-        while (cursor < text.size() && text[cursor] != '"') {
-            if (text[cursor] == '\\' && cursor + 1 < text.size()) {
-                ++cursor;
-                const char escape = text[cursor];
-                out += (escape == 'n') ? '\n' : (escape == 't') ? '\t' : escape;
-            } else {
-                out += text[cursor];
-            }
-            ++cursor;
-        }
-        ++cursor;
         JsonValue node;
         node.kind_ = Kind::String;
-        node.string_ = out;
+        for (++cursor; cursor < text.size() && text[cursor] != '"'; ++cursor) {
+            char c = text[cursor];
+            if (c == '\\' && cursor + 1 < text.size()) {
+                c = text[++cursor];
+                if (c == 'n') c = '\n';
+                else if (c == 't') c = '\t';
+            }
+            node.string_ += c;
+        }
+        ++cursor;
         return node;
     }
 
@@ -114,15 +100,11 @@ private:
         JsonValue node;
         node.kind_ = Kind::Array;
         ++cursor;
-        skip_space(text, cursor);
-        if (cursor < text.size() && text[cursor] == ']') { ++cursor; return node; }
-        while (cursor < text.size()) {
+        if (eat(text, cursor, ']')) return node;
+        do {
             node.array_.push_back(parse_value(text, cursor));
-            skip_space(text, cursor);
-            if (cursor < text.size() && text[cursor] == ',') { ++cursor; continue; }
-            break;
-        }
-        if (cursor < text.size() && text[cursor] == ']') ++cursor;
+        } while (eat(text, cursor, ','));
+        eat(text, cursor, ']');
         return node;
     }
 
@@ -130,24 +112,18 @@ private:
         JsonValue node;
         node.kind_ = Kind::Object;
         ++cursor;
-        skip_space(text, cursor);
-        if (cursor < text.size() && text[cursor] == '}') { ++cursor; return node; }
-        while (cursor < text.size()) {
+        if (eat(text, cursor, '}')) return node;
+        do {
             skip_space(text, cursor);
             const JsonValue key = parse_string(text, cursor);
-            skip_space(text, cursor);
-            if (cursor < text.size() && text[cursor] == ':') ++cursor;
+            eat(text, cursor, ':');
             node.object_[key.string_] = parse_value(text, cursor);
-            skip_space(text, cursor);
-            if (cursor < text.size() && text[cursor] == ',') { ++cursor; continue; }
-            break;
-        }
-        if (cursor < text.size() && text[cursor] == '}') ++cursor;
+        } while (eat(text, cursor, ','));
+        eat(text, cursor, '}');
         return node;
     }
 
     Kind kind_ = Kind::Null;
-    bool boolean_ = false;
     double number_ = 0.0;
     std::string string_;
     std::vector<JsonValue> array_;

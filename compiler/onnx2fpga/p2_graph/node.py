@@ -1,4 +1,4 @@
-"""Frontend nodes mirror ONNX ops; hardware nodes add folding, cycles, cost and SystemVerilog form."""
+"""The base graph node, and the memories a hardware node initialises."""
 
 from abc import ABC, abstractmethod
 
@@ -29,101 +29,9 @@ class Node(ABC):
 
 
 class MemorySpec:
-    """One initialised memory: values, element width, and whether the last axis is packed into one word."""
+    """An initialised memory; `packed` puts the last axis of `array` in one word."""
 
     def __init__(self, array, elem_bits, packed=False):
         self.array = array
         self.elem_bits = int(elem_bits)
         self.packed = bool(packed)
-
-    @property
-    def word_bits(self):
-        if not self.packed:
-            return self.elem_bits
-        return self.elem_bits * int(self.array.shape[-1])
-
-
-class HwNode(Node):
-    """A node that maps to exactly one streaming SystemVerilog module."""
-
-    module = None
-
-    def __init__(self, name, inputs, outputs, **attrs):
-        Node.__init__(self, name, inputs, outputs, **attrs)
-        self.folding = dict(self.default_folding())
-
-    def default_folding(self):
-        return {}
-
-    def folding_options(self):
-        """Legal folding assignments, cheapest first. Each entry is a dict."""
-        return [{}]
-
-    def apply_folding(self, choice):
-        self.folding.update(choice)
-
-    @property
-    def pinned_folding(self):
-        """Factors a user fixed by hand; the scheduler still chooses the ones left out."""
-        return dict(self.attrs.get("pinned_folding", {}))
-
-    def allowed_foldings(self):
-        """folding_options narrowed to the pinned factors; every folding choice goes through this."""
-        pinned = self.pinned_folding
-        return [option for option in self.folding_options()
-                if all(option.get(key) == value for key, value in pinned.items())]
-
-    def starting_folding(self):
-        """The cheapest allowed folding, which for an unpinned node is its default."""
-        if not self.pinned_folding:
-            return self.default_folding()
-        return dict(self.allowed_foldings()[0])
-
-    @property
-    @abstractmethod
-    def cycles(self):
-        """Cycles to process one frame once the pipeline is primed."""
-
-    @abstractmethod
-    def resources(self, device):
-        """Resources object estimating the cost on the given device."""
-
-    @abstractmethod
-    def sv_params(self, graph):
-        """Parameter overrides for the SystemVerilog instance."""
-
-    def memories(self, graph):
-        """Named MemorySpec entries to emit as $readmemh initialisation files."""
-        return {}
-
-    def rtl_files(self):
-        """SystemVerilog sources this unit brings beyond the library, by file name."""
-        return {}
-
-    def sv_input_prefixes(self):
-        return ["s"]
-
-    def sv_output_prefixes(self):
-        return ["m"]
-
-    def sv_connections(self, graph, nets):
-        """Port map for this node instance; overridden by units without the plain stream pair."""
-        wiring = {"clk": "clk", "rst_n": "rst_n"}
-        for prefix, name in zip(self.sv_input_prefixes(), self.stream_inputs(graph)):
-            wiring["%s_tdata" % prefix] = nets.data(name)
-            wiring["%s_tvalid" % prefix] = nets.valid(name)
-            wiring["%s_tready" % prefix] = nets.ready(name)
-        for prefix, name in zip(self.sv_output_prefixes(), self.outputs):
-            wiring["%s_tdata" % prefix] = nets.data(name)
-            wiring["%s_tvalid" % prefix] = nets.valid(name)
-            wiring["%s_tready" % prefix] = nets.ready(name)
-        return wiring
-
-    def memory_paths(self):
-        return self.attrs.get("mem_paths", {})
-
-    def input_beat_elems(self, graph):
-        return [1] * len(self.stream_inputs(graph))
-
-    def output_beat_elems(self, graph):
-        return [1] * len(self.outputs)

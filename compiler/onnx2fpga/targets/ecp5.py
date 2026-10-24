@@ -1,4 +1,4 @@
-"""Lattice ECP5 as the open flow builds it; the cost model is what yosys 0.52 and nextpnr-ecp5 measured."""
+"""Lattice ECP5, with a cost model fitted to yosys 0.52 and nextpnr-ecp5."""
 
 import math
 
@@ -27,7 +27,7 @@ def constant_multipliers(value, var_bits):
 
 
 def rom_luts(depth):
-    """LUT4 per output bit of a combinational table of `depth` words; a one word table is a constant."""
+    """LUT4 per output bit of a combinational table of `depth` words."""
     if depth <= 1:
         return 0
     return 1.3 * (math.ceil(depth / 16) + max(0, math.ceil(depth / 64) - 1))
@@ -38,7 +38,7 @@ LUTS_PER_DPR = 8
 
 
 def memory(depth, width):
-    """A buffer with one write port and unregistered read: flip flops if tiny, DP16KD if deep and large, else LUT RAM."""
+    """A buffer with unregistered read: flip flops if tiny, DP16KD if deep and large, else LUT RAM."""
     if depth == 1 or depth * width <= 16:
         return Resources(lut=width, ff=depth * width)
     if depth > 32 and depth * width > 1024:
@@ -71,7 +71,7 @@ class Ecp5CostModel:
         act, wgt = node.act_dtype.bits, node.weight_dtype.bits
         sf, nf = node.synapse_fold, node.neuron_fold
         if sf * nf == 1:
-            # Weights are constants, so only products by something other than zero or a power of two need a multiplier.
+            # Constant weights need no multiplier when zero or a power of two.
             dsp = sum(constant_multipliers(w, act) for w in node.weights.flat)
         else:
             dsp = pe * simd * multipliers(act, wgt)
@@ -149,15 +149,11 @@ class Ecp5CostModel:
 
 class Ecp5Device(Device):
     HARD_FIELDS = ("dsp", "ebr")
+    cost_model = Ecp5CostModel()
 
-    def __init__(self, *args, nextpnr_args=(), **kwargs):
-        Device.__init__(self, *args, block_ram="ebr", **kwargs)
+    def __init__(self, nextpnr_args, **kwargs):
+        Device.__init__(self, block_ram="ebr", **kwargs)
         self.nextpnr_args = tuple(nextpnr_args)
-        self._model = Ecp5CostModel()
-
-    @property
-    def cost_model(self):
-        return self._model
 
     def macs_per_dsp(self, act_bits, weight_bits):
         """One MULT18X18D per product, as yosys infers it; the 9x9 mode is never used."""
@@ -166,7 +162,7 @@ class Ecp5Device(Device):
 
 Device.register(Ecp5Device(
     name="icepi25", part="LFE5U-25F-6CABGA256",
-    # LUT4 and FF sites are the nextpnr count for the 25k die; EBR and multipliers are from FPGA-DS-02012.
+    # LUT4 and FF from nextpnr for the 25k die; EBR and multipliers from FPGA-DS-02012.
     budget=Resources(lut=24288, ff=24288, dsp=28, ebr=56),
     fmax_mhz=20.0, dsp_generation="sysDSP",
     nextpnr_args=("--25k", "--package", "CABGA256", "--speed", "6"),

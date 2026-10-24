@@ -34,21 +34,22 @@ class SimulationCases:
             assert built.returncode == 0, built.stderr[-4000:]
             cls.builds[name] = build
 
-    def test_lints_clean(self):
+    def test_lint(self):
         for name, build in self.builds.items():
             with self.subTest(model=name):
                 result = run(["make", "-s", "lint"], cwd=build)
                 self.assertEqual(result.returncode, 0, result.stderr[-4000:])
 
-    def test_matches_golden_model(self):
+    def test_golden(self):
         for name, build in self.builds.items():
             with self.subTest(model=name):
                 result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
                               "--expected", "golden/expected.hex"], cwd=build)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("PASS", result.stdout)
+                for word in ("PASS", "cycles", "latency"):
+                    self.assertIn(word, result.stdout)
 
-    def test_survives_randomised_backpressure(self):
+    def test_backpressure(self):
         """A stream design that only sees tready high can pass its tests and still deadlock in hardware."""
         for name, build in self.builds.items():
             for input_duty, output_duty in BACKPRESSURE:
@@ -64,13 +65,7 @@ class SimulationCases:
                         self.assertEqual(result.returncode, 0,
                                          result.stdout + result.stderr)
 
-    def test_reports_a_latency_within_the_predicted_frame_cost(self):
-        result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
-                      "--expected", "golden/expected.hex"], cwd=self.builds["mlp"])
-        self.assertIn("cycles", result.stdout)
-        self.assertIn("latency", result.stdout)
-
-    def test_a_tiny_multiplier_matches_the_compiler(self):
+    def test_tiny_multiplier(self):
         """The C++ contract layer through the RTL, where the rounding constant used to overflow and negatives came out one low."""
         fixture = MatVecFixture.tiny_multiplier()
         unit = fixture.unit()
@@ -91,13 +86,13 @@ class SimulationCases:
 
 
 @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
-class SimulationTest(SimulationCases, unittest.TestCase):
+class SvSimulation(SimulationCases, unittest.TestCase):
     HDL = "sv"
 
 
 @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
 @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
-class HardcamlSimulationTest(SimulationCases, unittest.TestCase):
+class HardcamlSimulation(SimulationCases, unittest.TestCase):
     HDL = "hardcaml"
 
 

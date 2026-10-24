@@ -13,9 +13,7 @@ module Make (Config : Config) = struct
     if clocks_per_bit < 4
     then
       raise_s
-        [%message
-          "BUG: uart_rx samples the middle of each bit, so needs four clocks a bit"
-            (clocks_per_bit : int)]
+        [%message "BUG: uart_rx needs at least four clocks a bit" (clocks_per_bit : int)]
   ;;
 
   (* A character is low for nine bits at most, so twice that is a break. *)

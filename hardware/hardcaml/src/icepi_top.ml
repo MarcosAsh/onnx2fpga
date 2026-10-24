@@ -30,18 +30,16 @@ let clocks_per_bit ~mhz ~baud =
   clocks
 ;;
 
-let check_mhz mhz =
-  if mhz < 1 || vco_mhz % mhz <> 0 || vco_mhz / mhz > 128
-  then
-    raise_s
-      [%message
-        "the PLL makes clocks that divide its 480 MHz VCO, from 4 MHz up" (mhz : int)]
-;;
-
 module Make (Config : Config) = struct
   open Config
 
-  let () = check_mhz mhz
+  let () =
+    if mhz < 1 || vco_mhz % mhz <> 0 || vco_mhz / mhz > 128
+    then
+      raise_s
+        [%message
+          "the PLL makes clocks that divide its 480 MHz VCO, from 4 MHz up" (mhz : int)]
+  ;;
 
   module Link = Uart_top.Make (struct
       let design = design

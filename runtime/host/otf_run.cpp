@@ -1,4 +1,4 @@
-// Host driver: quantises a float input with the manifest scales, runs one frame on the Verilator backend and prints the dequantised result.
+// Quantises a random float input, runs one frame on the Verilator backend and prints the dequantised result.
 
 #include <iostream>
 #include <random>

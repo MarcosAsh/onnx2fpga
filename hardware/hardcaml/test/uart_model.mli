@@ -1,4 +1,4 @@
-(** The far end of a serial line, one level per clock; [error] skews its bit period. *)
+(** The far end of a serial line, one level per clock. *)
 
 open! Core
 

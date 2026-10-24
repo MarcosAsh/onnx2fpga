@@ -8,7 +8,6 @@ module Make_test (Config : Uart_tx.Config) = struct
   module Dut = Uart_tx.Make (Config)
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
-  (* Offers each byte after [gap ()] idle cycles and decodes [txd] with a model receiver. *)
   let transmit ?random_initial_state ?print_waves_after_test ?(gap = fun () -> 0) bytes =
     Harness.run
       ?random_initial_state

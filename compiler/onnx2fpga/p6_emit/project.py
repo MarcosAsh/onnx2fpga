@@ -6,19 +6,16 @@ import shutil
 
 from ..assets import AssetLocator
 from ..errors import ConfigError
-from .hardcaml import HardcamlEmitter
+from .hardcaml import HardcamlGenerator, design
 from .memories import HexImage
-from .systemverilog import NetlistBuilder
+from .systemverilog import identifier, render_top
 
 
 class BuildDirectory:
-    def __init__(self, root):
+    def __init__(self, root, subdirs):
         self.root = pathlib.Path(root)
-
-    def prepare(self, subdirs=("rtl", "mem", "golden")):
         for sub in subdirs:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
-        return self
 
     def path(self, *parts):
         return self.root.joinpath(*parts)
@@ -42,82 +39,70 @@ class ProjectWriter:
         self.name = name
         self.assets = assets if isinstance(assets, AssetLocator) else AssetLocator(assets)
         self.hdl = hdl
+        self.latency = context.artifacts.get("latency")
 
     def write(self, out_dir):
         self._check_modules()
+        nodes = self.graph.topological_order()
         if self.hdl == "hardcaml":
-            build = BuildDirectory(out_dir).prepare(("rtl", "golden"))
-            HardcamlEmitter(self.graph, self.name, self.assets, self.latency).write(build)
+            build = BuildDirectory(out_dir, ("rtl", "golden"))
+            path = build.write("design.json", json.dumps(
+                design(self.graph, self.name, self.latency), indent=1) + "\n")
+            build.write("rtl/top.v", HardcamlGenerator(self.assets).verilog(path.resolve()))
         else:
-            build = BuildDirectory(out_dir).prepare()
-            self._copy_library(build)
-            self._write_unit_sources(build)
-            self._write_memories(build)
-            build.write("rtl/top.sv",
-                        NetlistBuilder(self.graph, self.name).build().render())
+            build = BuildDirectory(out_dir, ("rtl", "mem", "golden"))
+            for source in self.assets.rtl_sources():
+                shutil.copyfile(source, build.path("rtl", source.name))
+            for node in nodes:
+                for filename, text in sorted(node.rtl_files().items()):
+                    build.write("rtl/" + filename, text)
+            for node in nodes:
+                self._write_memories(node, build)
+            build.write("rtl/top.sv", render_top(self.graph, self.name))
         build.write("Makefile", self._makefile())
         build.write("manifest.json", json.dumps(self._manifest(), indent=2) + "\n")
         return build
 
-    @property
-    def latency(self):
-        return self.context.artifacts.get("latency")
-
     def _check_modules(self):
-        """Every unit must be a library module unless it brought its own source; checking here names the unit."""
+        """Every unit must be a library module or bring its own source."""
         library = {source.stem for source in self.assets.rtl_sources()}
         for node in self.graph.topological_order():
             if node.module in library or (self.hdl == "hardcaml"
                                            and getattr(node, "hardcaml_only", False)):
                 continue
             if self.hdl == "hardcaml":
-                raise ConfigError(
-                    "%s is implemented by %r, which the Hardcaml generator does not "
-                    "have: it elaborates only the library units (%s), chosen in "
-                    "hardware/hardcaml/src/units.ml. Compile with hdl='sv', or add a "
-                    "Hardcaml unit for it there"
-                    % (node.name, node.module, ", ".join(sorted(library))))
+                raise ConfigError("%s uses %r, which has no Hardcaml unit in units.ml; "
+                                  "compile it with hdl='sv'" % (node.name, node.module))
             if "%s.sv" % node.module not in node.rtl_files():
-                raise ConfigError(
-                    "%s is implemented by %r, which is not in the RTL library (%s). "
-                    "Give its SystemVerilog source as the layer's rtl attribute"
-                    % (node.name, node.module, ", ".join(sorted(library))))
+                raise ConfigError("%s uses %r, which is not in the RTL library and has "
+                                  "no rtl source" % (node.name, node.module))
 
-    def _copy_library(self, build):
-        for source in self.assets.rtl_sources():
-            shutil.copyfile(source, build.path("rtl", source.name))
-
-    def _write_unit_sources(self, build):
-        for node in self.graph.topological_order():
-            for filename, text in sorted(node.rtl_files().items()):
-                build.write("rtl/" + filename, text)
-
-    def _write_memories(self, build):
-        for node in self.graph.topological_order():
-            specs = node.memories(self.graph)
-            if not specs:
-                continue
-            paths = {}
-            for key, spec in specs.items():
-                filename = "%s_%s.hex" % (self._safe(node.name), key)
-                image = (HexImage.packed(spec.array, spec.elem_bits) if spec.packed
-                         else HexImage.scalar(spec.array, spec.elem_bits))
-                image.write(build.path("mem", filename))
-                paths[key] = "mem/" + filename
+    def _write_memories(self, node, build):
+        paths = {}
+        for key, spec in node.memories(self.graph).items():
+            filename = "%s_%s.hex" % (identifier(node.name), key)
+            array = spec.array if spec.packed else spec.array.reshape(-1, 1)
+            HexImage.packed(array, spec.elem_bits).write(build.path("mem", filename))
+            paths[key] = "mem/" + filename
+        if paths:
             node.attrs["mem_paths"] = paths
 
     def _manifest(self):
         folding = self.context.artifacts.get("folding")
         plan = self.context.artifacts.get("plan")
+        device = self.context.device
         source = self.graph.tensor(self.graph.inputs[0])
         sink = self.graph.tensor(self.graph.outputs[0])
+        inputs = port(source)
+        if source.name in self.graph.layouts:
+            inputs.update(self.graph.layouts[source.name].describe())
         manifest = {
             "name": self.name,
-            "device": self.context.device.name,
-            "part": self.context.device.part,
-            "fmax_mhz": self.context.device.fmax_mhz,
-            "input": self._port(source, self.graph.layouts.get(source.name)),
-            "output": self._port(sink),
+            "device": device.name,
+            "part": device.part,
+            "fmax_mhz": device.fmax_mhz,
+            "input": inputs,
+            "output": port(sink),
             "nodes": [{"name": name, "kind": kind, "folding": fold, "cycles": cycles}
                       for name, kind, fold, cycles, _ in
                       (folding.rows if folding else [])],
@@ -133,12 +118,12 @@ class ProjectWriter:
             manifest["resources"] = {f: round(getattr(folding.total, f), 1)
                                      for f in folding.total.FIELDS}
         if plan:
-            for side, tensor in (("input", self.graph.inputs[0]),
-                                 ("output", self.graph.outputs[0])):
+            for side, tensor in (("input", source.name), ("output", sink.name)):
+                spec = plan.spec(tensor)
                 manifest[side]["scale"] = plan.scale(tensor)
                 manifest[side]["zero_point"] = plan.zero_point(tensor)
-                manifest[side]["symmetric"] = plan.spec(tensor).is_symmetric
-                if plan.spec(tensor).rebased:
+                manifest[side]["symmetric"] = spec.is_symmetric
+                if spec.rebased:
                     manifest[side]["note"] = (
                         "the model declared this port unsigned; it is carried on "
                         "the signed grid, which the scale and zero point above "
@@ -154,23 +139,8 @@ class ProjectWriter:
                     for name, dtype in sorted(plan.layer_weight_dtypes.items())}
         return manifest
 
-    @staticmethod
-    def _port(tensor, layout=None):
-        described = {
-            "tensor": tensor.name,
-            "shape": list(tensor.shape or []),
-            "dtype": tensor.dtype.name,
-            "elem_bits": tensor.dtype.bits,
-            "elems_per_beat": tensor.elems_per_beat,
-            "beats": tensor.beats,
-            "layout": "channel-last",
-        }
-        if layout is not None:
-            described.update(layout.describe())
-        return described
-
     def _makefile(self):
-        """Hardcaml output trips -Wall on unread top bits and case-based multiplexers, so those lints are waived."""
+        """Hardcaml output trips -Wall on unread bits and case multiplexers, so those are waived."""
         hardcaml = self.hdl == "hardcaml"
         fixed = self.latency is not None
         return MAKEFILE_TEMPLATE % {
@@ -179,12 +149,20 @@ class ProjectWriter:
             "harness": "fixed_harness.cpp" if fixed else "harness.cpp",
             "run_flags": " --latency %d" % self.latency if fixed else "",
             "sources": "rtl/top.v" if hardcaml else "$(wildcard rtl/*.sv)",
-            "waivers": HARDCAML_WAIVERS if hardcaml else "",
+            "waivers": " -Wno-COMBDLY -Wno-UNUSEDSIGNAL" if hardcaml else "",
         }
 
-    @staticmethod
-    def _safe(name):
-        return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+
+def port(tensor):
+    return {
+        "tensor": tensor.name,
+        "shape": list(tensor.shape or []),
+        "dtype": tensor.dtype.name,
+        "elem_bits": tensor.dtype.bits,
+        "elems_per_beat": tensor.elems_per_beat,
+        "beats": tensor.beats,
+        "layout": "channel-last",
+    }
 
 
 MAKEFILE_TEMPLATE = """# Generated by onnx2fpga.
@@ -214,5 +192,3 @@ lint:
 clean:
 \trm -rf obj_dir
 """
-
-HARDCAML_WAIVERS = " -Wno-COMBDLY -Wno-UNUSEDSIGNAL"

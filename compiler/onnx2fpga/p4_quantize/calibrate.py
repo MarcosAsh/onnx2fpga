@@ -6,32 +6,21 @@ from ..reference.runner import GraphRunner
 from .plan import QuantizationPlan
 
 
-class RangeObserver:
-    """Symmetric dynamic range of every activation seen so far."""
+class Calibrator:
+    """Symmetric quantization from the peak magnitude of every activation over the samples."""
 
-    def __init__(self):
+    def __init__(self, graph):
+        self.graph = graph
         self.peaks = {}
 
-    def __call__(self, name, array):
+    def observe(self, name, array):
         peak = float(np.max(np.abs(np.asarray(array, dtype=np.float64))))
         self.peaks[name] = max(self.peaks.get(name, 0.0), peak)
 
-    def observe_inputs(self, feeds):
-        for name, array in feeds.items():
-            self(name, array)
-
-
-class Calibrator:
-    def __init__(self, graph, observer=None):
-        self.graph = graph
-        self.observer = observer or RangeObserver()
-
-    def run(self, samples):
+    def plan(self, samples, mult_bits=18):
         runner = GraphRunner(self.graph)
         for feeds in samples:
-            self.observer.observe_inputs(feeds)
-            runner.run(feeds, capture=self.observer)
-        return self.observer.peaks
-
-    def plan(self, samples, **kwargs):
-        return QuantizationPlan.from_peaks(self.run(samples), **kwargs)
+            for name, array in feeds.items():
+                self.observe(name, array)
+            runner.run(feeds, capture=self.observe)
+        return QuantizationPlan.from_peaks(self.peaks, mult_bits=mult_bits)

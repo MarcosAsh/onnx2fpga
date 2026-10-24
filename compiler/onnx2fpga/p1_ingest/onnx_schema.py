@@ -1,8 +1,14 @@
-"""The subset of onnx.proto3 the compiler reads and writes; unknown fields are skipped on decode."""
+"""The subset of onnx.proto3 the compiler reads and writes; unknown fields are skipped."""
 
 import struct
 
-from .protobuf_codec import Decoder, Encoder, FIXED32, FIXED64, LEN, VARINT
+from .protobuf_codec import Decoder, Encoder, LEN
+
+PACKABLE = ("varint", "float", "double")
+
+
+def signed64(raw):
+    return raw - (1 << 64) if raw >= (1 << 63) else raw
 
 
 class Field:
@@ -12,10 +18,6 @@ class Field:
         self.kind = kind
         self.repeated = repeated
         self.message = message
-
-    @property
-    def is_scalar_list(self):
-        return self.repeated and self.kind in ("varint", "float", "double")
 
     def default(self):
         if self.repeated:
@@ -27,6 +29,9 @@ class Field:
 class Message:
     FIELDS = ()
 
+    def __init_subclass__(cls):
+        cls.BY_NUMBER = {f.number: f for f in cls.FIELDS}
+
     def __init__(self, **kwargs):
         for field in self.FIELDS:
             setattr(self, field.name, field.default())
@@ -36,42 +41,25 @@ class Message:
             setattr(self, name, value)
 
     @classmethod
-    def _by_number(cls):
-        cached = cls.__dict__.get("_FIELD_MAP")
-        if cached is None:
-            cached = {f.number: f for f in cls.FIELDS}
-            setattr(cls, "_FIELD_MAP", cached)
-        return cached
-
-    @classmethod
     def decode(cls, buf, start=0, end=None):
-        instance = cls()
-        instance._read(Decoder(buf, start, end))
-        return instance
-
-    def _read(self, decoder):
-        table = type(self)._by_number()
+        message = cls()
+        decoder = Decoder(buf, start, end)
         for number, wire_type in decoder.fields():
-            field = table.get(number)
+            field = cls.BY_NUMBER.get(number)
             if field is None:
                 decoder.skip(wire_type)
-                continue
-            self._read_field(decoder, field, wire_type)
+            elif field.repeated and field.kind in PACKABLE and wire_type == LEN:
+                message._read_packed(decoder.blob(), field)
+            elif field.repeated:
+                getattr(message, field.name).append(message._read_value(decoder, field))
+            else:
+                setattr(message, field.name, message._read_value(decoder, field))
+        return message
 
-    def _read_field(self, decoder, field, wire_type):
-        if field.is_scalar_list and wire_type == LEN:
-            self._read_packed(decoder.blob(), field)
-            return
-        value = self._read_scalar(decoder, field, wire_type)
-        if field.repeated:
-            getattr(self, field.name).append(value)
-        else:
-            setattr(self, field.name, value)
-
-    def _read_scalar(self, decoder, field, wire_type):
+    @staticmethod
+    def _read_value(decoder, field):
         if field.kind == "varint":
-            raw = decoder.varint()
-            return raw - (1 << 64) if raw >= (1 << 63) else raw
+            return signed64(decoder.varint())
         if field.kind == "float":
             return struct.unpack("<f", decoder.fixed32())[0]
         if field.kind == "double":
@@ -80,10 +68,7 @@ class Message:
             return decoder.blob().decode("utf-8")
         if field.kind == "bytes":
             return bytes(decoder.blob())
-        if field.kind == "message":
-            blob = decoder.blob()
-            return field.message.decode(blob)
-        raise ValueError("unhandled kind %r" % field.kind)
+        return field.message.decode(decoder.blob())
 
     def _read_packed(self, blob, field):
         target = getattr(self, field.name)
@@ -94,33 +79,27 @@ class Message:
         else:
             inner = Decoder(blob)
             while not inner.exhausted:
-                raw = inner.varint()
-                target.append(raw - (1 << 64) if raw >= (1 << 63) else raw)
+                target.append(signed64(inner.varint()))
 
     def encode(self):
         encoder = Encoder()
         for field in self.FIELDS:
             value = getattr(self, field.name)
-            if field.repeated:
-                if not value:
-                    continue
-                self._write_repeated(encoder, field, value)
-            elif value not in (None, "", b"", 0, 0.0):
-                self._write_scalar(encoder, field, value)
+            if field.repeated and field.kind == "varint":
+                if value:
+                    encoder.packed_varints(field.number, value)
+            elif field.repeated and field.kind in ("float", "double"):
+                if value:
+                    encoder.packed_field(field.number, value, field.kind[0])
+            elif field.repeated:
+                for item in value:
+                    self._write(encoder, field, item)
+            elif value not in (None, "", b"", 0):
+                self._write(encoder, field, value)
         return encoder.to_bytes()
 
-    def _write_repeated(self, encoder, field, values):
-        if field.kind == "varint":
-            encoder.packed_varints(field.number, values)
-        elif field.kind == "float":
-            encoder.packed_field(field.number, values, "f")
-        elif field.kind == "double":
-            encoder.packed_field(field.number, values, "d")
-        else:
-            for item in values:
-                self._write_scalar(encoder, field, item)
-
-    def _write_scalar(self, encoder, field, value):
+    @staticmethod
+    def _write(encoder, field, value):
         if field.kind == "varint":
             encoder.varint_field(field.number, value)
         elif field.kind == "float":
@@ -132,15 +111,7 @@ class Message:
         elif field.kind == "message":
             encoder.blob_field(field.number, value.encode())
         else:
-            raise ValueError("unhandled kind %r" % field.kind)
-
-    def __repr__(self):
-        shown = []
-        for field in self.FIELDS:
-            value = getattr(self, field.name)
-            if value not in (None, "", b"", 0, 0.0, []):
-                shown.append("%s=%r" % (field.name, value))
-        return "%s(%s)" % (type(self).__name__, ", ".join(shown))
+            raise ValueError("cannot encode a single %s field" % field.kind)
 
 
 class TensorProto(Message):
@@ -215,15 +186,21 @@ class AttributeProto(Message):
     )
 
     def value(self):
-        return {
-            self.FLOAT: lambda: self.f,
-            self.INT: lambda: self.i,
-            self.STRING: lambda: self.s.decode("utf-8"),
-            self.TENSOR: lambda: self.t,
-            self.FLOATS: lambda: list(self.floats),
-            self.INTS: lambda: list(self.ints),
-            self.STRINGS: lambda: [s.decode("utf-8") for s in self.strings],
-        }.get(self.type, lambda: None)()
+        if self.type == self.FLOAT:
+            return self.f
+        if self.type == self.INT:
+            return self.i
+        if self.type == self.STRING:
+            return self.s.decode("utf-8")
+        if self.type == self.TENSOR:
+            return self.t
+        if self.type == self.FLOATS:
+            return list(self.floats)
+        if self.type == self.INTS:
+            return list(self.ints)
+        if self.type == self.STRINGS:
+            return [s.decode("utf-8") for s in self.strings]
+        return None
 
 
 class NodeProto(Message):

@@ -14,14 +14,12 @@ module Make_test (Config : Uart_bridge.Config) = struct
   module Dut = Uart_bridge.Make (Config)
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)
 
-  let in_bytes = (Config.in_width + 7) / 8
-
-  (* Bytes arrive, and beats and the transmitter move, at random with no way to hold them. *)
-  let random_traffic ?random_initial_state ~seed ~beats () =
+  (* Every port moves at random, and incoming bytes cannot be stalled. *)
+  let random_traffic ~seed ~beats () =
     let rng = Random.State.make [| seed |] in
     let chance duty = Random.State.int rng 100 < duty in
     Harness.run
-      ?random_initial_state
+      ~random_initial_state:`All
       ~create:Dut.hierarchical
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
@@ -29,16 +27,17 @@ module Make_test (Config : Uart_bridge.Config) = struct
          let beats_in = Stream_bench.beats ~rng ~width:Config.in_width beats in
          let beats_out = Stream_bench.beats ~rng ~width:Config.out_width beats in
          let bytes_in = List.concat_map beats_in ~f:(bytes_of ~width:Config.in_width) in
+         let bytes_out =
+           List.concat_map beats_out ~f:(bytes_of ~width:Config.out_width)
+         in
+         let in_bytes = List.length bytes_in / beats in
          let pending = ref bytes_in in
          let taken = ref [] in
          let offering = ref beats_out in
          let sent = ref [] in
          let overflows = ref 0 in
          let cycles = ref 0 in
-         let wanted =
-           List.length (List.concat_map beats_out ~f:(bytes_of ~width:Config.out_width))
-         in
-         while List.length !taken < beats || List.length !sent < wanted do
+         while List.length !taken < beats || List.length !sent < List.length bytes_out do
            if !cycles > 200_000 then raise_s [%message "uart_bridge stalled"];
            (match !pending with
             | byte :: rest
@@ -72,9 +71,7 @@ module Make_test (Config : Uart_bridge.Config) = struct
            then sent := Bits.to_unsigned_int !(o.tx.data) :: !sent
          done;
          [%test_result: Bits.t list] (List.rev !taken) ~expect:beats_in;
-         [%test_result: int list]
-           (List.rev !sent)
-           ~expect:(List.concat_map beats_out ~f:(bytes_of ~width:Config.out_width));
+         [%test_result: int list] (List.rev !sent) ~expect:bytes_out;
          [%test_result: int] !overflows ~expect:0;
          !cycles)
   ;;
@@ -92,9 +89,7 @@ let%expect_test "beats of every shape cross intact under random traffic" =
           let tx_depth = 16
         end)
       in
-      let cycles =
-        T.random_traffic ~random_initial_state:`All ~seed:in_width ~beats:150 ()
-      in
+      let cycles = T.random_traffic ~seed:in_width ~beats:150 () in
       print_s [%message (in_width : int) (out_width : int) (cycles : int)]);
   [%expect
     {|
@@ -106,18 +101,16 @@ let%expect_test "beats of every shape cross intact under random traffic" =
     |}]
 ;;
 
-module Small = Uart_bridge.Make (struct
+module Small = Make_test (struct
     let in_width = 16
     let out_width = 8
     let rx_depth = 4
     let tx_depth = 4
   end)
 
-module Harness = Hardcaml_test_harness.Lws_harness.Make (Small.I) (Small.O)
-
 (* A full buffer holds at least its depth; the seventh byte overflows. *)
 let%expect_test "capacity of each direction" =
-  Harness.run ~create:Small.hierarchical (fun (h @ local) ~inputs ~outputs ->
+  Small.Harness.run ~create:Small.Dut.hierarchical (fun (h @ local) ~inputs ~outputs ->
     let o = Before_and_after_edge.before_edge outputs in
     Stream_bench.clear h inputs.clocking.clear;
     let overflows =
@@ -160,8 +153,8 @@ let%expect_test "waveform of a two byte beat in and a byte out" =
     ; Display_rule.port_name_matches (Glob "tx$*") ~wave_format:(Bit_or Hex)
     ]
   in
-  Harness.run
-    ~create:Small.hierarchical
+  Small.Harness.run
+    ~create:Small.Dut.hierarchical
     ~trace:`Ports_only
     ~print_waves_after_test:(fun waves ->
       Waveform.print

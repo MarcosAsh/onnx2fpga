@@ -32,25 +32,22 @@ class ModelFactory:
             last = layer == len(widths) - 2
             builder.add_initializer("w%d" % layer, self.dense(fan_in, fan_out))
             builder.add_initializer("b%d" % layer, self.bias(fan_out))
-            target = "y" if last else "h%d" % layer
+            out = "y" if last else "h%d" % layer
             builder.add_node("Gemm", [cursor, "w%d" % layer, "b%d" % layer],
-                             [target if last else target + "_pre"],
+                             [out if last else out + "_pre"],
                              name="fc%d" % layer)
-            if last:
-                cursor = target
-            else:
-                builder.add_node("Relu", [target + "_pre"], [target],
+            if not last:
+                builder.add_node("Relu", [out + "_pre"], [out],
                                  name="relu%d" % layer)
-                cursor = target
+            cursor = out
         return builder.add_output("y", (1, widths[-1])).build()
 
     def residual(self, width=16, classes=10):
         """A skip connection: the join cannot take from the short branch until the long one catches up."""
         builder = ModelBuilder("residual").add_input("x", (1, width))
-        for index, (fan_in, fan_out) in enumerate(
-                [(width, width), (width, width), (width, width)]):
-            builder.add_initializer("w%d" % index, self.dense(fan_in, fan_out))
-            builder.add_initializer("b%d" % index, self.bias(fan_out))
+        for index in range(3):
+            builder.add_initializer("w%d" % index, self.dense(width, width))
+            builder.add_initializer("b%d" % index, self.bias(width))
         builder.add_initializer("wo", self.dense(width, classes))
         builder.add_initializer("bo", self.bias(classes))
 
@@ -138,7 +135,7 @@ class QdqModelFactory(ModelFactory):
     """Builds models already quantized, in the QuantizeLinear and DequantizeLinear form."""
 
     def __init__(self, seed=0, activation_dtype=TensorProto.UINT8):
-        ModelFactory.__init__(self, seed)
+        super().__init__(seed)
         self.activation_dtype = activation_dtype
         self._counter = 0
 
@@ -164,7 +161,7 @@ class QdqModelFactory(ModelFactory):
         scale, zero = self._grid_initializers(builder, stem, grid)
         builder.add_node("DequantizeLinear", [stem + "_i", scale, zero], [stem + "_d"],
                          name=stem + "_dequant", axis=channel_axis)
-        return stem + "_d", grid
+        return stem + "_d"
 
     def mlp(self, widths=(32, 64, 16, 10), samples=32):
         layers = [(self.dense(a, b), self.bias(b)) for a, b in zip(widths, widths[1:])]
@@ -175,7 +172,7 @@ class QdqModelFactory(ModelFactory):
         builder = ModelBuilder("qdq_mlp").add_input("x", (1, widths[0]))
         cursor = self.qdq(builder, "x", ranges[0])
         for index, (weights, bias) in enumerate(layers):
-            name, _ = self.quantized_weight(builder, "w%d" % index, weights, 1)
+            name = self.quantized_weight(builder, "w%d" % index, weights, 1)
             builder.add_initializer("b%d" % index, bias)
             last = index == len(layers) - 1
             raw = "y_raw" if last else "h%d_raw" % index
