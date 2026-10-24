@@ -7,7 +7,7 @@ name = "onnx2fpga"
 version = "0.1.0"
 description = "Compile ONNX models into streaming dataflow FPGA accelerators"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = ["numpy>=1.20"]
 keywords = ["onnx", "fpga", "compiler", "systemverilog", "quantization"]

@@ -9,7 +9,7 @@ pip install .
 onnx2fpga doctor
 ```
 
-Compiling needs only Python 3.9 and numpy. Simulating needs Verilator 5 and a
+Compiling needs only Python 3.10 and numpy. Simulating needs Verilator 5 and a
 C++17 compiler. Building for the Icepi Zero needs yosys, nextpnr-ecp5, ecppack
 and openFPGALoader, which all come in the OSS CAD Suite, plus the OCaml switch
 with Hardcaml, because yosys cannot read our SystemVerilog library. `doctor`
