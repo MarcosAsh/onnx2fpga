@@ -57,11 +57,21 @@ class Resources:
 def memory_cost(depth, width):
     """AMD storage: LUT RAM if shallow, UltraRAM if huge and narrow, else block RAM."""
     if depth <= 64:
-        slices = max(1, (depth + 31) // 32)
-        return Resources(lut=slices * width * 0.5, ff=width)
-    parallel = max(1, (width + 71) // 72)
+        return lut_memory_cost(depth, width)
     if depth * width >= 4 * 288 * 1024 and width <= 72:
+        parallel = max(1, (width + 71) // 72)
         return Resources(uram=parallel * max(1, (depth + 4095) // 4096), ff=width)
+    return block_ram_cost(depth, width)
+
+
+def lut_memory_cost(depth, width):
+    """AMD LUT RAM or ROM: a LUT6 holds 64 words of one bit."""
+    return Resources(lut=max(1, (depth + 31) // 32) * width * 0.5, ff=width)
+
+
+def block_ram_cost(depth, width):
+    """AMD RAMB36: 512 words of 72 bits, or 1024 of 36."""
+    parallel = max(1, (width + 71) // 72)
     slice_depth = 512 if width > 36 else 1024
     return Resources(bram36=parallel * max(1, (depth + slice_depth - 1) // slice_depth),
                      ff=width)

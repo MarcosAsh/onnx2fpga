@@ -134,15 +134,18 @@ class BufferSizingCases:
         self.assertIn("stalled", result.stderr)
 
     def test_computed_buffers_do_not(self):
-        name = "residual_sized" + Hdl.suffix(self.HDL)
-        build = Fixtures.build_dir(name)
-        compile_residual(name, hdl=self.HDL)
-        built = run(["make", "-s"], cwd=build)
-        self.assertEqual(built.returncode, 0, built.stderr[-4000:])
-        result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
-                      "--expected", "golden/expected.hex",
-                      "--timeout", "400000"], cwd=build, timeout=300)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        """Also with block RAM on one branch, which delays it a cycle more than the other."""
+        for label, memory in (("", {}), ("_block", {"branch0": "block"})):
+            with self.subTest(memory=memory):
+                name = "residual_sized" + label + Hdl.suffix(self.HDL)
+                build = Fixtures.build_dir(name)
+                compile_residual(name, hdl=self.HDL, memory=memory)
+                built = run(["make", "-s"], cwd=build)
+                self.assertEqual(built.returncode, 0, built.stderr[-4000:])
+                result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
+                              "--expected", "golden/expected.hex",
+                              "--timeout", "400000"], cwd=build, timeout=300)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 VERILATOR = shutil.which("verilator") is not None

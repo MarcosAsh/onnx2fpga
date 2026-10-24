@@ -137,7 +137,7 @@ let mvau_node ~instance ~weights ~input ~output =
     {|{"name": "%s", "instance": "%s", "kind": "otf_mvau",
        "params": {"MW": 2, "MH": 2, "SIMD": 2, "PE": 1, "ACT_BITS": 8, "WGT_BITS": 8,
                   "ACC_BITS": 18, "OUT_BITS": 8, "MULT_BITS": 4, "SHIFT": 2,
-                  "OUT_MIN": -128, "OUT_MAX": 127, "OUT_ZP": 0},
+                  "OUT_MIN": -128, "OUT_MAX": 127, "OUT_ZP": 0, "BLOCK_RAM": 0},
        "memories": {"weights": {"elem_bits": 8, "lanes": 2, "values": [%s]},
                     "bias": {"elem_bits": 18, "lanes": 1, "values": [0, 0]},
                     "mult": {"elem_bits": 4, "lanes": 1, "values": [1, 1]}},

@@ -1,6 +1,7 @@
 """Folding allocation: repeatedly speeds up the bottleneck until the budget is gone or the target met."""
 
 from ..errors import BudgetError, ConfigError
+from ..p3_ops.hardware_ops import MatVecUnit
 from ..pipeline import Pass
 from ..targets.resources import Resources
 
@@ -52,16 +53,18 @@ class FoldingReport:
 class FoldingAllocator(Pass):
     name = "fold"
 
-    def __init__(self, target_cycles=None, utilisation_limit=0.80, pins=None):
-        """`pins` maps a unit name to folding factors fixed by hand; see StreamingNode.allowed_foldings."""
+    def __init__(self, target_cycles=None, utilisation_limit=0.80, pins=None, memory=None):
+        """`pins` maps a unit to folding factors fixed by hand, `memory` a matvec to "block" or "lut"."""
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
         self.pins = dict(pins or {})
+        self.memory = dict(memory or {})
 
     def run(self, graph, context):
         device = context.device
         nodes = [n for n in graph.topological_order() if n.folding_options() != [{}]]
         self._apply_pins(nodes)
+        self._apply_memory(nodes, device)
         target = self.target_cycles
         frozen, held = self._allocate(nodes, graph, device, target)
         missed = dict(held)
@@ -71,6 +74,10 @@ class FoldingAllocator(Pass):
 
         report = FoldingReport(device).record(graph)
         context.artifacts["folding"] = report
+        for node in nodes:
+            if isinstance(node, MatVecUnit):
+                node.block_ram = node.uses_block_ram(device)
+        self._check_memory(nodes, report, device)
         pinned = [n for n in nodes if n.pinned_folding]
         self._check_pins(pinned, report, device)
         for node in pinned:
@@ -160,6 +167,28 @@ class FoldingAllocator(Pass):
                 raise ConfigError("%s cannot fold to %s, valid foldings: %s"
                                   % (name, _render(factors),
                                      "; ".join(_render(o) for o in options)))
+
+    def _apply_memory(self, nodes, device):
+        units = {node.name: node for node in nodes if isinstance(node, MatVecUnit)}
+        for name, choice in sorted(self.memory.items()):
+            if name not in units:
+                raise ConfigError("no matrix unit named %r; units with weight tables: %s"
+                                  % (name, ", ".join(sorted(units))))
+            if choice == "block" and not device.has_block_ram:
+                raise ConfigError("%s cannot go in block RAM because %s has none"
+                                  % (name, device.name))
+            units[name].attrs["memory"] = choice
+
+    def _check_memory(self, nodes, report, device):
+        forced = [n.name for n in nodes if n.attrs.get("memory") == "block"]
+        over = [o for o in report.total.overruns(device.budget,
+                                                  device.limits(self.utilisation_limit))
+                if o[0] == device.block_ram]
+        if forced and over:
+            field, used, allowed = over[0]
+            raise BudgetError("block RAM for %s takes the design to %.0f %s, past the %.0f "
+                              "on %s"
+                              % (", ".join(forced), used, field, allowed, device.name))
 
     def _check_pins(self, pinned, report, device):
         """Only a pin can take a design past its budget; the allocator checks its own choices first."""

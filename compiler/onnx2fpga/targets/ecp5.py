@@ -37,13 +37,22 @@ EBR_SHAPES = ((16384, 1), (8192, 2), (4096, 4), (2048, 9), (1024, 18), (512, 36)
 LUTS_PER_DPR = 8
 
 
+def ebr_blocks(depth, width):
+    """DP16KD for one memory, in the cheapest of its shapes."""
+    return min(math.ceil(depth / d) * math.ceil(width / w) for d, w in EBR_SHAPES)
+
+
+def worth_a_block(depth, width):
+    """Each DP16KD must save 128 LUTs, which leaves a 160 x 8 table in LUTs as yosys would."""
+    return width * rom_luts(depth) >= 128 * ebr_blocks(depth, width)
+
+
 def memory(depth, width):
     """A buffer with unregistered read: flip flops if tiny, DP16KD if deep and large, else LUT RAM."""
     if depth == 1 or depth * width <= 16:
         return Resources(lut=width, ff=depth * width)
     if depth > 32 and depth * width > 1024:
-        blocks = min(math.ceil(depth / d) * math.ceil(width / w) for d, w in EBR_SHAPES)
-        return Resources(lut=width, ebr=blocks)
+        return Resources(lut=width, ebr=ebr_blocks(depth, width))
     cells = math.ceil(width / 4) * math.ceil(depth / 16)
     read_mux = width * (math.ceil(depth / 16) - 1)
     return Resources(lut=cells * LUTS_PER_DPR + read_mux)
@@ -51,6 +60,9 @@ def memory(depth, width):
 
 class Ecp5CostModel:
     """Per unit estimates in ECP5 sites, fitted to yosys and nextpnr."""
+
+    def __init__(self, device):
+        self.device = device
 
     def estimate(self, node):
         method = getattr(self, node.module, None)
@@ -66,6 +78,7 @@ class Ecp5CostModel:
         return multipliers(acc_bits, mult_bits)
 
     def otf_mvau(self, node):
+        """Block RAM weights come out of a DP16KD register; the next stage holds the activations."""
         pe, simd = node.pe, node.simd
         acc = node.accumulator_dtype.bits
         act, wgt = node.act_dtype.bits, node.weight_dtype.bits
@@ -78,12 +91,16 @@ class Ecp5CostModel:
         dsp += pe * self._requant_multipliers(acc, node.mult_bits, node.requant.shift)
         if nf > 2:
             dsp += constant_multipliers(sf, (nf - 1).bit_length())
-        tables = pe * (simd * wgt * rom_luts(sf * nf)
-                       + (acc + node.mult_bits) * rom_luts(nf))
+        width = pe * simd * wgt
+        if node.uses_block_ram(self.device):
+            weights = Resources(ebr=ebr_blocks(sf * nf, width), ff=simd * act)
+        else:
+            weights = Resources(lut=width * rom_luts(sf * nf))
+        tables = pe * (acc + node.mult_bits) * rom_luts(nf)
         datapath = 2.25 * pe * simd * acc + 150
-        cost = Resources(lut=tables + datapath,
-                         ff=pe * (acc + node.out_dtype.bits) + 35,
-                         dsp=dsp)
+        cost = weights + Resources(lut=tables + datapath,
+                                   ff=pe * (acc + node.out_dtype.bits) + 35,
+                                   dsp=dsp)
         if sf > 1:
             cost = cost + memory(sf, simd * act)
         elif nf > 1:
@@ -152,11 +169,14 @@ class Ecp5CostModel:
 
 class Ecp5Device(Device):
     HARD_FIELDS = ("dsp", "ebr")
-    cost_model = Ecp5CostModel()
 
     def __init__(self, nextpnr_args, **kwargs):
         Device.__init__(self, block_ram="ebr", **kwargs)
         self.nextpnr_args = tuple(nextpnr_args)
+        self.cost_model = Ecp5CostModel(self)
+
+    def worth_a_block(self, depth, width):
+        return worth_a_block(depth, width)
 
     def macs_per_dsp(self, act_bits, weight_bits):
         """One MULT18X18D per product, as yosys infers it; the 9x9 mode is never used."""

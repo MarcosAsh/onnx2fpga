@@ -18,13 +18,15 @@ CYCLES = 24000
 
 
 def mvau(mw, mh, simd, pe, acc_bits=20, shift=20, out_min=-128, out_max=127,
-         out_zp=0, mult_bits=18, act_bits=8, wgt_bits=8, out_bits=8):
+         out_zp=0, mult_bits=18, act_bits=8, wgt_bits=8, out_bits=8, block=False):
     sf, nf = mw // simd, mh // pe
     params = {"MW": mw, "MH": mh, "SIMD": simd, "PE": pe, "ACT_BITS": act_bits,
               "WGT_BITS": wgt_bits, "ACC_BITS": acc_bits, "OUT_BITS": out_bits,
               "MULT_BITS": mult_bits, "SHIFT": shift, "OUT_MIN": out_min,
-              "OUT_MAX": out_max, "OUT_ZP": out_zp}
-    memories = {"weights": (wgt_bits, simd, pe * sf * nf),
+              "OUT_MAX": out_max, "OUT_ZP": out_zp, "BLOCK_RAM": int(block)}
+    # Block RAM keeps one word per step with every lane in it.
+    lanes, words = (pe * simd, sf * nf) if block else (simd, pe * sf * nf)
+    memories = {"weights": (wgt_bits, lanes, words),
                 "bias": (acc_bits, 1, pe * nf),
                 "mult": (mult_bits, 1, pe * nf)}
     return "otf_mvau", params, memories
@@ -102,6 +104,15 @@ CASES = (
         ("narrow", (4, 6, 2, 2), {"act_bits": 4, "wgt_bits": 3, "acc_bits": 9,
                                   "mult_bits": 5, "shift": 3, "out_bits": 4,
                                   "out_min": -8, "out_max": 7}),
+        ("block_mlp0", (32, 64, 16, 2), {"block": True}),
+        ("block_serial", (8, 8, 1, 1), {"block": True}),
+        ("block_one_fold", (9, 4, 9, 1), {"acc_bits": 18, "block": True}),
+        ("block_odd_folds", (12, 10, 3, 5), {"out_zp": 7, "out_min": 0, "block": True}),
+        ("block_wide_pe", (6, 9, 1, 9), {"shift": 1, "block": True}),
+        ("block_one_nf", (16, 4, 4, 4), {"acc_bits": 19, "shift": 24, "block": True}),
+        ("block_narrow", (4, 6, 2, 2), {"act_bits": 4, "wgt_bits": 3, "acc_bits": 9,
+                                        "mult_bits": 5, "shift": 3, "out_bits": 4,
+                                        "out_min": -8, "out_max": 7, "block": True}),
     )]
     + [("swu_frame_" + c[0],) + swu(c, "frame")
        for c in CONFIGS if c[0] in FRAME_REGRESSION]

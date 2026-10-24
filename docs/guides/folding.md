@@ -32,6 +32,10 @@ that with `compile(utilisation=0.9)` if you want to gamble. On the Icepi Zero
 you will almost always run out of multipliers first, because yosys gives every
 int8 multiply a whole 18x18 block.
 
+Large weight tables go in block RAM, so a folding step that widens a table can
+also be held by the block RAM budget. `acc.layers[name].memory("lut")` keeps a
+table in logic instead.
+
 When you ask for a speed the budget cannot hold, the default is to raise
 `BudgetError` with the allocator's reason and a suggestion. Pass `strict=False`
 and you get the fastest balanced design that does fit instead.

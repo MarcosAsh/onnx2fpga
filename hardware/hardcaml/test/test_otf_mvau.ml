@@ -93,6 +93,7 @@ let config
   ?(act_bits = 8)
   ?(wgt_bits = 8)
   ?(out_bits = 8)
+  ?(block_ram = false)
   ~mw
   ~mh
   ~simd
@@ -118,13 +119,23 @@ let config
     let out_min = out_min
     let out_max = out_max
     let out_zp = out_zp
+    let block_ram = block_ram
     let weight_values = weight_values
     let bias_values = bias_values
     let mult_values = mult_values
 
+    (* Block RAM holds one word per step with every lane's weights side by side. *)
     let weights =
-      List.chunks_of weight_values ~length:simd
-      |> List.map ~f:(Stream_bench.of_signed_lanes ~lane_bits:wgt_bits)
+      let words =
+        List.chunks_of weight_values ~length:simd
+        |> List.map ~f:(Stream_bench.of_signed_lanes ~lane_bits:wgt_bits)
+      in
+      if block_ram
+      then
+        List.chunks_of words ~length:(mw / simd * (mh / pe))
+        |> List.transpose_exn
+        |> List.map ~f:Bits.concat_lsb
+      else words
     ;;
 
     let bias = Model.words_of_ints ~bits:acc_bits bias_values
@@ -157,6 +168,13 @@ let%expect_test "matrix vector products under random backpressure" =
           ~out_min:(-8)
           ~out_max:7
           8 )
+    ; ( "mlp first layer in block RAM"
+      , config ~mw:32 ~mh:64 ~simd:16 ~pe:2 ~block_ram:true 2 )
+    ; "fully serial in block RAM", config ~mw:8 ~mh:8 ~simd:1 ~pe:1 ~block_ram:true 4
+    ; ( "odd folds in block RAM"
+      , config ~mw:12 ~mh:10 ~simd:3 ~pe:5 ~out_zp:7 ~out_min:0 ~block_ram:true 5 )
+    ; ( "one synapse fold in block RAM"
+      , config ~mw:9 ~mh:4 ~simd:9 ~pe:1 ~acc_bits:18 ~block_ram:true 3 )
     ]
     ~f:(fun (name, (module Config)) ->
       let module T = Make_test (Config) in
@@ -179,12 +197,19 @@ let%expect_test "matrix vector products under random backpressure" =
     ("one word" (cycles_per_vector 1) (cycles (13 40 96 65)))
     (wrapping (cycles_per_vector 9) (cycles (109 158 240 239)))
     (narrow (cycles_per_vector 6) (cycles (73 138 193 233)))
+    ("mlp first layer in block RAM" (cycles_per_vector 64)
+     (cycles (770 970 864 1929)))
+    ("fully serial in block RAM" (cycles_per_vector 64)
+     (cycles (770 850 1217 883)))
+    ("odd folds in block RAM" (cycles_per_vector 8) (cycles (98 147 306 181)))
+    ("one synapse fold in block RAM" (cycles_per_vector 4)
+     (cycles (50 110 100 250)))
     |}]
 ;;
 
 (* Two synapse and two neuron folds; the vector is replayed from the buffer on the second. *)
-let%expect_test "waveform of a vector taken once and replayed" =
-  let (module Config) = config ~mw:4 ~mh:4 ~simd:2 ~pe:2 ~shift:26 10 in
+let waveform ~block_ram =
+  let (module Config) = config ~mw:4 ~mh:4 ~simd:2 ~pe:2 ~shift:26 ~block_ram 10 in
   let module T = Make_test (Config) in
   let display_rules =
     [ Display_rule.port_name_matches (Glob "s$*") ~wave_format:(Bit_or Hex)
@@ -214,7 +239,11 @@ let%expect_test "waveform of a vector taken once and replayed" =
           if index = 2 then inputs.m.ready := Bits.vdd
         done);
       inputs.s.valid := Bits.gnd;
-      Lws.cycle ~n:6 h);
+      Lws.cycle ~n:6 h)
+;;
+
+let%expect_test "waveform of a vector taken once and replayed" =
+  waveform ~block_ram:false;
   [%expect
     {|
     ┌Signals┐┌Waves────────────────────────────────────────────────────────────────────────────────────┐
@@ -232,6 +261,30 @@ let%expect_test "waveform of a vector taken once and replayed" =
     │       ││────────────────────────┴───────────┴───────────┴───────────┴────────────────────────────│
     │m$valid││                        ┌─────────────────┐     ┌─────┐     ┌─────┐                      │
     │       ││────────────────────────┘                 └─────┘     └─────┘     └──────────────────────│
+    └───────┘└─────────────────────────────────────────────────────────────────────────────────────────┘
+    |}]
+;;
+
+(* Block RAM moves every result one cycle later; the input side is unchanged. *)
+let%expect_test "waveform with the weights in block RAM" =
+  waveform ~block_ram:true;
+  [%expect
+    {|
+    ┌Signals┐┌Waves────────────────────────────────────────────────────────────────────────────────────┐
+    │       ││────────────┬─────┬─────┬─────────────────┬──────────────────────────────────────────────│
+    │s$data ││ 0000       │0201 │0403 │0605             │0807                                          │
+    │       ││────────────┴─────┴─────┴─────────────────┴──────────────────────────────────────────────│
+    │s$valid││            ┌───────────────────────────────────┐                                        │
+    │       ││────────────┘                                   └────────────────────────────────────────│
+    │s$ready││────────────────────────┐           ┌───────────┐           ┌────────────────────────────│
+    │       ││                        └───────────┘           └───────────┘                            │
+    │m$ready││                              ┌──────────────────────────────────────────────────────────│
+    │       ││──────────────────────────────┘                                                          │
+    │       ││──────────────────────────────┬───────────┬───────────┬───────────┬──────────────────────│
+    │m$data ││ 0000                         │EAE5       │FE04       │EAE6       │FF05                  │
+    │       ││──────────────────────────────┴───────────┴───────────┴───────────┴──────────────────────│
+    │m$valid││                              ┌─────┐     ┌─────┐     ┌─────┐     ┌─────┐                │
+    │       ││──────────────────────────────┘     └─────┘     └─────┘     └─────┘     └────────────────│
     └───────┘└─────────────────────────────────────────────────────────────────────────────────────────┘
     |}]
 ;;

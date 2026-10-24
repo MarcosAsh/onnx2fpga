@@ -17,6 +17,10 @@ module type Config = sig
   val out_min : int
   val out_max : int
   val out_zp : int
+
+  (** Weights in a registered ROM, a word per step for all lanes; a cycle later. *)
+  val block_ram : bool
+
   val weights : Bits.t list
   val bias : Bits.t list
   val mult : Bits.t list

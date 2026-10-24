@@ -7,7 +7,7 @@ from support import Fixtures, Hdl
 from onnx2fpga.compile import Compiler
 from onnx2fpga.measure import YosysRunner
 from onnx2fpga.targets.device import Device
-from onnx2fpga.targets.ecp5 import memory, multipliers
+from onnx2fpga.targets.ecp5 import ebr_blocks, memory, multipliers, worth_a_block
 from onnx2fpga.targets.resources import Resources
 
 
@@ -44,6 +44,14 @@ class Ecp5ModelTest(unittest.TestCase):
         self.assertEqual(memory(128, 8).ebr, 0)
         self.assertEqual(memory(25, 72).ebr, 0)
         self.assertEqual(memory(2, 8).ff, 16)
+
+    def test_weights_go_in_ebr_when_they_save_luts(self):
+        """Block counts measured with synth_ecp5 on ROMs marked ram_style block."""
+        shapes = ((160, 8), (32, 36), (4, 72), (64, 36), (128, 128))
+        self.assertEqual([worth_a_block(*s) for s in shapes],
+                         [False, False, False, True, True])
+        self.assertEqual([ebr_blocks(*s) for s in shapes], [1, 1, 2, 1, 4])
+        self.assertEqual(ebr_blocks(64, 256), 8)
 
     def test_synth_commands(self):
         synth, place = YosysRunner(Device.get("icepi25")).commands()
@@ -98,6 +106,7 @@ class Ecp5SynthesisTest(unittest.TestCase):
         predicted = sum((n.resources(device) for n in result.hardware_graph.nodes),
                         Resources.zero())
         self.assertEqual(predicted.dsp, measured.dsp)
+        self.assertGreater(measured.ebr, 0)
         self.assertEqual(predicted.ebr, measured.ebr)
         self.assertLess(abs(predicted.lut / measured.lut - 1), 0.25)
         self.assertLess(abs(predicted.ff / measured.ff - 1), 0.25)

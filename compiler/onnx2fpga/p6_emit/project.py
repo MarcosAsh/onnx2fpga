@@ -141,7 +141,7 @@ class ProjectWriter:
         return manifest
 
     def _makefile(self):
-        """Hardcaml output trips -Wall on unread bits and case multiplexers, so those are waived."""
+        """Hardcaml output trips -Wall on unread bits, case multiplexers and ROM initialisers, so those are waived."""
         hardcaml = self.hdl == "hardcaml"
         fixed = self.latency is not None
         return MAKEFILE_TEMPLATE % {
@@ -150,7 +150,7 @@ class ProjectWriter:
             "harness": "fixed_harness.cpp" if fixed else "harness.cpp",
             "run_flags": " --latency %d" % self.latency if fixed else "",
             "sources": "rtl/top.v" if hardcaml else "$(wildcard rtl/*.sv)",
-            "waivers": " -Wno-COMBDLY -Wno-UNUSEDSIGNAL" if hardcaml else "",
+            "waivers": " -Wno-COMBDLY -Wno-UNUSEDSIGNAL -Wno-INITIALDLY" if hardcaml else "",
         }
 
 
