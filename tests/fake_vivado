@@ -1,8 +1,5 @@
 #!/bin/sh
-# Stands in for the vivado binary so the whole measurement path can be
-# exercised where no Vivado is installed. It runs the real TCL script under
-# tclsh with stubbed tool commands, which checks everything except whether
-# Vivado agrees with the numbers.
+# Stands in for vivado by running the real TCL script under tclsh with stubbed tool commands.
 here=$(cd "$(dirname "$0")" && pwd)
 case "$1" in
   -version|--version)

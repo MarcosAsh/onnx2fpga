@@ -1,9 +1,4 @@
-"""Layout bookkeeping between ONNX and the compiler's channel-last IR.
-
-Callers hand in tensors in the layout their ONNX model declares. Everything
-inside the compiler, and the stream the hardware consumes, is channel-last.
-This class is the single place that knows which way round a given input is.
-"""
+"""Tracks which layout a given input is in; everything inside the compiler is channel-last."""
 
 import numpy as np
 

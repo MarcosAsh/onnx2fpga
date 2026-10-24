@@ -1,0 +1,6 @@
+_build
+*.install
+*.merlin
+_opam
+bin/*.exe
+bin/*.bc

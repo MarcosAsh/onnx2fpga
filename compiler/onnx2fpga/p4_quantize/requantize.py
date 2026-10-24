@@ -1,19 +1,4 @@
-"""Fixed-point rescaling shared by every hardware node.
-
-An integer accumulator is brought back to the output datatype by a per-channel
-multiply and a single arithmetic right shift:
-
-    out = clamp(((acc * mult[c] + 2**(shift-1)) >> shift) + zero_point, lo, hi)
-
-The shift is shared across channels so the hardware needs one shifter, while
-the multiplier stays per-channel so accuracy does not suffer. Ties round up on
-both sides. The zero point is added after the shift and is zero for a symmetric
-quantiser, which is the case every path took before asymmetric ONNX models
-were accepted.
-
-This function is the definition of correctness for the generated RTL: the
-Verilator testbench compares against exactly this.
-"""
+"""Fixed-point rescaling shared by every node; the definition of correctness for the generated RTL."""
 
 import math
 
@@ -41,8 +26,7 @@ class Requantizer:
     @classmethod
     def from_real_multipliers(cls, reals, out_dtype, mult_bits=18, relu=False,
                               zero_point=0):
-        """A fused relu clamps at the integer standing for real zero, which is
-        the zero point, not necessarily zero."""
+        """A fused relu clamps at the zero point, which is not necessarily zero."""
         reals = np.atleast_1d(np.asarray(reals, dtype=np.float64))
         floor_value = int(zero_point) if relu else None
         limit = (1 << (mult_bits - 1)) - 1

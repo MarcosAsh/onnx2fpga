@@ -8,6 +8,50 @@ Runs on Python, numpy and Verilator. Nothing else is required to build, test or
 simulate. The compiler reads and writes `.onnx` files with its own protobuf
 decoder rather than depending on the reference `onnx` package.
 
+Documentation: https://marcosash.github.io/onnx2fpga/ (source in [docs](docs/README.md)).
+
+## Python API
+
+One workflow, in the order a Keras user already works in, with defaults that
+work at every step:
+
+```python
+import onnx2fpga as otf
+
+acc = otf.load("model.onnx")                 # or otf.from_keras(keras_model)
+acc.compile(device="icepi25", calibration=x_train[:64])
+acc.summary()                                # per unit folding, cycles, LUT/DSP/RAM against the budget
+acc.evaluate(x_test, y_test)                 # bit exact integer model against the float one
+acc.simulate(x_test[:4])                     # the generated RTL in Verilator, bit exact
+acc.build(board="icepi_zero")                # bitstream with yosys and nextpnr
+acc.deploy()                                 # load it over USB and open the serial port
+acc.predict(x_test)                          # now runs on the board
+```
+
+`compile` aims for the fastest design that fits the device unless given
+`target_fps=` or `target_cycles=`, and a target the budget cannot hold raises
+`BudgetError` with the allocator's reason and what to try instead. Before
+`deploy`, `predict` runs the integer reference model the hardware reproduces.
+
+For more control, set individual layers before compiling:
+
+```python
+acc = otf.load("examples/models/cnn.onnx")
+acc.layers["conv0"].fold(pe=4)               # pin a folding factor, leave simd to the allocator
+acc.layers["fc1"].quantize(weights="int4")   # narrower weights for one layer
+acc.compile(device="vu9p", target_cycles=300, hdl="sv", calibration=x_train[:64])
+acc.summary()
+acc.simulate(x_test[:4], sweep=True)         # and under randomised backpressure
+```
+
+The backend is chosen like `KERAS_BACKEND`: `hdl=` wins, then the
+`ONNX2FPGA_HDL` environment variable, then Hardcaml where this machine can build
+it and SystemVerilog where it cannot. Errors derive from `otf.Onnx2FpgaError`
+and say what to do. An operator the compiler lacks can be supplied as an
+`otf.HardwareLayer`, within the limits `compiler/onnx2fpga/hardware_layer.py`
+sets out; `tests/test_api.py` has a worked example. The command line below is
+a thin layer over the same API.
+
 ## What works today
 
 Both example models compile from `.onnx` to SystemVerilog and reproduce the
@@ -47,7 +91,7 @@ ones over fifty random inputs.
 
 ## Quickstart
 
-It is a command line tool. From a checkout, with nothing installed:
+From the command line, in a checkout with nothing installed:
 
 ```
 ./onnx2fpga doctor                       what this machine can do
@@ -76,7 +120,12 @@ An already quantized model needs no calibration data at all:
 onnx2fpga compile examples/models/qdq_mlp_uint8.onnx --out build/qdq
 ```
 
-Commands: `doctor`, `inspect`, `compile`, `simulate`, `synth`, `devices`.
+Commands: `doctor`, `inspect`, `compile`, `simulate`, `synth`, `devices`,
+`bitstream`.
+
+`compile` and `simulate` take `--hdl hardcaml` to elaborate the same units in
+Hardcaml instead of instantiating the SystemVerilog library, which needs the
+OCaml toolchain `doctor` checks for; see `hardware/hardcaml`.
 
 For working on the compiler itself:
 
@@ -115,10 +164,12 @@ compiler/onnx2fpga/         Python. Graph rewriting. Runs once, in milliseconds.
     streams.py                width converters and FIFOs
   p6_emit/                  hardware IR         -> a build directory
     systemverilog.py memories.py stream_io.py project.py
+    hardcaml.py               design.json for the Hardcaml generator
   targets/                  device models: resource budgets, DSP packing rules
   reference/                numpy execution, the golden model
 
 hardware/rtl/               SystemVerilog. Hand written, parameterised, linted.
+hardware/hardcaml/          The same units in Hardcaml, and the generator behind --hdl hardcaml.
 runtime/                    C++. Everything that runs per inference.
   include/otf/                kernels, manifest, accelerator interface
   sim/harness.cpp             the Verilator driver loop
@@ -229,19 +280,51 @@ The free Vivado ML Standard edition covers `z7020`, which is enough to
 calibrate the estimator. `vu9p` and `vu47p` are Virtex UltraScale+ and need the
 paid edition or an AWS F1 or F2 instance.
 
+`icepi25`, the Lattice ECP5 LFE5U-25 on the Icepi Zero, is built with the open
+flow instead. Its cost model is fitted to yosys `synth_ecp5` and nextpnr-ecp5
+on the Hardcaml backend's output, and `synth` runs that flow on the whole
+design:
+
+```
+onnx2fpga synth model.onnx --device icepi25            yosys, then nextpnr packing
+onnx2fpga synth model.onnx --device icepi25 --impl     place and route, for fmax
+```
+
+yosys gives every int8 MAC a whole 18x18 multiplier, so the part's 28 are
+usually what folding runs out of first, and the compiler says so when a target
+does not fit.
+
+## On a board
+
+`onnx2fpga bitstream` builds a model into a bitstream for an Icepi Zero (Lattice
+ECP5 LFE5U-25F) with an open source flow, the accelerator behind a UART on the
+board's own USB port, and `host.py` runs it from a PC:
+
+```
+onnx2fpga bitstream examples/models/mlp.onnx --board icepi_zero --target-cycles 256
+make -C build/mlp_icepi_zero/icepi_zero prog
+python3 hardware/boards/icepi_zero/host.py build/mlp_icepi_zero
+```
+
+The example MLP at 256 cycles places and routes at 20 MHz with room to spare
+(fmax 25.1 MHz, 4967 of 24288 LUTs, 18 of 28 multipliers, 2 block RAMs), and
+the generated board top reproduces the golden vectors bit for bit in Verilator.
+See `hardware/boards/icepi_zero`.
+
 ## Requirements
 
 - Python 3.9 or newer, numpy
 - Verilator 5 for simulation
 - A C++17 compiler for the runtime
-- Vivado only to measure resources and timing, or to build a bitstream, which
-  this project does not produce yet
+- Vivado only to measure resources and timing on Xilinx parts
+- For the Icepi Zero: the Hardcaml switch, yosys, nextpnr-ecp5, ecppack and
+  openFPGALoader
 
 ## Status
 
 This is an early prototype. The compiler is correct on what it supports, and
 the operator list above is exhaustive. Everything about resources and timing is
-still a model estimate rather than a synthesis result, and no bitstream has
-been built.
+still a model estimate rather than a synthesis result, except the Icepi Zero
+build, whose bitstream has been built and simulated but not yet run on a board.
 
 License: Apache-2.0.

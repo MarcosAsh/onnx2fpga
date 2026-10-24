@@ -1,9 +1,4 @@
-"""Float-domain operators imported from ONNX.
-
-Internal layout is channel-last (NHWC, weights KH.KW.Cin.Cout). Channels are
-the innermost axis so that folding across parallel lanes is a contiguous slice
-of every stream beat.
-"""
+"""Float-domain operators imported from ONNX, with channel-last (NHWC) internal layout."""
 
 import numpy as np
 

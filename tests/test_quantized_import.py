@@ -1,17 +1,11 @@
-"""Importing models that were already quantized.
-
-Two things have to be true. The compiler must read the grids the model states
-rather than inventing its own, and its integer pipeline must compute what the
-QDQ model means. The second check runs the model the way a runtime does, in
-float between each quantize and dequantize pair, and compares.
-"""
+"""Importing models that were already quantized: read the stated grids, and compute what the QDQ model means."""
 
 import shutil
 import unittest
 
 import numpy as np
 
-from support import Fixtures, SingleUnitProject, run  # noqa: F401
+from support import Fixtures, Hdl, SingleUnitProject, run  # noqa: F401
 from make_models import QdqModelFactory
 
 from onnx2fpga.compile import Compiler
@@ -58,8 +52,7 @@ class QdqImportTest(unittest.TestCase):
         self.assertFalse(signed.plan.spec(signed.hardware_graph.inputs[0]).rebased)
 
     def test_integer_pipeline_matches_the_qdq_specification(self):
-        """The strong check: not self consistency, but agreement with what the
-        model means when a runtime evaluates it."""
+        """The strong check: agreement with what the model means under runtime evaluation, not self consistency."""
         for label, dtype in self.ACTIVATIONS:
             with self.subTest(activations=label):
                 factory, result = self._compile(dtype, "qdq_semantics_" + label)
@@ -83,9 +76,7 @@ class QdqImportTest(unittest.TestCase):
                     "worst error %.6g is %.2f output steps" % (worst, worst / step))
 
     def test_input_zero_point_is_folded_into_the_bias(self):
-        """An asymmetric input contributes -zx * sum_k W[k][c] per channel.
-        It is a constant, so it belongs in the bias; if it were dropped the
-        results would be wrong by a large margin rather than a rounding step."""
+        """An asymmetric input adds -zx * sum_k W[k][c] per channel, a constant that belongs in the bias."""
         from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
         _, result = self._compile(TensorProto.UINT8, "qdq_biasfold")
         graph, plan = result.hardware_graph, result.plan
@@ -110,9 +101,7 @@ class QdqImportTest(unittest.TestCase):
         self.assertTrue(folded_anywhere, "no asymmetric input reached a matvec")
 
     def test_asymmetric_biases_are_far_larger_than_symmetric_ones(self):
-        """A cheap guard that the correction is present at all: dropping it
-        would leave the asymmetric model's biases the size of the symmetric
-        model's."""
+        """Guards that the correction is present: dropping it leaves biases the size of the symmetric model's."""
         from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
 
         def peak_bias(dtype, name):
@@ -126,8 +115,7 @@ class QdqImportTest(unittest.TestCase):
         self.assertGreater(asymmetric, 10 * symmetric)
 
     def test_weights_survive_the_dequantize_requantize_round_trip(self):
-        """A DequantizeLinear on an integer initializer is folded to float and
-        re-derived. That has to land on the original integers."""
+        """A DequantizeLinear on an integer initializer is folded to float and re-derived to the original integers."""
         factory, result = self._compile(TensorProto.INT8, "qdq_weights")
         from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
         layers, _ = factory._reference
@@ -140,13 +128,14 @@ class QdqImportTest(unittest.TestCase):
             np.testing.assert_array_equal(unit.weights, grid.quantize(weights, 1))
 
 
-@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
-class QdqSimulationTest(unittest.TestCase):
+class QdqSimulationCases:
+    HDL = "sv"
+
     def test_generated_rtl_matches_the_golden_model(self):
         for label, dtype in QdqImportTest.ACTIVATIONS:
             with self.subTest(activations=label):
-                build = Fixtures.build_dir("qdq_sim_" + label)
-                Compiler(device="vu9p", target_cycles=64).compile(
+                build = Fixtures.build_dir("qdq_sim_" + label + Hdl.suffix(self.HDL))
+                Compiler(device="vu9p", target_cycles=64, hdl=self.HDL).compile(
                     QdqModelFactory(seed=7, activation_dtype=dtype).mlp(),
                     out_dir=build)
                 built = run(["make", "-s"], cwd=build)
@@ -158,6 +147,17 @@ class QdqSimulationTest(unittest.TestCase):
                                   "--output-duty", str(duty[1]), "--quiet"], cwd=build)
                     self.assertEqual(result.returncode, 0,
                                      result.stdout + result.stderr)
+
+
+@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+class QdqSimulationTest(QdqSimulationCases, unittest.TestCase):
+    HDL = "sv"
+
+
+@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+@unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+class HardcamlQdqSimulationTest(QdqSimulationCases, unittest.TestCase):
+    HDL = "hardcaml"
 
 
 if __name__ == "__main__":

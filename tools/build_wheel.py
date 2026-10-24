@@ -1,15 +1,4 @@
-"""Builds a wheel using setuptools' own PEP 517 backend.
-
-`python -m build` is the usual frontend but it is a separate package that is
-often absent. The backend that does the work ships with setuptools, so calling
-it directly needs nothing extra.
-
-The RTL library and the C++ runtime live at the top level, which is where a
-checkout finds them. A wheel has to carry its own copy, so they are staged
-inside the package first. That happens here rather than in the Makefile so
-that building a wheel is correct on its own: staging it separately made a
-clean checkout produce a wheel with no hardware in it.
-"""
+"""Builds a wheel via setuptools' PEP 517 backend, staging the RTL library and C++ runtime into the package first."""
 
 import pathlib
 import shutil
@@ -18,8 +7,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "compiler" / "onnx2fpga" / "assets"
 
-# Build products, not sources. `runtime/bin` and the object files beside it are
-# whatever the last `make runtime` left behind.
+# Build products, not sources: runtime/bin and the object files beside it are left by `make runtime`.
 LEAVINGS = shutil.ignore_patterns("bin", "obj_dir", "__pycache__",
                                   "*.o", "*.d", "*.a")
 

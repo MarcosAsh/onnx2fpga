@@ -1,9 +1,4 @@
-"""Streaming hardware nodes. Each maps one-to-one onto a SystemVerilog module.
-
-Every node reports three things the rest of the compiler needs: the cycles it
-takes to process one frame at its current folding, the resources that folding
-costs, and the exact integer function it computes.
-"""
+"""Streaming hardware nodes, each mapping one-to-one onto a SystemVerilog module."""
 
 import numpy as np
 
@@ -19,14 +14,7 @@ def divisors(value, limit=None):
 
 
 class StreamingNode(HwNode):
-    """Common plumbing: beat geometry, cycle cost, and beat level timing.
-
-    The schedules are what the buffer sizing reads. Each says, in cycles from
-    this unit's own start and assuming it never stalls, when it takes each
-    input beat and when it hands over each output beat. That is enough to work
-    out how far ahead one branch of a fork can run before the join drains it,
-    which a cycle count alone cannot express.
-    """
+    """Common plumbing: beat geometry, cycle cost, and per-beat input and output schedules for buffer sizing."""
 
     @property
     def frames(self):
@@ -57,6 +45,13 @@ class StreamingNode(HwNode):
         return self.cycles
 
     def resources(self, device):
+        """A device with its own cost model prices the unit itself; the rest use the AMD model."""
+        model = device.cost_model
+        if model is not None:
+            return model.estimate(self)
+        return self.amd_resources(device)
+
+    def amd_resources(self, device):
         return Resources.zero()
 
     def sv_params(self, graph):
@@ -64,13 +59,7 @@ class StreamingNode(HwNode):
 
 
 class MatVecUnit(StreamingNode):
-    """Folded matrix-vector engine with fused bias and rescale.
-
-    Weights are held as a (MW, MH) integer matrix. SIMD sets how many input
-    elements are consumed per cycle, PE how many output channels are produced
-    in parallel. One vector therefore costs (MW/SIMD) * (MH/PE) cycles, which
-    is the knob the balancing pass turns to equalise the pipeline.
-    """
+    """Folded matrix-vector engine with fused bias and rescale; a vector costs (MW/SIMD) * (MH/PE) cycles."""
 
     module = "otf_mvau"
 
@@ -140,7 +129,7 @@ class MatVecUnit(StreamingNode):
         hi += int(self.bias.max(initial=0))
         return IntType.smallest_for(lo, hi)
 
-    def resources(self, device):
+    def amd_resources(self, device):
         acc_bits = self.accumulator_dtype.bits
         macs = self.pe * self.simd
         dsp = device.dsp_cost(macs, self.act_dtype.bits, self.weight_dtype.bits)
@@ -168,10 +157,7 @@ class MatVecUnit(StreamingNode):
         return [self.pe]
 
     def infer(self, graph):
-        """Spatial structure survives when the input's innermost axis is
-        already the vector being multiplied, as it is downstream of a sliding
-        window unit. After a flatten it does not, and the output collapses to
-        one vector per row."""
+        """Spatial structure survives only when the innermost axis is already the multiplied vector, as after a window unit."""
         source = graph.tensor(self.inputs[0])
         out = graph.ensure_tensor(self.outputs[0])
         if source.shape and int(source.shape[-1]) == self.mw:
@@ -201,8 +187,7 @@ class MatVecUnit(StreamingNode):
                 for nf in range(self.neuron_fold)]
 
     def memories(self, graph):
-        """Weight layout mirrors the RTL: one memory per PE, addressed by
-        (neuron fold, synapse fold), each word holding SIMD weights."""
+        """Weight layout mirrors the RTL: one memory per PE, addressed by (neuron fold, synapse fold)."""
         pe, simd = self.pe, self.simd
         packed = np.zeros((pe, self.neuron_fold * self.synapse_fold, simd), dtype=np.int64)
         for p in range(pe):
@@ -240,15 +225,55 @@ class MatVecUnit(StreamingNode):
         }
 
 
-class SlidingWindowUnit(StreamingNode):
-    """Turns a channel-last image stream into a stream of flattened windows.
+class DenseUnit(MatVecUnit):
+    """A matvec unrolled to one vector per cycle with no handshake, for fixed latency designs; Hardcaml only."""
 
-    Two strategies, same interface and same output. `line` keeps only the span
-    a window can reach, so capture and replay overlap and the unit costs its
-    replay term alone. `frame` stores the whole feature map and replays it
-    afterwards, which is simpler to reason about and is kept as a reference for
-    differential testing.
-    """
+    module = "otf_dense"
+    hardcaml_only = True
+    latency = 3
+
+    def default_folding(self):
+        return {"simd": self.mw, "pe": self.mh}
+
+    def folding_options(self):
+        return [self.default_folding()]
+
+    @property
+    def multipliers(self):
+        return self.mw * self.mh
+
+    def amd_resources(self, device):
+        acc_bits = self.accumulator_dtype.bits
+        dsp = device.dsp_cost(self.multipliers, self.act_dtype.bits, self.weight_dtype.bits)
+        if self.requant.shift < acc_bits + self.mult_bits:
+            dsp += self.mh * (2 if acc_bits > 27 else 1)
+        product_bits = self.act_dtype.bits + self.weight_dtype.bits
+        return Resources(lut=self.multipliers * acc_bits,
+                         ff=self.mh * (self.mw * product_bits + acc_bits
+                                       + self.out_dtype.bits),
+                         dsp=dsp)
+
+    def memories(self, graph):
+        return {
+            "weights": MemorySpec(self.weights.T, self.weight_dtype.bits, packed=True),
+            "bias": MemorySpec(self.bias, self.accumulator_dtype.bits),
+            "mult": MemorySpec(self.requant.broadcast_to(self.mh).multipliers,
+                               self.mult_bits),
+        }
+
+    def sv_params(self, graph):
+        return {
+            "MW": self.mw, "MH": self.mh,
+            "ACT_BITS": self.act_dtype.bits, "WGT_BITS": self.weight_dtype.bits,
+            "ACC_BITS": self.accumulator_dtype.bits, "OUT_BITS": self.out_dtype.bits,
+            "MULT_BITS": self.mult_bits, "SHIFT": self.requant.shift,
+            "OUT_MIN": self.requant.lower_clamp, "OUT_MAX": self.requant.upper_clamp,
+            "OUT_ZP": self.requant.zero_point,
+        }
+
+
+class SlidingWindowUnit(StreamingNode):
+    """Turns a channel-last image stream into flattened windows; `line` keeps a span, `frame` the whole map."""
 
     STRATEGIES = {"line": "otf_swu_line", "frame": "otf_swu"}
 
@@ -290,11 +315,7 @@ class SlidingWindowUnit(StreamingNode):
 
     @property
     def backward_reach(self):
-        """How far the reader walks back when it wraps to the next output row.
-
-        With top padding two output rows can start on the same input row, so
-        the reader returns to a column it has already passed. The buffer has to
-        still hold it."""
+        """How far the reader walks back on wrapping to the next output row; the buffer must still hold it."""
         out_w = self.ofm_dim[1]
         return max(0, (out_w - 1) * self.strides[1] - self.pads[1])
 
@@ -325,23 +346,19 @@ class SlidingWindowUnit(StreamingNode):
 
     @property
     def sub_elems(self):
-        """Elements per input beat. Capped at one pixel: beyond that the unit
-        widens by reading more columns, not by taking wider input."""
+        """Elements per input beat, capped at one pixel; the unit widens by reading more columns."""
         return min(self.simd, self.ifm_ch)
 
     @property
     def parallel_columns(self):
-        """Adjacent kernel columns emitted per beat. One means the classic
-        channel folded mode."""
+        """Adjacent kernel columns emitted per beat; one is the classic channel folded mode."""
         return self.simd // self.sub_elems
 
     def default_folding(self):
         return {"simd": 1}
 
     def folding_options(self):
-        """Channel folding is available to both strategies. Column parallelism
-        needs the replicated read ports only the line buffer has, and is what
-        lets a layer with one input channel fold at all."""
+        """Column parallelism needs the replicated read ports only the line buffer has."""
         options = [{"simd": s} for s in divisors(self.ifm_ch)]
         if self.strategy == "line":
             options += [{"simd": self.ifm_ch * m}
@@ -350,15 +367,13 @@ class SlidingWindowUnit(StreamingNode):
 
     @property
     def cycles(self):
-        """The line strategy overlaps capture and replay, so a frame costs
-        whichever side moves more beats. The frame strategy serialises them."""
+        """The line strategy overlaps capture and replay; the frame strategy serialises them."""
         if self.strategy == "frame":
             return self.capture_cycles + self.replay_cycles
         return max(self.capture_cycles, self.replay_cycles)
 
-    def resources(self, device):
-        """Column parallelism buys read ports by replicating the buffer, so
-        memory scales with it while the control logic does not."""
+    def amd_resources(self, device):
+        """Column parallelism replicates the buffer, so memory scales with it and control logic does not."""
         depth = self.buffer_pixels * self.ifm_ch // self.sub_elems
         width = self.sub_elems * self.dtype.bits
         style = MemoryStyle.select(depth, width)
@@ -430,7 +445,7 @@ class ActivationUnit(StreamingNode):
     def cycles(self):
         return self.elements // self.pe
 
-    def resources(self, device):
+    def amd_resources(self, device):
         dsp = self.pe if self.in_dtype.bits > 18 else 0
         return Resources(lut=self.pe * self.in_dtype.bits * 2.0,
                          ff=self.pe * self.out_dtype.bits, dsp=dsp)
@@ -500,7 +515,7 @@ class PoolUnit(StreamingNode):
     def cycles(self):
         return self.windows * self.window_size * self.channels // self.pe
 
-    def resources(self, device):
+    def amd_resources(self, device):
         return Resources(lut=self.pe * self.dtype.bits * 3.0,
                          ff=self.pe * self.dtype.bits * 2)
 
@@ -569,7 +584,7 @@ class AddUnit(StreamingNode):
     def cycles(self):
         return self.elements // self.pe
 
-    def resources(self, device):
+    def amd_resources(self, device):
         return Resources(lut=self.pe * self.out_dtype.bits * 4.0,
                          ff=self.pe * self.out_dtype.bits)
 
@@ -609,16 +624,7 @@ class AddUnit(StreamingNode):
 
 
 class DuplicateUnit(StreamingNode):
-    """Fork for skip connections.
-
-    A stream cannot simply be wired to two consumers: both would drive its
-    ready line and both would see the same beat. This unit holds each beat
-    until every branch has taken it, which also means the branches stall each
-    other, and that is what the buffer sizing has to account for.
-
-    Its width follows the stream rather than a folding parameter, because a
-    fork is not a place where parallelism is chosen.
-    """
+    """Fork for skip connections; holds each beat until every branch has taken it, so branches stall each other."""
 
     module = "otf_dup"
 
@@ -634,7 +640,7 @@ class DuplicateUnit(StreamingNode):
     def cycles(self):
         return self.elements
 
-    def resources(self, device):
+    def amd_resources(self, device):
         width = self.elements and self.dtype.bits
         return Resources(lut=width * 0.5 * len(self.outputs),
                          ff=width + len(self.outputs))
@@ -686,7 +692,7 @@ class StreamFifo(StreamingNode):
     def cycles(self):
         return 0
 
-    def resources(self, device):
+    def amd_resources(self, device):
         style = MemoryStyle.select(self.depth, self.width)
         return style.cost(self.depth, self.width) + Resources(ff=32)
 
@@ -747,7 +753,7 @@ class WidthConverter(StreamingNode):
             return [k * self.ratio + self.ratio - 1 for k in range(beats)]
         return list(range(beats))
 
-    def resources(self, device):
+    def amd_resources(self, device):
         return Resources(lut=max(self.in_elems, self.out_elems) * self.elem_bits * 0.4,
                          ff=max(self.in_elems, self.out_elems) * self.elem_bits)
 

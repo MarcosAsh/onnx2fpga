@@ -1,9 +1,4 @@
-"""Builds and runs a generated project under Verilator.
-
-The build directory already carries a Makefile that knows how to do this, so
-this drives that rather than reimplementing it, and adds the part a shell loop
-is bad at: sweeping backpressure and reporting which settings held.
-"""
+"""Builds and runs a generated project under Verilator, sweeping backpressure."""
 
 import pathlib
 import re
@@ -44,11 +39,15 @@ class SimulationResult:
 
 
 class SimulationRunner:
-    DEFAULT_SWEEP = ((100, 100), (50, 50), (20, 20), (100, 10), (10, 100))
+    """`vectors` names the stimulus and expected output relative to the build directory."""
 
-    def __init__(self, build_dir, top="otf_top"):
+    DEFAULT_SWEEP = ((100, 100), (50, 50), (20, 20), (100, 10), (10, 100))
+    GOLDEN = ("golden/input.hex", "golden/expected.hex")
+
+    def __init__(self, build_dir, top="otf_top", vectors=GOLDEN):
         self.build_dir = pathlib.Path(build_dir)
         self.top = top
+        self.vectors = tuple(str(v) for v in vectors)
 
     @property
     def binary(self):
@@ -60,8 +59,8 @@ class SimulationRunner:
 
     def once(self, duty=(100, 100), seed=1, quiet=False, timeout=600):
         command = ["./obj_dir/V" + self.top,
-                   "--input", "golden/input.hex",
-                   "--expected", "golden/expected.hex",
+                   "--input", self.vectors[0],
+                   "--expected", self.vectors[1],
                    "--input-duty", str(duty[0]),
                    "--output-duty", str(duty[1]),
                    "--seed", str(seed)]
@@ -78,3 +77,27 @@ class SimulationRunner:
             for seed in seeds:
                 results.append(self.once(duty, seed, quiet=True))
         return results
+
+
+class FixedSimulationRunner(SimulationRunner):
+    """Runs a fixed latency build; the sweep thins features_valid instead of adding backpressure."""
+
+    DEFAULT_SWEEP = ((50, 100), (10, 100))
+
+    def __init__(self, build_dir, latency, top="otf_top", vectors=SimulationRunner.GOLDEN):
+        SimulationRunner.__init__(self, build_dir, top, vectors)
+        self.latency = latency
+
+    def once(self, duty=(100, 100), seed=1, quiet=False, timeout=600):
+        command = ["./obj_dir/V" + self.top,
+                   "--input", self.vectors[0],
+                   "--expected", self.vectors[1],
+                   "--latency", str(self.latency),
+                   "--input-duty", str(duty[0]),
+                   "--seed", str(seed)]
+        if quiet:
+            command.append("--quiet")
+        completed = subprocess.run(command, cwd=self.build_dir, capture_output=True,
+                                   text=True, timeout=timeout)
+        return SimulationResult(duty, seed, completed.returncode,
+                                completed.stdout + completed.stderr)

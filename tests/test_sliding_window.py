@@ -1,9 +1,4 @@
-"""The sliding window generators, checked against numpy across a config sweep.
-
-Window geometry is where an accelerator quietly goes wrong: an off by one in
-padding or dilation still produces plausible output. Both strategies are swept
-over the same configurations so they also have to agree with each other.
-"""
+"""The sliding window generators, checked against numpy across a config sweep."""
 
 import shutil
 import unittest
@@ -11,7 +6,7 @@ import zlib
 
 import numpy as np
 
-from support import Fixtures, SingleUnitProject, run
+from support import Fixtures, Hdl, SingleUnitProject, run
 
 from onnx2fpga.p2_graph.datatype import INT8
 from onnx2fpga.p3_ops.hardware_ops import SlidingWindowUnit
@@ -55,19 +50,19 @@ def make_unit(config, strategy):
     return unit
 
 
-@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
-class SlidingWindowRtlTest(unittest.TestCase):
+class SlidingWindowRtlCases:
+    HDL = "sv"
+
     def _simulate(self, config, strategy, duties=((100, 100),)):
         name, ifm, channels = config[0], config[1], config[2]
         unit = make_unit(config, strategy)
-        # crc32 rather than hash(): string hashing is randomised per process,
-        # so hash() would pick a different image every run and a failure could
-        # not be reproduced.
+        # crc32 not hash(): string hashing is randomised per process, so failures would not reproduce.
         rng = np.random.default_rng(zlib.crc32(name.encode()))
         image = rng.integers(-128, 128, (1, ifm[0], ifm[1], channels), dtype=np.int64)
 
-        build = Fixtures.build_dir("swu_%s_%s" % (strategy, name))
-        project = SingleUnitProject(unit, (1, ifm[0], ifm[1], channels), INT8)
+        build = Fixtures.build_dir("swu_%s_%s%s" % (strategy, name, Hdl.suffix(self.HDL)))
+        project = SingleUnitProject(unit, (1, ifm[0], ifm[1], channels), INT8,
+                                    hdl=self.HDL)
         project.write(build, image)
 
         built = run(["make", "-s"], cwd=build)
@@ -97,6 +92,17 @@ class SlidingWindowRtlTest(unittest.TestCase):
                 self._simulate(config, "frame", duties=((100, 100), (40, 40)))
 
 
+@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+class SlidingWindowRtlTest(SlidingWindowRtlCases, unittest.TestCase):
+    HDL = "sv"
+
+
+@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+@unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+class HardcamlSlidingWindowRtlTest(SlidingWindowRtlCases, unittest.TestCase):
+    HDL = "hardcaml"
+
+
 class SlidingWindowModelTest(unittest.TestCase):
     def test_line_buffer_never_costs_more_cycles_than_frame(self):
         for config in CONFIGS:
@@ -115,8 +121,7 @@ class SlidingWindowModelTest(unittest.TestCase):
         self.assertEqual([o["simd"] for o in line.folding_options()], [1, 3])
 
     def test_parallel_columns_fold_a_single_channel_layer(self):
-        """One input channel leaves nothing to fold on channels, which is what
-        pinned the example CNN."""
+        """One input channel leaves nothing to fold on channels, which pinned the example CNN."""
         config = ("c", (12, 12), 1, (3, 3), (1, 1), (0, 0, 0, 0), (1, 1), 3)
         wide = make_unit(config, "line")
         narrow = make_unit(("c",) + config[1:7] + (1,), "line")
@@ -126,9 +131,7 @@ class SlidingWindowModelTest(unittest.TestCase):
         self.assertEqual(wide.sub_elems, narrow.sub_elems)
 
     def test_line_buffer_is_sized_for_liveness_without_waste(self):
-        """The buffer must cover the window span plus the backward reach at an
-        output row wrap, plus one so the writer can stay ahead. Rounding to a
-        power of two may never more than double that."""
+        """The buffer covers the window span plus the backward reach at a row wrap plus one; power of two rounding at most doubles it."""
         for config in CONFIGS:
             with self.subTest(config=config[0]):
                 unit = make_unit(config, "line")

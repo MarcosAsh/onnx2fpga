@@ -18,8 +18,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Only needed to cross check against the reference implementation of ONNX.
-# The compiler reads and writes .onnx files without it.
+# Only needed to cross check against the reference ONNX implementation.
 onnx = ["onnx>=1.14"]
 
 [project.scripts]
@@ -28,10 +27,7 @@ onnx2fpga = "onnx2fpga.cli:main"
 [tool.setuptools.packages.find]
 where = ["compiler"]
 
-# The RTL library, the C++ runtime and the synthesis script are data the tool
-# needs at run time, not just sources. `make assets` stages them into the
-# package so a wheel carries them; a checkout finds them one level up instead.
-# See compiler/onnx2fpga/assets.py.
+# RTL, C++ runtime and synthesis script are run time data; make assets stages them (see assets.py).
 [tool.setuptools.package-data]
 onnx2fpga = [
     "assets/hardware/rtl/*.sv",

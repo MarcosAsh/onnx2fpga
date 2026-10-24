@@ -1,6 +1,4 @@
-// Elementwise add of two streams, each side scaled onto the output grid.
-// Both producers register their valid, so the join below cannot form a
-// combinational loop.
+// Elementwise add of two streams, each scaled onto the output grid; producers register valid so the join forms no loop.
 `default_nettype none
 
 module otf_add #(

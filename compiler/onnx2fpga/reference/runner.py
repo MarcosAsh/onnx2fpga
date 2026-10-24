@@ -1,8 +1,4 @@
-"""Executes a graph in numpy.
-
-On the float graph this drives calibration; on the hardware graph it is the
-golden model, where every operation is exact integer arithmetic and the
-Verilator harness must reproduce it bit for bit."""
+"""Executes a graph in numpy: calibration on float graphs, the bit exact golden model on hardware graphs."""
 
 import numpy as np
 

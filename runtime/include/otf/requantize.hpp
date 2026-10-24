@@ -1,6 +1,4 @@
-// Bit exact counterpart of Requantizer.apply in the compiler and of
-// otf_requant.sv in the hardware. All three must agree exactly; the harness
-// and the kernel tests exist to prove they do.
+// Bit exact twin of Requantizer.apply in the compiler and otf_requant.sv; the kernel tests check all three agree.
 #pragma once
 
 #include <algorithm>

@@ -1,23 +1,12 @@
-"""Measure what the generated units actually cost, and calibrate the model.
-
-Every resource and timing figure the compiler reports comes from a hand written
-estimator that has never been checked against synthesis. This compiles a model,
-synthesises each of its units out of context, and prints the measured cost
-beside the predicted one.
-
-    onnx2fpga synth model.onnx --device z7020
-    onnx2fpga synth model.onnx --device z7020 --impl
-    onnx2fpga synth model.onnx --dry-run
-
-The dry run prints the exact commands without needing Vivado, which is also how
-this is tested where no Vivado exists.
-"""
+"""Measures what the generated units actually cost against the compiler estimates."""
 
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
+import sys
 
 import numpy as np
 
@@ -29,8 +18,7 @@ from .targets.resources import Resources
 
 
 class Subject:
-    """One unit to characterise: its module, its parameters, and what the
-    compiler predicted it would cost."""
+    """One unit to characterise: its module, parameters and predicted cost."""
 
     def __init__(self, name, module, generics, predicted, cycles):
         self.name = name
@@ -45,9 +33,7 @@ class Subject:
                    node.resources(device), node.cycles)
 
     def generic_arguments(self):
-        """An empty string parameter is an unset file name. Passing it would
-        make Vivado try to read a file called nothing, so it is dropped and the
-        module keeps its default."""
+        """An empty string parameter is an unset file name and is dropped so the module keeps its default."""
         return " ".join("%s=%s" % (key, value)
                         for key, value in sorted(self.generics.items())
                         if not (isinstance(value, str) and not value))
@@ -166,8 +152,7 @@ class Characterizer:
         return subjects
 
     def sources(self, build_dir):
-        """Relative to the build directory, because that is where Vivado runs
-        so that the $readmemh paths in the netlist resolve."""
+        """Relative to the build directory, where Vivado runs, so the $readmemh paths resolve."""
         root = pathlib.Path(build_dir)
         return [path.relative_to(root) for path in sorted((root / "rtl").glob("otf_*.sv"))]
 
@@ -190,8 +175,7 @@ class Characterizer:
 
 
 def calibration_samples(model, count=16, seed=0):
-    """A quantized model states its own scales; a float one has to be measured,
-    and for characterisation the data only has to have the right shape."""
+    """A quantized model states its scales; a float one needs data only of the right shape."""
     name = model.graph_inputs()[0]
     shape = tuple(1 if isinstance(d, str) else int(d)
                   for d in model.value_shape(name))
@@ -217,3 +201,86 @@ def render(comparisons):
         lines.append("slowest unit runs at %.1f MHz, which is the honest fmax "
                      "for this design" % worst)
     return "\n".join(lines)
+
+
+class YosysRunner:
+    """The open ECP5 flow (yosys synth_ecp5, then nextpnr-ecp5) on the Hardcaml rtl/top.v, which is plain Verilog."""
+
+    FIELDS = ("lut", "ff", "dsp", "ebr")
+    CELLS = {"TRELLIS_COMB": "lut", "TRELLIS_FF": "ff", "MULT18X18D": "dsp",
+             "DP16KD": "ebr"}
+
+    def __init__(self, device, implement=False, yosys="yosys", nextpnr="nextpnr-ecp5"):
+        self.device = device
+        self.implement = implement
+        self.yosys = yosys
+        self.nextpnr = nextpnr
+
+    @property
+    def available(self):
+        return all(shutil.which(tool) for tool in (self.yosys, self.nextpnr))
+
+    def commands(self, top="otf_top"):
+        synth = [self.yosys, "-q", "-p",
+                 "read_verilog rtl/top.v; synth_ecp5 -top %s -json synth/top.json" % top]
+        place = [self.nextpnr] + list(self.device.nextpnr_args) + [
+            "--json", "synth/top.json", "--lpf-allow-unconstrained",
+            "--freq", "%g" % self.device.fmax_mhz, "--timing-allow-fail"]
+        if not self.implement:
+            place.append("--pack-only")
+        return [synth, place]
+
+    def run(self, build_dir):
+        """Measured resources and, after place and route, fmax in MHz."""
+        (pathlib.Path(build_dir) / "synth").mkdir(exist_ok=True)
+        log = ""
+        for command in self.commands():
+            completed = subprocess.run(command, cwd=build_dir, capture_output=True,
+                                       text=True)
+            log = completed.stdout + completed.stderr
+            if completed.returncode != 0:
+                raise RuntimeError("%s failed\n%s" % (command[0], log[-3000:]))
+        return self.parse(log)
+
+    @classmethod
+    def parse(cls, log):
+        measured = Resources()
+        for cell, field in cls.CELLS.items():
+            found = re.search(r"%s:\s+(\d+)/" % cell, log)
+            if found:
+                setattr(measured, field, int(found.group(1)))
+        fmax = re.findall(r"Max frequency for clock .*?: ([\d.]+) MHz", log)
+        return measured, float(fmax[-1]) if fmax else None
+
+    @classmethod
+    def render(cls, predicted, measured, fmax, device):
+        lines = ["%-6s %9s %9s %7s %9s" % ("", "estimate", "measured", "error", "budget")]
+        for field in cls.FIELDS:
+            guess, real = getattr(predicted, field), getattr(measured, field)
+            error = "%+6.0f%%" % (100 * (guess / real - 1)) if real else "    n/a"
+            lines.append("%-6s %9.0f %9d %7s %9d" % (field, guess, real, error,
+                                                     getattr(device.budget, field)))
+        if fmax is not None:
+            lines.append("fmax   %.1f MHz after place and route (the model assumes %.0f)"
+                         % (fmax, device.fmax_mhz))
+        return "\n".join(lines)
+
+
+def open_flow(result, build_dir, device, implement=False, dry_run=False):
+    """`onnx2fpga synth` for a device built with yosys and nextpnr."""
+    runner = YosysRunner(device, implement)
+    if dry_run:
+        print("cd %s" % build_dir)
+        for command in runner.commands():
+            print("  " + " ".join(_quote(part) for part in command))
+        return 0
+    if not runner.available:
+        print("needs %s and %s on PATH, or use --dry-run"
+              % (runner.yosys, runner.nextpnr), file=sys.stderr)
+        return 2
+    measured, fmax = runner.run(build_dir)
+    # The whole netlist, so buffers and width converters added after folding are counted.
+    predicted = sum((node.resources(device) for node in result.hardware_graph.nodes),
+                    Resources.zero())
+    print(YosysRunner.render(predicted, measured, fmax, device))
+    return 0

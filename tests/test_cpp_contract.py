@@ -1,11 +1,4 @@
-"""The C++ kernels and the Python model must agree exactly.
-
-Three implementations of the same arithmetic exist in this repository: the
-numpy model in the compiler, the C++ kernels in runtime/, and the RTL. The
-compiler checks itself against the RTL in simulation; this checks it against
-the C++ side, which is what the host runtime and any large scale dataset sweep
-will use.
-"""
+"""The C++ kernels and the Python model must agree exactly."""
 
 import shutil
 import unittest
@@ -24,23 +17,32 @@ from onnx2fpga.p4_quantize.requantize import Requantizer
 class MatVecFixture:
     """Writes a layer and its expected integer output for the C++ checker."""
 
-    def __init__(self, mw, mh, vectors, seed, zero_point=0):
+    def __init__(self, mw, mh, vectors, seed, zero_point=0, scales=(1e-3, 4e-2)):
         rng = np.random.default_rng(seed)
         self.mw, self.mh, self.vectors = mw, mh, vectors
         self.zero_point = zero_point
         self.weights = rng.integers(-127, 128, (mw, mh), dtype=np.int64)
         self.bias = rng.integers(-2000, 2000, mh, dtype=np.int64)
         self.requant = Requantizer.from_real_multipliers(
-            rng.uniform(1e-3, 4e-2, mh), INT8, mult_bits=18, zero_point=zero_point)
+            rng.uniform(scales[0], scales[1], mh), INT8, mult_bits=18,
+            zero_point=zero_point)
         self.input = rng.integers(-128, 128, (vectors, mw), dtype=np.int64)
         self.expected = self._expected()
+
+    @classmethod
+    def tiny_multiplier(cls, seed=6, zero_point=-5):
+        """A rescale so small the shift hits 62, far past the unit width, where the rounding constant used to hit the sign bit."""
+        return cls(24, 6, 5, seed, zero_point, scales=(1e-16, 1e-15))
+
+    def unit(self):
+        return MatVecUnit("m", ["x"], ["y"], self.weights, self.bias, self.requant,
+                          INT8, INT8, INT8, vectors=self.vectors)
 
     def _expected(self):
         graph = Graph("fixture")
         graph.add_tensor(Tensor("x", (self.vectors, self.mw), INT8))
         graph.inputs.append("x")
-        unit = MatVecUnit("m", ["x"], ["y"], self.weights, self.bias, self.requant,
-                          INT8, INT8, INT8, vectors=self.vectors)
+        unit = self.unit()
         graph.ensure_tensor("y")
         graph.add_node(unit)
         unit.infer(graph)
@@ -84,6 +86,15 @@ class CppContractTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0,
                                  result.stdout + result.stderr)
                 self.assertIn("PASS", result.stdout)
+
+    def test_a_tiny_multiplier_rounds_to_the_zero_point(self):
+        fixture = MatVecFixture.tiny_multiplier()
+        self.assertEqual(fixture.requant.shift, 62)
+        np.testing.assert_array_equal(fixture.expected, fixture.zero_point)
+        path = fixture.write(Fixtures.build_dir("cpp") / "matvec_tiny_multiplier.txt")
+        result = run([str(self.checker), str(path)])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS", result.stdout)
 
     def test_a_deliberate_mismatch_is_caught(self):
         """The checker has to be able to fail, or it proves nothing."""

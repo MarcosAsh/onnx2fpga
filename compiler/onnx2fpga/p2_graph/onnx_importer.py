@@ -1,13 +1,8 @@
-"""ONNX to internal IR.
-
-ONNX carries images as NCHW; the streaming architecture wants channels
-innermost so they can be split across parallel lanes. The importer therefore
-transposes every weight and shape into channel-last form once, here, and the
-rest of the compiler never sees NCHW again.
-"""
+"""ONNX to the internal IR, transposing every weight and shape to channel-last once, here."""
 
 import numpy as np
 
+from ..errors import ModelError, UnsupportedOpError
 from ..p1_ingest import TensorProto
 from ..p2_graph.datatype import FLOAT32, INT8, IntType, QuantSpec, UINT8
 from ..p2_graph.graph import Graph
@@ -16,7 +11,7 @@ from ..p2_graph.tensor import Tensor
 from ..p3_ops.onnx_ops import AddOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
 
 
-class ImportError_(Exception):
+class ImportError_(ModelError):
     pass
 
 
@@ -65,17 +60,7 @@ class IdentityHandler(OpHandler):
 
 
 class QdqHandler(OpHandler):
-    """QuantizeLinear and DequantizeLinear.
-
-    Neither is computation. They record which integer grid a tensor lives on,
-    which is exactly what the compiler needs and would otherwise have to
-    measure by calibration. Both collapse to an alias carrying that record.
-
-    A DequantizeLinear whose input is an integer initializer is the usual way a
-    quantized model stores its weights, so that case materialises the float
-    constant the rest of the frontend expects, with the grid remembered so the
-    lowering re-derives the very same integers instead of picking its own.
-    """
+    """QuantizeLinear and DequantizeLinear record the integer grid of a tensor and collapse to an alias carrying it."""
 
     op_types = ("QuantizeLinear", "DequantizeLinear")
 
@@ -212,11 +197,12 @@ class OnnxImporter:
     HANDLERS = (ConvHandler(), GemmHandler(), ReluHandler(), MaxPoolHandler(),
                 AddHandler(), FlattenHandler(), QdqHandler(), IdentityHandler())
 
-    def __init__(self, model):
+    def __init__(self, model, handlers=()):
+        """`handlers` come after the built in ones, so a custom handler can take over a known op type."""
         self.model = model
         self.graph = Graph(model.graph.name or "imported")
         self._dispatch = {}
-        for handler in self.HANDLERS:
+        for handler in tuple(self.HANDLERS) + tuple(handlers):
             for op_type in handler.op_types:
                 self._dispatch[op_type] = handler
         self._renames = {}
@@ -234,8 +220,8 @@ class OnnxImporter:
                 continue
             handler = self._dispatch.get(node.op_type)
             if handler is None:
-                raise ImportError_("unsupported ONNX op %r in node %r"
-                                   % (node.op_type, node.name))
+                raise UnsupportedOpError(node.op_type, node.name,
+                                         self.supported_ops())
             handler.handle(node, self)
         for name in self.model.graph_outputs():
             self.graph.outputs.append(self.rename(name))
@@ -244,16 +230,17 @@ class OnnxImporter:
         self.graph.infer()
         return self.graph
 
+    def supported_ops(self):
+        return sorted(self._dispatch)
+
     def _is_constant_only(self, node):
-        """Quantize and dequantize nodes are annotations, so they are handled
-        even when every input is constant."""
+        """Quantize and dequantize nodes are annotations, so they are handled even when every input is constant."""
         if node.op_type in QdqHandler.op_types:
             return False
         return bool(node.output) and all(self.model.has_initializer(i) for i in node.input)
 
     def emit(self, node):
-        """Shapes are inferred as each node lands, because later handlers need
-        the extent of their input to resolve padding and window geometry."""
+        """Shapes are inferred as each node lands, since later handlers need them for padding and windows."""
         for name in node.outputs:
             self.graph.ensure_tensor(name)
         self.graph.add_node(node)
@@ -263,8 +250,7 @@ class OnnxImporter:
         return self._renames.get(name, name)
 
     def constant_array(self, name):
-        """Constants can come from the model, or from a DequantizeLinear the
-        frontend has already folded into the graph."""
+        """Constants come from the model or from a DequantizeLinear already folded into the graph."""
         resolved = self.rename(name)
         for candidate in (resolved, name):
             if self.graph.has_tensor(candidate) and self.graph.tensor(candidate).is_constant:
@@ -280,8 +266,7 @@ class OnnxImporter:
         return name
 
     def derive_constant(self, base, array):
-        """A reshaped or transposed view of a constant, keeping whatever
-        quantization grid the original carried."""
+        """A reshaped or transposed view of a constant, keeping its quantization grid."""
         name = self.graph.fresh_name(base + "_cl")
         self.graph.add_tensor(Tensor.constant(name, np.asarray(array, dtype=np.float64)))
         source = self.rename(base)

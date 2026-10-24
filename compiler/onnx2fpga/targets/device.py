@@ -1,9 +1,4 @@
-"""Target device models.
-
-Resource counts marked provenance="vendor" are taken from published AMD device
-tables. Anything marked "estimated" was not obtainable from a primary source
-and is a working figure only; do not size a real build against it.
-"""
+"""Target device models; "estimated" provenance figures are working numbers, not for sizing a real build."""
 
 from .resources import Resources
 
@@ -11,8 +6,15 @@ from .resources import Resources
 class Device:
     _registry = {}
 
+    # Block RAM and DSP sites are discrete, so a device may let them run to 100 percent.
+    HARD_FIELDS = ()
+
+    # nextpnr arguments that select the part, empty for parts Vivado builds.
+    nextpnr_args = ()
+
     def __init__(self, name, part, budget, fmax_mhz, dsp_generation,
-                 external_bandwidth_gbps=0.0, provenance="estimated", notes=""):
+                 external_bandwidth_gbps=0.0, provenance="estimated", notes="",
+                 block_ram="bram36"):
         self.name = name
         self.part = part
         self.budget = budget
@@ -21,15 +23,20 @@ class Device:
         self.external_bandwidth_gbps = external_bandwidth_gbps
         self.provenance = provenance
         self.notes = notes
+        self.block_ram = block_ram
+
+    @property
+    def cost_model(self):
+        """A vendor specific estimator replacing the AMD model of each node, or None."""
+        return None
+
+    def limits(self, utilisation_limit):
+        """Fraction of the budget each resource may use."""
+        return {f: 1.0 if f in self.HARD_FIELDS else utilisation_limit
+                for f in Resources.FIELDS}
 
     def macs_per_dsp(self, act_bits, weight_bits):
-        """DSP packing factor.
-
-        A DSP48E2 holds a 27x18 multiplier. Two INT8 products that share one
-        operand fit in it at once, and four INT4 products do, so the effective
-        MAC density rises as precision falls. Anything wider than the native
-        ports costs more than one slice.
-        """
+        """DSP packing factor: a DSP48E2 27x18 multiplier holds two INT8 or four INT4 products."""
         if self.dsp_generation not in ("DSP48E2", "DSP58"):
             return 1.0
         wide = max(act_bits, weight_bits)
@@ -100,3 +107,7 @@ Device.register(Device(
     budget=Resources(lut=10 ** 9, ff=10 ** 9, dsp=10 ** 9, bram36=10 ** 9, uram=10 ** 9),
     fmax_mhz=1000.0, dsp_generation="none",
     provenance="n/a", notes="unbounded pseudo-device for simulation-only builds"))
+
+
+# Imported last: the ECP5 model subclasses Device and registers itself.
+from . import ecp5  # noqa: E402,F401

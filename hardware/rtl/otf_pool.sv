@@ -1,8 +1,4 @@
-// Max reduction over the windows produced by otf_swu.
-//
-// The running maximum for each channel group is held locally and the result is
-// emitted during the final pass over the window, so the unit costs exactly one
-// cycle per input beat with no separate drain phase.
+// Max reduction over otf_swu windows, one cycle per input beat with no drain phase.
 `default_nettype none
 
 module otf_pool #(

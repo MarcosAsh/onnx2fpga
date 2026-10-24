@@ -1,12 +1,4 @@
-"""The tool has to work when it is installed, not just from a checkout.
-
-Two layouts exist. From a checkout the RTL library and the C++ runtime sit
-beside the package; from a wheel they are inside it. Everything the compiler
-emits references both, so getting this wrong produces a tool that compiles
-happily and then cannot build what it emitted. The last test here is the one
-that matters: it runs the built wheel from a directory where the checkout is
-invisible.
-"""
+"""The tool must work when installed from a wheel, not just from a checkout."""
 
 import os
 import pathlib
@@ -38,8 +30,7 @@ class AssetLocatorTest(unittest.TestCase):
         previous = os.environ.get(AssetLocator.ENV)
         os.environ[AssetLocator.ENV] = str(empty)
         try:
-            # An override set on purpose but pointing somewhere wrong must fail
-            # loudly rather than quietly building against different RTL.
+            # A wrong override set on purpose must fail loudly, not quietly build against other RTL.
             with self.assertRaises(AssetError):
                 AssetLocator().root
         finally:
@@ -123,8 +114,7 @@ class WheelTest(unittest.TestCase):
 
     @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
     def test_an_installed_copy_can_simulate_what_it_emitted(self):
-        """The end of the chain: the generated Makefile points at the C++
-        harness, which has to be inside the wheel for this to build."""
+        """The generated Makefile points at the C++ harness, which must be inside the wheel."""
         work = Fixtures.build_dir("packaging_sim")
         model = work / "mlp.onnx"
         shutil.copyfile(ROOT / "examples" / "models" / "mlp.onnx", model)

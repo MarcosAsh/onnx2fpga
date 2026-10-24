@@ -1,14 +1,4 @@
-// Verilator driver for a generated onnx2fpga design.
-//
-// This is the part of the project where C++ is doing real work: it is the
-// cycle accurate simulation loop, and it runs once per clock edge for the
-// whole test. It drives the input stream, applies randomised backpressure so
-// handshake bugs surface, counts cycles, and checks every output beat against
-// the golden vectors the compiler produced from its numpy model.
-//
-// Randomised backpressure matters. A stream pipeline that only ever sees
-// tready held high will pass its tests and then deadlock on real hardware, so
-// the default run perturbs both ends.
+// Verilator driver: randomised backpressure so handshake bugs surface, counts cycles, checks beats against the golden vectors.
 
 #include <cstdint>
 #include <cstdlib>
@@ -70,8 +60,7 @@ public:
     }
 };
 
-// Verilator picks a port type from the signal width. These overloads let the
-// harness treat every width the same way.
+// Overloads over the port type Verilator picks from the signal width.
 template <typename T>
 inline void port_write(T& port, const otf::Beat& beat) {
     uint64_t value = 0;

@@ -1,5 +1,4 @@
-// Fork one stream to FANOUT consumers. Branches may accept in different
-// cycles; the sent mask holds the beat until every branch has taken it.
+// Fork one stream to FANOUT consumers; the sent mask holds a beat until every branch has taken it.
 `default_nettype none
 
 module otf_dup #(

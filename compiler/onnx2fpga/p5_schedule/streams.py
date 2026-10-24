@@ -1,11 +1,4 @@
-"""Stream plumbing inserted after folding is decided.
-
-Two things can go wrong between neighbouring units once their folding factors
-differ. Their beat widths stop matching, which a width converter fixes, and
-their instantaneous rates stop matching, which a FIFO absorbs. Undersized FIFOs
-stall a dataflow pipeline or deadlock it outright when a fork rejoins, so the
-sizer is deliberately conservative on reconvergent paths.
-"""
+"""Stream plumbing after folding: width converters and FIFOs, sized conservatively on reconvergent paths."""
 
 import math
 
@@ -22,13 +15,7 @@ def compatible_widths(supplied, wanted):
 
 
 class InsertDuplicates(Pass):
-    """Gives every stream exactly one consumer.
-
-    Wiring one stream to two units leaves both driving its ready line and both
-    seeing the same beat. Verilator accepts that netlist without a word, so it
-    would have shipped: the check that follows this pass is what makes the
-    guarantee, not the simulator.
-    """
+    """Gives every stream exactly one consumer; the check after this pass is the guarantee, not the simulator."""
 
     name = "insert-dup"
 
@@ -62,8 +49,7 @@ class InsertDuplicates(Pass):
 
 
 class StreamsAreSingleConsumer(Pass):
-    """Structural check, run last. A stream with two consumers is a netlist
-    that simulates without complaint and computes the wrong thing."""
+    """Structural check, run last; a stream with two consumers simulates fine and computes the wrong thing."""
 
     name = "check-streams"
 
@@ -80,14 +66,7 @@ class StreamsAreSingleConsumer(Pass):
 
 
 class AlignBeatWidths(Pass):
-    """Nudges folding so neighbouring units meet at an integer beat ratio.
-
-    Folding is chosen per unit against a resource budget, which can leave two
-    neighbours at widths like 2 and 5. That still works, but only through a
-    converter that has to step down to their common divisor and back up, which
-    throttles the edge to one element per cycle and quietly undoes the balance
-    the allocator just computed. Retuning one side is nearly always cheaper.
-    """
+    """Nudges folding so neighbours meet at an integer beat ratio, avoiding a throttling two-step converter."""
 
     name = "align-widths"
 
@@ -116,13 +95,11 @@ class AlignBeatWidths(Pass):
 
     @staticmethod
     def _retune(node, graph, slot, supplied, device):
-        """Cheapest compatible folding that is no more expensive than the one
-        the allocator picked. Reducing parallelism is always affordable, so a
-        candidate always exists unless nothing is compatible at all."""
+        """Cheapest compatible folding no more expensive than the one picked; reducing parallelism is always affordable."""
         current = dict(node.folding)
         ceiling = node.resources(device).pressure(device.budget)
         best, best_cycles = None, None
-        for option in node.folding_options():
+        for option in node.allowed_foldings():
             node.apply_folding(option)
             width = node.input_beat_elems(graph)[slot]
             cycles = node.cycles
@@ -156,8 +133,7 @@ class InsertWidthConverters(Pass):
 
     @staticmethod
     def _resolve_io_widths(graph):
-        """Graph inputs have no producer, so their beat width is whatever the
-        first unit consumes."""
+        """Graph inputs have no producer, so their beat width is whatever the first unit consumes."""
         for name in graph.inputs:
             for consumer in graph.consumers(name):
                 slot = consumer.stream_inputs(graph).index(name)
@@ -170,9 +146,7 @@ class InsertWidthConverters(Pass):
 
     @staticmethod
     def _stages(supplied, wanted):
-        """One converter at an integer ratio, otherwise down to the common
-        divisor and back up. The two step path is correct but slow, which is
-        why AlignBeatWidths runs first to avoid needing it."""
+        """One converter at an integer ratio, else down to the common divisor and back up (slow)."""
         if compatible_widths(supplied, wanted):
             return [(supplied, wanted)]
         common = math.gcd(supplied, wanted)
@@ -196,16 +170,7 @@ class InsertWidthConverters(Pass):
 
 
 class InsertFifos(Pass):
-    """Places a buffer on every internal edge and sizes it from the schedule.
-
-    Depth comes from TokenAnalysis, which computes how many beats can be in
-    flight on each edge under an as-soon-as-possible schedule. On a chain that
-    is a handful; across a fork that rejoins it is the whole skew between the
-    branches, and getting it wrong there deadlocks rather than slows.
-
-    `cap` exists so a test can deliberately starve the buffers and show that
-    the sizing is load bearing.
-    """
+    """Places a sized buffer on every internal edge; `cap` lets a test starve them to show sizing matters."""
 
     name = "insert-fifo"
 

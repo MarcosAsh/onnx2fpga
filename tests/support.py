@@ -33,24 +33,38 @@ class Fixtures:
         return target
 
 
+class Hdl:
+    """The backends a build can use; Hardcaml needs dune and the opam switch, and its tests skip without them."""
+
+    @staticmethod
+    def suffix(hdl):
+        """Build directories for the default backend keep their old names."""
+        return "" if hdl == "sv" else "_" + hdl
+
+    @staticmethod
+    def skip_reason(hdl):
+        if hdl == "hardcaml":
+            from onnx2fpga.p6_emit.hardcaml import HardcamlGenerator
+            reason = HardcamlGenerator().unavailable()
+            if reason:
+                return "hardcaml backend unavailable: " + reason.splitlines()[0]
+        return None
+
+
 def run(command, cwd=None, timeout=900):
     return subprocess.run(command, cwd=cwd or ROOT, capture_output=True,
                           text=True, timeout=timeout)
 
 
 class SingleUnitProject:
-    """Emits a build directory containing one hardware unit.
+    """Emits a build directory with one hardware unit, through the real netlist builder and project writer."""
 
-    Uses the real netlist builder and project writer, so a unit test exercises
-    the same emission path a full model does, and the golden vectors come from
-    the unit's own reference implementation.
-    """
-
-    def __init__(self, node, input_shape, input_dtype, device="sim"):
+    def __init__(self, node, input_shape, input_dtype, device="sim", hdl="sv"):
         self.node = node
         self.input_shape = tuple(input_shape)
         self.input_dtype = input_dtype
         self.device = device
+        self.hdl = hdl
 
     def write(self, out_dir, input_array):
         from onnx2fpga.p2_graph.graph import Graph
@@ -71,7 +85,7 @@ class SingleUnitProject:
         graph.outputs.append(self.node.outputs[0])
 
         context = CompilerContext(Device.get(self.device))
-        build = ProjectWriter(graph, context, "otf_top").write(out_dir)
+        build = ProjectWriter(graph, context, "otf_top", hdl=self.hdl).write(out_dir)
 
         expected = self.node.execute(graph, {self.node.inputs[0]: input_array})[0]
         StreamCodec(graph.tensor(self.node.inputs[0])).to_image(input_array).write(

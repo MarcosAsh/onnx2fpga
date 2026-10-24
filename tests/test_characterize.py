@@ -1,11 +1,4 @@
-"""The synthesis driver, minus the synthesis.
-
-Vivado is not installed here, so the TCL script has never been executed. What
-can be checked is everything around it: which units get characterised, what
-environment they are launched with, and whether a report is read and compared
-correctly. Those are covered below. The TCL itself has never met a real
-Vivado install.
-"""
+"""The synthesis driver without synthesis; the TCL itself has never run under a real Vivado."""
 
 import json
 import os
@@ -101,8 +94,7 @@ class SubjectTest(unittest.TestCase):
         self.assertIn("WEIGHT_FILE=mem/", subject.generic_arguments())
 
     def test_empty_string_generics_are_dropped(self):
-        """An empty file name would make Vivado try to read a file called
-        nothing, so those parameters keep their default instead."""
+        """An empty file name would make Vivado read a file called nothing, so those parameters keep their default."""
         subject = Subject("u", "otf_mvau",
                           {"MW": 9, "WEIGHT_FILE": "", "BIAS_FILE": "mem/b.hex"},
                           None, 0)
@@ -110,13 +102,7 @@ class SubjectTest(unittest.TestCase):
 
 
 class EndToEndTest(unittest.TestCase):
-    """The whole measurement path, against a stand-in for Vivado.
-
-    This proves the plumbing: units are enumerated, the tool is invoked once
-    per unit, each summary is read back, and the comparison renders. The
-    numbers it prints are the stub's canned ones and mean nothing. Whether
-    Vivado produces sensible numbers is what the first real run decides.
-    """
+    """The whole measurement path against a Vivado stand in; the printed numbers are canned and mean nothing."""
 
     FAKE = ROOT / "tests" / "fake_vivado"
 
@@ -173,8 +159,7 @@ class RunnerTest(unittest.TestCase):
         self.assertIn(str(runner.script), " ".join(runner.command()))
 
     def test_sources_are_relative_to_the_build_directory(self):
-        """Built here rather than borrowed from another test class, so the
-        result does not depend on which test ran first."""
+        """Built here rather than borrowed from another test, so the result does not depend on test order."""
         model = OnnxModel.load(ROOT / "examples" / "models" / "cnn.onnx")
         build = Fixtures.build_dir("characterize_sources")
         Compiler(device="z7020", target_cycles=400).compile(

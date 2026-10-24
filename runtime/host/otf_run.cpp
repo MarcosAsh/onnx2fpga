@@ -1,9 +1,4 @@
-// Host driver.
-//
-// Loads a compiled design, quantises a float input with the scales recorded in
-// the manifest, runs one frame, and prints the dequantised result. Today the
-// only backend is the Verilator model; an XRT backend slots in behind the same
-// Accelerator interface without the caller changing.
+// Host driver: quantises a float input with the manifest scales, runs one frame on the Verilator backend and prints the dequantised result.
 
 #include <iostream>
 #include <random>

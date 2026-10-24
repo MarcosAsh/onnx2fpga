@@ -61,8 +61,7 @@ class OnnxReaderTest(unittest.TestCase):
         self.assertEqual(reloaded.nodes()[0].attributes()["transB"], 0)
 
     def test_third_party_models_parse(self):
-        """Any .onnx dropped into tests/data must parse. Nothing is vendored,
-        so this is a no-op until someone adds a file."""
+        """Any .onnx dropped into tests/data must parse; a no-op until someone adds a file."""
         data = ROOT / "tests" / "data"
         models = sorted(data.glob("*.onnx")) if data.exists() else []
         if not models:

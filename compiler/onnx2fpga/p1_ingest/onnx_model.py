@@ -88,8 +88,7 @@ class OnnxModel:
         return TensorCodec.to_numpy(self._initializers[name])
 
     def initializer_dtype(self, name):
-        """The ONNX data_type code, which is how a quantized weight is told
-        apart from a float one."""
+        """The ONNX data_type code, which tells a quantized weight from a float one."""
         return int(self._initializers[name].data_type)
 
     def value_shape(self, name):

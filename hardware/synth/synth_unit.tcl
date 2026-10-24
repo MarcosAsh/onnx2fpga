@@ -1,19 +1,4 @@
-# Out of context synthesis of one streaming unit.
-#
-# Driven entirely by environment variables so no argument quoting is involved:
-#
-#   OTF_PART     target part, for example xc7z020-clg400-1
-#   OTF_TOP      module to synthesise
-#   OTF_RTL      space separated SystemVerilog sources
-#   OTF_GENERICS space separated NAME=VALUE overrides
-#   OTF_PERIOD   target clock period in ns
-#   OTF_OUT      directory to write reports and summary.json into
-#   OTF_IMPL     1 to place and route as well, 0 for synthesis only
-#
-# Run it from the build directory of a compiled design, because the weight
-# memories are initialised by $readmemh with paths relative to the working
-# directory. Without them the memories read as undefined and synthesis
-# optimises the datapath away, which would make every number here meaningless.
+# Out of context synthesis of one unit, configured by OTF_* env vars; run it from the design build dir so $readmemh finds the weights.
 
 proc env_or {name fallback} {
     if {[info exists ::env($name)]} { return $::env($name) }
@@ -60,8 +45,7 @@ if {$do_impl} {
     set stage impl
 }
 
-# Counting primitives directly avoids parsing a human readable report whose
-# layout changes between releases.
+# Counts primitives directly because report layout changes between releases.
 proc count_group {group} {
     return [llength [get_cells -hier -filter "PRIMITIVE_GROUP == $group"]]
 }

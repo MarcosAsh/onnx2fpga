@@ -110,14 +110,7 @@ FLOAT32 = DataType.register(FloatType(32))
 
 
 class QuantSpec:
-    """Affine quantization: real = scale * (integer - zero_point).
-
-    ONNX writes unsigned activations as often as signed ones. Rather than carry
-    signedness through the whole datapath, an unsigned spec is rebased onto the
-    signed grid: value u with zero point z is exactly value u-128 with zero
-    point z-128, same scale. The shift is a boundary concern, recorded here so
-    the host can apply it, and nothing inside the accelerator sees it.
-    """
+    """Affine quantization, real = scale * (integer - zero_point); unsigned specs are rebased onto the signed grid."""
 
     REBASE = 128
 
@@ -129,8 +122,7 @@ class QuantSpec:
         self.rebased = rebased
 
     def to_signed(self):
-        """Signed equivalent of this spec, shifting the zero point if the
-        source grid was unsigned."""
+        """Signed equivalent of this spec, shifting the zero point if the grid was unsigned."""
         if self.dtype is None or self.dtype.signed:
             return self
         return QuantSpec(self.scale, self.zero_point - self.REBASE, self.axis,
@@ -138,8 +130,7 @@ class QuantSpec:
 
     @property
     def offset(self):
-        """What the host must subtract from an incoming value, and add to an
-        outgoing one, to reach the grid the hardware works on."""
+        """What the host subtracts from an incoming value, and adds to an outgoing one."""
         return self.REBASE if self.rebased else 0
 
     @property

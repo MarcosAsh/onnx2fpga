@@ -2,14 +2,17 @@
 
 
 class Resources:
-    FIELDS = ("lut", "ff", "dsp", "bram36", "uram")
+    """lut, ff and dsp are the device sites; block RAM kinds have their own fields, and unbudgeted ones are never charged."""
 
-    def __init__(self, lut=0, ff=0, dsp=0, bram36=0, uram=0):
+    FIELDS = ("lut", "ff", "dsp", "bram36", "uram", "ebr")
+
+    def __init__(self, lut=0, ff=0, dsp=0, bram36=0, uram=0, ebr=0):
         self.lut = lut
         self.ff = ff
         self.dsp = dsp
         self.bram36 = bram36
         self.uram = uram
+        self.ebr = ebr
 
     def __add__(self, other):
         return Resources(*(getattr(self, f) + getattr(other, f) for f in self.FIELDS))
@@ -24,9 +27,20 @@ class Resources:
         return max(getattr(self, f) / getattr(budget, f)
                    for f in self.FIELDS if getattr(budget, f) > 0)
 
+    def overruns(self, budget, limits):
+        """Fields past their share of the budget as (field, used, allowed), worst first."""
+        over = []
+        for f in self.FIELDS:
+            total = getattr(budget, f)
+            if total <= 0:
+                continue
+            allowed = total * limits[f]
+            if getattr(self, f) > allowed:
+                over.append((getattr(self, f) / allowed, f, getattr(self, f), allowed))
+        return [(f, used, allowed) for _, f, used, allowed in sorted(over, reverse=True)]
+
     def pressure(self, budget):
-        """Total normalised spend, summed across resource types. Used to rank
-        folding options by cost; worst_utilisation decides feasibility."""
+        """Total normalised spend across resource types, used to rank folding options by cost."""
         return sum(getattr(self, f) / getattr(budget, f)
                    for f in self.FIELDS if getattr(budget, f) > 0)
 
@@ -73,8 +87,7 @@ def _distributed_cost(depth, width):
 
 
 def _block_cost(depth, width):
-    """Block RAMs are 36Kb but capped at 72 bits wide, so wide streams need
-    several in parallel before depth is the binding constraint."""
+    """Block RAMs are 36Kb but capped at 72 bits wide, so wide streams need several in parallel."""
     parallel = max(1, (width + 71) // 72)
     per_slice_depth = 512 if width > 36 else 1024
     deep = max(1, (depth + per_slice_depth - 1) // per_slice_depth)

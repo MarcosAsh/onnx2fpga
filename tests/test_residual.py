@@ -1,20 +1,11 @@
-"""Forks and joins, and the buffers that keep them from deadlocking.
-
-A skip connection is the first shape where buffer sizing stops being a
-performance detail. The join cannot take a beat from the short branch until
-the long one catches up, so everything the short branch produced in the
-meantime has to be held. Too small a buffer there fills, which stalls the
-fork, which stalls the long branch, which never reaches the join. The design
-stops dead rather than running slowly, which is why this file carries a
-negative control as well as a positive one.
-"""
+"""Forks and joins, and the buffers that keep them from deadlocking."""
 
 import shutil
 import unittest
 
 import numpy as np
 
-from support import Fixtures, run
+from support import Fixtures, Hdl, run
 
 from onnx2fpga.compile import Compiler
 from onnx2fpga.p2_graph.graph import GraphError
@@ -50,8 +41,7 @@ class ResidualStructureTest(unittest.TestCase):
         self.assertEqual(len(joins[0].stream_inputs(self.graph)), 2)
 
     def test_no_stream_feeds_two_consumers(self):
-        """Verilator accepts a doubly driven ready line without a word, so this
-        has to be checked here rather than left to simulation."""
+        """Verilator accepts a doubly driven ready line silently, so it has to be checked here."""
         StreamsAreSingleConsumer().run(self.graph, self.result.context)
 
     def test_the_check_actually_rejects_a_bad_graph(self):
@@ -77,15 +67,7 @@ class ResidualStructureTest(unittest.TestCase):
 
 
 class ResidualNumericsTest(unittest.TestCase):
-    """How far int8 drifts from float across a residual.
-
-    The drift is dominated by how well calibration covered the input range, not
-    by the residual itself. Calibrate on too few samples and a fresh input
-    falls outside the fitted scale and clips, which is real quantiser
-    behaviour rather than a compiler fault. So the threshold below is set
-    against a well calibrated model, and a second test pins the relationship
-    that made the first one meaningful.
-    """
+    """How far int8 drifts from float across a residual, set against a well calibrated model since few samples clip."""
 
     CALIBRATION = 256
     EVAL_SEEDS = (4, 5, 6, 7)
@@ -116,8 +98,7 @@ class ResidualNumericsTest(unittest.TestCase):
                         "int8 residual drifted %.1f output steps from float" % steps)
 
     def test_more_calibration_narrows_the_drift(self):
-        """Guards the calibration path: if it stopped widening the fitted range
-        as samples arrive, this ordering would break."""
+        """Guards the calibration path: if it stopped widening the fitted range as samples arrive, this ordering breaks."""
         drifts = []
         for count in (16, 256):
             result = compile_residual(
@@ -128,12 +109,14 @@ class ResidualNumericsTest(unittest.TestCase):
                         "more calibration should not drift further: %s" % drifts)
 
 
-@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
-class ResidualSimulationTest(unittest.TestCase):
+class ResidualSimulationCases:
+    HDL = "sv"
+
     @classmethod
     def setUpClass(cls):
-        cls.build = Fixtures.build_dir("residual_sim")
-        compile_residual("residual_sim")
+        name = "residual_sim" + Hdl.suffix(cls.HDL)
+        cls.build = Fixtures.build_dir(name)
+        compile_residual(name, hdl=cls.HDL)
         built = run(["make", "-s"], cwd=cls.build)
         assert built.returncode == 0, built.stderr[-4000:]
 
@@ -157,15 +140,15 @@ class ResidualSimulationTest(unittest.TestCase):
                                      result.stdout + result.stderr)
 
 
-@unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
-class BufferSizingIsLoadBearingTest(unittest.TestCase):
-    """The negative control. If starving the buffers did not deadlock, the
-    sizing analysis would be unfalsifiable and this file would prove nothing.
-    """
+class BufferSizingCases:
+    """The negative control: without it the sizing analysis is unfalsifiable; on both backends it also checks timing."""
+
+    HDL = "sv"
 
     def test_capping_every_buffer_at_the_minimum_deadlocks(self):
-        build = Fixtures.build_dir("residual_capped")
-        compile_residual("residual_capped", fifo_cap=2)
+        name = "residual_capped" + Hdl.suffix(self.HDL)
+        build = Fixtures.build_dir(name)
+        compile_residual(name, fifo_cap=2, hdl=self.HDL)
         built = run(["make", "-s"], cwd=build)
         self.assertEqual(built.returncode, 0, built.stderr[-4000:])
         result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
@@ -176,14 +159,40 @@ class BufferSizingIsLoadBearingTest(unittest.TestCase):
         self.assertIn("stalled", result.stderr)
 
     def test_the_computed_sizes_do_not(self):
-        build = Fixtures.build_dir("residual_sized")
-        compile_residual("residual_sized")
+        name = "residual_sized" + Hdl.suffix(self.HDL)
+        build = Fixtures.build_dir(name)
+        compile_residual(name, hdl=self.HDL)
         built = run(["make", "-s"], cwd=build)
         self.assertEqual(built.returncode, 0, built.stderr[-4000:])
         result = run(["./obj_dir/Votf_top", "--input", "golden/input.hex",
                       "--expected", "golden/expected.hex",
                       "--timeout", "400000"], cwd=build, timeout=300)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+VERILATOR = shutil.which("verilator") is not None
+
+
+@unittest.skipUnless(VERILATOR, "verilator not installed")
+class ResidualSimulationTest(ResidualSimulationCases, unittest.TestCase):
+    HDL = "sv"
+
+
+@unittest.skipUnless(VERILATOR, "verilator not installed")
+@unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+class HardcamlResidualSimulationTest(ResidualSimulationCases, unittest.TestCase):
+    HDL = "hardcaml"
+
+
+@unittest.skipUnless(VERILATOR, "verilator not installed")
+class BufferSizingIsLoadBearingTest(BufferSizingCases, unittest.TestCase):
+    HDL = "sv"
+
+
+@unittest.skipUnless(VERILATOR, "verilator not installed")
+@unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+class HardcamlBufferSizingIsLoadBearingTest(BufferSizingCases, unittest.TestCase):
+    HDL = "hardcaml"
 
 
 if __name__ == "__main__":

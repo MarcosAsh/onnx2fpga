@@ -1,0 +1,110 @@
+"""The ECP5 device model: Lattice budget, yosys multipliers, and folding that stops at 28 of them."""
+
+import shutil
+import unittest
+
+from support import Fixtures, Hdl
+
+from onnx2fpga.compile import Compiler
+from onnx2fpga.measure import YosysRunner
+from onnx2fpga.targets.device import Device
+from onnx2fpga.targets.ecp5 import memory, multipliers
+from onnx2fpga.targets.resources import Resources
+
+
+def compile_mlp(target, device="icepi25", hdl="sv", out="ecp5_mlp"):
+    return Compiler(device=device, target_cycles=target, hdl=hdl).compile(
+        Fixtures.factory().mlp(), Fixtures.samples(Fixtures.MLP_SHAPE),
+        Fixtures.build_dir(out))
+
+
+class Ecp5ModelTest(unittest.TestCase):
+    def test_budget_is_the_lfe5u_25(self):
+        device = Device.get("icepi25")
+        self.assertEqual(device.part, "LFE5U-25F-6CABGA256")
+        budget = device.budget
+        self.assertEqual((budget.lut, budget.dsp, budget.ebr), (24288, 28, 56))
+        self.assertEqual((budget.bram36, budget.uram), (0, 0))
+
+    def test_an_int8_mac_takes_a_whole_multiplier(self):
+        """yosys synth_ecp5 never infers the 9x9 mode."""
+        self.assertEqual(Device.get("icepi25").macs_per_dsp(8, 8), 1.0)
+        self.assertEqual(Device.get("vu9p").macs_per_dsp(8, 8), 2.0)
+
+    def test_operands_split_the_way_yosys_splits_them(self):
+        """Measured with synth_ecp5 on a lone signed multiply: a 1 bit remainder goes to soft logic."""
+        measured = {(8, 8): 1, (18, 18): 1, (19, 18): 1, (20, 18): 2, (36, 18): 2,
+                    (37, 18): 2, (20, 2): 2, (35, 35): 4}
+        for (a, b), count in measured.items():
+            self.assertEqual(multipliers(a, b), count, (a, b))
+
+    def test_buffers_land_where_yosys_puts_them(self):
+        self.assertEqual(memory(50, 32).ebr, 1)
+        self.assertEqual(memory(266, 8).ebr, 1)
+        self.assertEqual(memory(66, 72).ebr, 2)
+        self.assertEqual(memory(128, 8).ebr, 0)
+        self.assertEqual(memory(25, 72).ebr, 0)
+        self.assertEqual(memory(2, 8).ff, 16)
+
+    def test_synth_runs_the_open_flow_for_the_part(self):
+        synth, place = YosysRunner(Device.get("icepi25")).commands()
+        self.assertIn("synth_ecp5 -top otf_top", synth[-1])
+        self.assertEqual(place[1:7], ["--25k", "--package", "CABGA256", "--speed", "6",
+                                      "--json"])
+        self.assertIn("--pack-only", place)
+        self.assertNotIn("--pack-only", YosysRunner(Device.get("icepi25"),
+                                                    implement=True).commands()[1])
+
+    def test_a_rescale_past_the_datapath_costs_no_multiplier(self):
+        result = compile_mlp(512)
+        unit = next(n for n in result.hardware_graph.topological_order()
+                    if n.module == "otf_mvau")
+        model = Device.get("icepi25").cost_model
+        before = model.estimate(unit).dsp
+        unit.requant.shift = unit.accumulator_dtype.bits + unit.mult_bits
+        after = model.estimate(unit).dsp
+        self.assertEqual(before - after, unit.pe * multipliers(
+            unit.accumulator_dtype.bits, unit.mult_bits))
+
+
+class Ecp5FoldingTest(unittest.TestCase):
+    def test_folding_stops_at_the_multiplier_budget_and_says_why(self):
+        result = compile_mlp(64)
+        total = sum((n.resources(Device.get("icepi25"))
+                     for n in result.hardware_graph.nodes), Resources.zero())
+        self.assertLessEqual(total.dsp, 28)
+        notes = [line for line in result.context.log if line.startswith("fold:")]
+        self.assertTrue(any("does not fit the dsp budget of icepi25" in line
+                            for line in notes), notes)
+
+    def test_an_unreachable_target_balances_instead_of_starving_a_stage(self):
+        """Folding fc1 to 64 cycles first would leave fc0 at 512; every stage at 256 is the best 28 multipliers allow."""
+        result = compile_mlp(64)
+        self.assertEqual(result.folding.bottleneck_cycles, 256)
+
+    def test_amd_devices_fold_as_before(self):
+        result = compile_mlp(64, device="vu9p", out="ecp5_mlp_vu9p")
+        foldings = {name: folding for name, _, folding, _, _ in result.folding.rows}
+        self.assertEqual(foldings["fc0"], {"pe": 2, "simd": 16})
+        self.assertEqual(result.folding.total.dsp, 30)
+        self.assertEqual(result.folding.total.ebr, 0)
+
+
+@unittest.skipIf(not YosysRunner(Device.get("icepi25")).available,
+                 "yosys and nextpnr-ecp5 not installed")
+@unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+class Ecp5SynthesisTest(unittest.TestCase):
+    def test_estimate_tracks_yosys_and_nextpnr(self):
+        device = Device.get("icepi25")
+        result = compile_mlp(512, hdl="hardcaml", out="ecp5_mlp_synth")
+        measured, _ = YosysRunner(device).run(result.build.root)
+        predicted = sum((n.resources(device) for n in result.hardware_graph.nodes),
+                        Resources.zero())
+        self.assertEqual(predicted.dsp, measured.dsp)
+        self.assertEqual(predicted.ebr, measured.ebr)
+        self.assertLess(abs(predicted.lut / measured.lut - 1), 0.25)
+        self.assertLess(abs(predicted.ff / measured.ff - 1), 0.25)
+
+
+if __name__ == "__main__":
+    unittest.main()

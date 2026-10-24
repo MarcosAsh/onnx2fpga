@@ -1,17 +1,14 @@
-"""The whole pipeline, end to end.
-
-Compiler.compile is the only entry point most users need: an ONNX model and a
-handful of calibration samples in, a build directory out.
-"""
-
 import copy
 
 import numpy as np
 
+from .errors import ModelError
+from .hardware_layer import custom_passes
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
 from .p4_quantize.plan import QuantizationPlan
 from .p4_quantize.lower import FuseRelu, LowerToHardware
+from .p5_schedule.fixed import UnrollForFixedLatency, check_fixed_ops
 from .p5_schedule.folding import FoldingAllocator
 from .p5_schedule.streams import (AlignBeatWidths, InsertDuplicates, InsertFifos,
                                   InsertWidthConverters, StreamsAreSingleConsumer)
@@ -37,6 +34,11 @@ class CompilationResult:
     def plan(self):
         return self.context.artifacts.get("plan")
 
+    @property
+    def latency(self):
+        """Cycles from input to output in fixed latency mode, None for a streaming design."""
+        return self.context.artifacts.get("latency")
+
     def summary(self):
         lines = list(self.context.log)
         if self.folding:
@@ -46,8 +48,12 @@ class CompilationResult:
 
 
 class Compiler:
+    """`folding`, `weight_dtypes` and `custom_objects` are the per-layer settings built by onnx2fpga.api."""
+
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
-                 mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None):
+                 mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
+                 hdl="sv", folding=None, weight_dtypes=None, custom_objects=None,
+                 mode="stream"):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
@@ -55,53 +61,66 @@ class Compiler:
         self.top_name = top_name
         self.verbose = verbose
         self.fifo_cap = fifo_cap
+        self.hdl = hdl
+        self.folding = dict(folding or {})
+        self.weight_dtypes = dict(weight_dtypes or {})
+        self.custom_handlers, self.custom_lowerings = custom_passes(custom_objects)
+        self.mode = mode
 
     def compile(self, model, samples=None, out_dir="build/out"):
         context = CompilerContext(self.device)
-        float_graph = OnnxImporter(model).run()
+        float_graph = OnnxImporter(model, self.custom_handlers).run()
         samples = [self._adapt(float_graph, feeds) for feeds in (samples or [])]
 
         prologue = PassManager([FuseRelu()], self.verbose)
         float_graph = prologue.run(float_graph, context)
+        if self.mode == "fixed":
+            check_fixed_ops(float_graph)
 
         plan = self._plan(float_graph, samples, context)
-        # Lowering rewrites in place, so take a copy first. Without it the two
-        # graphs on the result would be one object under two names, and any
-        # comparison between them would be vacuous.
+        # Lowering rewrites in place, so copy first or the two graphs on the result would be one object.
         working = float_graph
         float_graph = copy.deepcopy(working)
-        graph = PassManager([
-            LowerToHardware(plan),
-            InsertDuplicates(),
-            FoldingAllocator(self.target_cycles, self.utilisation_limit),
-            AlignBeatWidths(),
-            InsertWidthConverters(),
-            InsertFifos(cap=self.fifo_cap),
-            StreamsAreSingleConsumer(),
-        ], self.verbose).run(working, context)
+        if self.mode == "fixed":
+            passes = [LowerToHardware(plan, self.custom_lowerings),
+                      UnrollForFixedLatency(self.utilisation_limit)]
+        else:
+            passes = [
+                LowerToHardware(plan, self.custom_lowerings),
+                InsertDuplicates(),
+                FoldingAllocator(self.target_cycles, self.utilisation_limit, self.folding),
+                AlignBeatWidths(),
+                InsertWidthConverters(),
+                InsertFifos(cap=self.fifo_cap),
+                StreamsAreSingleConsumer(),
+            ]
+        graph = PassManager(passes, self.verbose).run(working, context)
 
-        writer = ProjectWriter(graph, context, self.top_name)
+        writer = ProjectWriter(graph, context, self.top_name, hdl=self.hdl)
         build = writer.write(out_dir)
         self._write_golden(graph, plan, self._stimulus(graph, samples, plan), build)
         return CompilationResult(float_graph, graph, context, build)
 
     def _plan(self, graph, samples, context):
-        """A model that was quantized before it got here already states every
-        scale, so calibrating it would be guessing at an answer it gave."""
+        """A pre-quantized model already states every scale, so calibrating it would be guessing."""
         if graph.annotations:
             context.note("plan: read %d grids from the model's quantize nodes"
                          % len(graph.annotations))
-            return QuantizationPlan.from_annotations(
+            plan = QuantizationPlan.from_annotations(
                 graph.annotations, mult_bits=self.mult_bits)
-        if not samples:
-            raise ValueError("a float model needs calibration samples")
-        context.note("plan: calibrated on %d samples" % len(samples))
-        return Calibrator(graph).plan(samples, mult_bits=self.mult_bits)
+        elif not samples:
+            raise ModelError("a float model needs calibration samples to fix its "
+                             "activation scales: pass a few representative inputs, or "
+                             "quantize the model to the ONNX QDQ form first")
+        else:
+            context.note("plan: calibrated on %d samples" % len(samples))
+            plan = Calibrator(graph).plan(samples, mult_bits=self.mult_bits)
+        plan.layer_weight_dtypes = dict(self.weight_dtypes)
+        return plan
 
     @staticmethod
     def _stimulus(graph, samples, plan):
-        """Real calibration data if there is any, otherwise something with the
-        right shape so the golden vectors still exercise the design."""
+        """Real calibration data if any, otherwise random data of the right shape."""
         name = graph.inputs[0]
         if samples:
             return np.asarray(list(samples[0].values())[0], dtype=np.float64)
@@ -111,15 +130,13 @@ class Compiler:
 
     @staticmethod
     def _adapt(graph, feeds):
-        """Samples arrive in the model's declared layout; the graph works in
-        channel-last."""
+        """Samples arrive in the model layout; the graph works in channel-last."""
         return {name: graph.layouts[name].to_internal(array)
                 if name in graph.layouts else array
                 for name, array in feeds.items()}
 
     def _write_golden(self, graph, plan, sample, build):
-        """Stimulus and expected output for the Verilator harness, taken from
-        the integer reference model rather than from the float one."""
+        """Stimulus and expected output for the Verilator harness, from the integer reference model."""
         in_name = graph.inputs[0]
         out_name = graph.outputs[0]
         in_tensor, out_tensor = graph.tensor(in_name), graph.tensor(out_name)

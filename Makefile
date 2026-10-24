@@ -1,20 +1,21 @@
-# Top level entry points. Every target works with Python, numpy and Verilator
-# alone; nothing else is required to build or test this repository.
+# Top level targets; only Python, numpy and Verilator are needed.
 
 PYTHON      ?= python3
 PYTHONPATH  := compiler:tests:examples
 export PYTHONPATH
 
-.PHONY: help models test test-unit test-sim test-cpp runtime lint clean demo \
-        vivado synth synth-impl synth-dry test-flaky test-flaky-all \
-        assets wheel
+.PHONY: help models test test-unit test-sim test-cpp test-hardcaml test-api runtime lint \
+        clean demo vivado synth synth-impl synth-dry test-flaky test-flaky-all \
+        assets wheel icepi
 
 help:
 	@echo "make models     build the example ONNX models"
 	@echo "make test       run everything (unit, C++ contract, Verilator)"
 	@echo "make test-unit  fast tests only, no simulation"
 	@echo "make test-sim   Verilator end to end, both example models"
+	@echo "make test-api   the Python API, end to end, streaming and fixed latency"
 	@echo "make test-cpp   C++ kernels against the Python model"
+	@echo "make test-hardcaml  the Hardcaml library's own tests (needs dune)"
 	@echo "make runtime    build the host tools in runtime/bin"
 	@echo "make wheel      stage assets and build an installable wheel"
 	@echo "make lint       lint every hand written RTL module"
@@ -23,11 +24,12 @@ help:
 	@echo "make vivado     what this machine can compile, simulate and measure"
 	@echo "make synth      measure real resources and fmax (needs Vivado)"
 	@echo "make synth-dry  print the Vivado commands without running them"
+	@echo "make icepi      the example MLP as an Icepi Zero bitstream (needs dune, yosys, nextpnr)"
 
 models:
 	$(PYTHON) examples/make_models.py
 
-test: test-unit test-cpp test-sim
+test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
@@ -38,6 +40,13 @@ test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_characterize.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_packaging.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_synth_script.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_hardcaml_backend.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_ecp5.py" -v
+
+# API tests skip what this machine cannot run and name what is missing.
+test-api: models
+	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v
 
 test-cpp: runtime
 	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v
@@ -52,17 +61,25 @@ test-sim:
 	$(PYTHON) -m unittest discover -s tests -p "test_residual.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_sliding_window.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_simulation.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_hardcaml_lockstep.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_icepi_board.py" -v
+
+# Hardcaml tests skip where dune is missing.
+test-hardcaml:
+	@if command -v dune >/dev/null 2>&1; then \
+	  cd hardware/hardcaml && dune build @runtest; \
+	else \
+	  echo "dune not on PATH, skipping the Hardcaml tests"; \
+	fi
 
 runtime:
 	$(MAKE) -C runtime
 
 # Stage the RTL and C++ runtime inside the package so a wheel carries them.
-# A checkout does not need this: the locator finds them one level up.
 assets:
 	$(PYTHON) tools/build_wheel.py --stage-only
 
-# build_wheel.py stages the assets itself, so a wheel is correct even from a
-# checkout that has never run `make assets`.
+# build_wheel.py stages the assets itself, so a wheel is correct without make assets.
 wheel:
 	$(PYTHON) tools/build_wheel.py
 
@@ -80,6 +97,11 @@ demo: models
 	$(PYTHON) -m onnx2fpga compile examples/models/mlp.onnx \
 	  --out build/demo --device vu9p --target-cycles 64
 	$(MAKE) -C build/demo run
+
+# Then 'make -C build/mlp_icepi_zero/icepi_zero prog' loads it; see hardware/boards/icepi_zero/README.md.
+icepi: models
+	$(PYTHON) -m onnx2fpga bitstream examples/models/mlp.onnx --board icepi_zero \
+	  --target-cycles 256
 
 MODEL  ?= examples/models/cnn.onnx
 DEVICE ?= z7020

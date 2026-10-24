@@ -1,5 +1,4 @@
-// Minimal JSON reader, enough for the manifest the compiler emits.
-// Present so the host runtime has no third party dependency either.
+// Minimal JSON reader for the manifest, so the host runtime has no third party dependency.
 #pragma once
 
 #include <cctype>

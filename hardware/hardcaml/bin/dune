@@ -1,0 +1,15 @@
+(executables
+ (modes byte exe)
+ (names generate)
+ (libraries
+  core.command
+  core_unix
+  core_unix.command_unix
+  core
+  hardcaml
+  onnx2fpga_hardcaml)
+ (lint
+  (pps ppx_js_style -check-doc-comments))
+ (preprocess
+  (pps ppx_jane))
+ (promote))

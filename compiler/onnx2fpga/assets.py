@@ -1,11 +1,4 @@
-"""Finds the hand written RTL and the C++ runtime, whichever layout we are in.
-
-The compiler emits a build directory that references both: it copies the module
-library in, and the generated Makefile points at the simulation harness. Where
-those live depends on how the tool was obtained. Running from a checkout they
-sit beside the package; installed from a wheel they are inside it. Setting
-OTF_ROOT overrides both, which is what a packager or a test needs.
-"""
+"""Finds the hand written RTL and C++ runtime in a checkout or an installed wheel; OTF_ROOT overrides."""
 
 import os
 import pathlib
@@ -27,10 +20,7 @@ class AssetLocator:
         self._root = None
 
     def candidates(self):
-        """An explicit override, from the constructor or the environment, is
-        the only candidate. Falling back from one that was set on purpose but
-        points somewhere wrong would hide the mistake behind a build that
-        quietly used different RTL."""
+        """An explicit override is the only candidate, so a wrong one fails instead of silently using other RTL."""
         if self._override is not None:
             yield self._override
             return

@@ -1,11 +1,4 @@
-# Stand-ins for the Vivado commands synth_unit.tcl calls.
-#
-# There is no Vivado on the development machine, so the script that drives it
-# would otherwise ship completely unexecuted. Sourcing it under plain tclsh
-# with these stubs still checks its control flow, its arithmetic, and the exact
-# shape of the summary it writes, which is the interface the Python side reads.
-# What it cannot check is whether Vivado agrees, so the first real run is still
-# the one that matters.
+# Stand-ins for the Vivado commands synth_unit.tcl calls, so it runs under plain tclsh.
 
 set ::calls {}
 
@@ -61,8 +54,7 @@ proc get_timing_paths {args} { record get_timing_paths $args; return "worst_path
 proc get_property {property object} { return $::stub_slack }
 proc get_ports {args} { return "clk" }
 
-# Invoked either directly or through tests/fake_vivado, which passes the real
-# tool's argument list.
+# Called directly or through tests/fake_vivado, which passes the real tool's arguments.
 set script [file join [file dirname [info script]] .. hardware synth synth_unit.tcl]
 set index [lsearch $argv -source]
 if {$index >= 0} { set script [lindex $argv [expr {$index + 1}]] }

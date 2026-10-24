@@ -1,8 +1,4 @@
-"""Builds the example ONNX models used by the tests and the README walkthrough.
-
-Written with the compiler's own ModelBuilder so the repository has no build
-time dependency on the reference onnx package.
-"""
+"""Builds the example ONNX models with the compiler's own ModelBuilder, so no onnx package is needed."""
 
 import pathlib
 import sys
@@ -49,9 +45,7 @@ class ModelFactory:
         return builder.add_output("y", (1, widths[-1])).build()
 
     def residual(self, width=16, classes=10):
-        """A skip connection, which is the shape that makes buffer sizing
-        matter: the join cannot take a beat from the short branch until the
-        long one catches up, and everything in between has to be held."""
+        """A skip connection: the join cannot take from the short branch until the long one catches up."""
         builder = ModelBuilder("residual").add_input("x", (1, width))
         for index, (fan_in, fan_out) in enumerate(
                 [(width, width), (width, width), (width, width)]):
@@ -141,8 +135,7 @@ class Grid:
 
 
 class QdqModelFactory(ModelFactory):
-    """Builds models already quantized, in the QuantizeLinear and
-    DequantizeLinear form a static quantizer emits."""
+    """Builds models already quantized, in the QuantizeLinear and DequantizeLinear form."""
 
     def __init__(self, seed=0, activation_dtype=TensorProto.UINT8):
         ModelFactory.__init__(self, seed)
@@ -155,8 +148,7 @@ class QdqModelFactory(ModelFactory):
         return stem + "_scale", stem + "_zp"
 
     def qdq(self, builder, tensor, grid):
-        """Quantize then dequantize, which is how a QDQ model states that a
-        tensor lives on a particular integer grid."""
+        """Quantize then dequantize, which states that a tensor lives on an integer grid."""
         stem = "%s_q%d" % (tensor, self._counter)
         self._counter += 1
         scale, zero = self._grid_initializers(builder, stem, grid)
@@ -198,9 +190,7 @@ class QdqModelFactory(ModelFactory):
         return builder.add_output("y", (1, widths[-1])).build()
 
     def reference(self, values):
-        """What the QDQ model means, evaluated the way a runtime evaluates it:
-        float arithmetic between each quantize and dequantize pair. This is the
-        specification the compiler's integer pipeline has to match."""
+        """The QDQ model evaluated in float between each quantize and dequantize pair, as a runtime does."""
         layers, grids = self._reference
         cursor = grids[0].fake(np.asarray(values, dtype=np.float64))
         for index, (weights, bias) in enumerate(layers):
@@ -212,8 +202,7 @@ class QdqModelFactory(ModelFactory):
         return cursor
 
     def _mlp_ranges(self, layers, probe):
-        """Fake quantize forward, so every recorded grid is one the model
-        actually produces."""
+        """Fake quantize forward, so every recorded grid is one the model actually produces."""
         grids = [Grid.for_activation(probe, self.activation_dtype)]
         cursor = grids[0].fake(probe)
         for index, (weights, bias) in enumerate(layers):

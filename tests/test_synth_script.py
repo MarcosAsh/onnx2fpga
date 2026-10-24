@@ -1,11 +1,4 @@
-"""The Vivado script, executed under stubs.
-
-No Vivado exists on the development machine, so hardware/synth/synth_unit.tcl
-would otherwise ship having never run. Sourcing it under tclsh with stand-ins
-for the Vivado commands still checks its control flow, its fmax arithmetic and
-the exact shape of the summary it writes, which is the interface the Python
-driver reads. Whether Vivado itself agrees is what the first real run decides.
-"""
+"""The Vivado script executed under tclsh stubs, checking control flow, fmax arithmetic and the summary shape."""
 
 import json
 import os
