@@ -58,7 +58,7 @@ class K26(unittest.TestCase):
 class Flow(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # The example MLP needs 1706 DSPs unrolled and the K26 has 1248, so a smaller one.
+        # The example MLP fits the K26 only with fc1 on multipliers, so a smaller one.
         cls.acc = otf.load(Fixtures.factory().mlp((16, 32, 8)), name="mlp")
         x = np.random.default_rng(5).normal(0, 1, (8, 16)).astype(np.float32)
         cls.acc.compile(device="k26", mode="fixed", calibration=x,

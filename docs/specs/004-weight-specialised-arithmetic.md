@@ -2,10 +2,11 @@
 
 Status: partial. Constant arithmetic is built for the dense layers of fixed
 latency mode, is the default there, and is proved equal to the multiplier
-version on the example MLP's first and last layers. Two things are missing. Nobody has timed it at the 322.265625 MHz
-trading clock, which needs Vivado and the `k26` device model from
-[006](006-kv260.md). The `ConfigError` for reloadable weights waits for
-[003](003-reloadable-weights.md) to exist.
+version on the example MLP's first and last layers. Two things are missing.
+Nobody has timed it at the 322.265625 MHz trading clock: the `k26` device model
+from [006](006-kv260.md) now estimates it, but the timing needs Vivado. The
+`ConfigError` for reloadable weights waits for [003](003-reloadable-weights.md)
+to exist.
 
 ## Problem
 

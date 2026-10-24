@@ -193,21 +193,23 @@ frame, and the whole path on a short packet.
 ## Resources
 
 yosys 0.52, `synth_xilinx -family xcup`, out of context on the replay's
-`tick_to_trade.v` with the 4-8-1 MLP, in about 35 seconds.
+`tick_to_trade.v` with the 4-8-1 MLP, in about 15 seconds. Both of the model's
+layers take constant arithmetic ([004](004-weight-specialised-arithmetic.md)),
+the default, so its only DSPs are the 9 requantisers.
 
 | Unit | LUT | MUXF7/8/9 | CARRY4 | FF | DSP | RAMB36 |
 |---|---|---|---|---|---|---|
-| `moldudp64` | 2607 | 867 | 307 | 812 | | |
-| `itch_parser` | 129 | 44 | | 263 | | |
+| `moldudp64` | 2219 | 251 | 307 | 812 | | |
+| `itch_parser` | 125 | 44 | | 263 | | |
 | `order_book` without the table | 5023 | 2184 | 137 | 3005 | | |
 | order table | 246 | | | 244 | | 14 |
-| `features` | 762 | 283 | 34 | 215 and 133 SRL16 | | |
-| model | 947 | 289 | 131 | 726 | 40 | |
-| `decision` | 83 | 7 | 24 | 240 | | |
+| `features` | 747 | 219 | 34 | 215 and 133 SRL16 | | |
+| model | 1258 | 299 | 253 | 596 | 9 | |
+| `decision` | 85 | 7 | 24 | 240 | | |
 | cycle counter, context held past the model | | | 8 | 32 and 133 SRL16 | | |
-| total | 9797 | 3674 | 641 | 5537 and 266 SRL16 | 40 | 14 |
+| total | 9703 | 3004 | 763 | 5407 and 266 SRL16 | 9 | 14 |
 
-On the K26 that is 8 percent of the LUTs, 2 percent of the flip flops, 3
+On the K26 that is 8 percent of the LUTs, 2 percent of the flip flops, under 1
 percent of the DSPs and 10 percent of the block RAM. As in 001, yosys builds
 comparators and adders for UltraScale+ out of LUTs and wide muxes, so the LUT
 count waits for Vivado.

@@ -71,8 +71,10 @@ prints the cycles the hardware counted between start and answer. `deploy` and
 On the KR260 the project also carries `sfp.xdc`, disabled, with the SFP+ pins
 and the 156.25 MHz reference clock reserved for the 10G MAC.
 
-The example MLP is too big for the K26 unrolled: it needs 1706 DSPs on the
-estimate and the part has 1248.
+The example MLP fits the K26 unrolled only with one layer on multipliers. On
+multipliers alone it needs 1706 DSPs on the estimate, and with constant
+arithmetic everywhere 102618 LUTs, both past the 80 percent limit. With
+`acc.layers["fc1"].arithmetic("multiplier")` it needs 86932 LUTs and 602 DSPs.
 
 ## Adding a board
 
