@@ -1,4 +1,4 @@
-# Stand-ins for the Vivado commands synth_unit.tcl calls, so it runs under plain tclsh.
+# Stand-ins for the Vivado commands synth_unit.tcl and the Kria build.tcl call, so they run under plain tclsh.
 
 set ::calls {}
 
@@ -51,8 +51,49 @@ proc get_cells {args} {
 }
 
 proc get_timing_paths {args} { record get_timing_paths $args; return "worst_path" }
-proc get_property {property object} { return $::stub_slack }
 proc get_ports {args} { return "clk" }
+
+# The Kria project flow: a run directory with a bitstream in it, and a property for each question build.tcl asks.
+set ::stub_run [file join [pwd] vivado stub_run]
+
+proc get_property {property object} {
+    switch $property {
+        PROGRESS { return "100%" }
+        DIRECTORY { return $::stub_run }
+        default { return $::stub_slack }
+    }
+}
+
+# Every file must exist, and constraints are sourced so the stubs check their syntax too.
+proc add_files {args} {
+    record add_files $args
+    foreach item $args {
+        if {[string match -* $item] || $item eq "constrs_1"} { continue }
+        foreach path $item {
+            if {![file exists $path]} { error "add_files: no file $path" }
+            if {[file extension $path] eq ".xdc"} { source $path }
+        }
+    }
+}
+
+proc launch_runs {args} {
+    record launch_runs $args
+    file mkdir $::stub_run
+    foreach name {kria_top.bit kria_top.bin} {
+        set handle [open [file join $::stub_run $name] w]
+        close $handle
+    }
+}
+
+foreach command {
+    create_project set_property get_files create_bd_design create_bd_cell
+    create_bd_intf_port create_bd_port get_bd_intf_pins get_bd_pins get_bd_ports
+    connect_bd_intf_net connect_bd_net assign_bd_address get_bd_addr_spaces
+    get_bd_addr_segs validate_bd_design save_bd_design make_wrapper current_fileset
+    get_runs wait_on_run open_run write_hw_platform create_clock get_pins current_design
+} {
+    proc $command {args} "record $command \$args; return $command"
+}
 
 # Called directly or through tests/fake_vivado, which passes the real tool's arguments.
 set script [file join [file dirname [info script]] .. hardware synth synth_unit.tcl]
@@ -60,6 +101,7 @@ set index [lsearch $argv -source]
 if {$index >= 0} { set script [lindex $argv [expr {$index + 1}]] }
 source $script
 
-set handle [open [file join $::env(OTF_OUT) calls.txt] w]
+set out [expr {[info exists ::env(OTF_OUT)] ? $::env(OTF_OUT) : "."}]
+set handle [open [file join $out calls.txt] w]
 foreach call $::calls { puts $handle $call }
 close $handle

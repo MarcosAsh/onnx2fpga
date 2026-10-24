@@ -86,6 +86,15 @@ Device.register(Device(
     provenance="vendor", notes="ZCU104 class board"))
 
 Device.register(Device(
+    name="k26", part="xck26-sfvc784-2LV-c",
+    budget=Resources(lut=117120, ff=234240, dsp=1248, bram36=144, uram=64),
+    fmax_mhz=322.265625, dsp_generation="DSP48E2",
+    provenance="vendor",
+    notes="Kria K26 SOM on the KV260 and KR260. Budgets from AMD DS987 v1.2 Table 5; "
+          "-2LV speed grade (VCCINT 0.72 V). 322.265625 MHz is the 10GBASE-R "
+          "clock we target, not a measured fmax."))
+
+Device.register(Device(
     name="z7020", part="xc7z020-clg400-1",
     budget=Resources(lut=53200, ff=106400, dsp=220, bram36=140, uram=0),
     fmax_mhz=100.0, dsp_generation="DSP48E1",

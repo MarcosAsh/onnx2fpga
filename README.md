@@ -276,8 +276,8 @@ onnx2fpga synth model.onnx --device z7020 synthesise and compare
 onnx2fpga synth model.onnx --impl         place and route too
 ```
 
-The free Vivado ML Standard edition covers `z7020`, which is enough to
-calibrate the estimator. `vu9p` and `vu47p` are Virtex UltraScale+ and need the
+The free Vivado ML Standard edition covers `z7020` and `k26`, the Kria SOM,
+which is enough to calibrate the estimator. `vu9p` and `vu47p` are Virtex UltraScale+ and need the
 paid edition or an AWS F1 or F2 instance.
 
 `icepi25`, the Lattice ECP5 LFE5U-25 on the Icepi Zero, is built with the open
@@ -310,6 +310,12 @@ The example MLP at 256 cycles places and routes at 20 MHz with room to spare
 (fmax 25.1 MHz, 4967 of 24288 LUTs, 18 of 28 multipliers, 2 block RAMs), and
 the generated board top reproduces the golden vectors bit for bit in Verilator.
 See `hardware/boards/icepi_zero`.
+
+`acc.build(board="kv260")` and `board="kr260"` put a fixed latency design for the
+`k26` device behind AXI4-Lite registers on a Kria K26 SOM, at 322.265625 MHz,
+and write a Vivado batch project (`hardware/boards/kria`). Vivado runs it when
+it is on PATH. The project is checked against a Vivado stub but has not yet been
+through real Vivado or run on a board. Only the KR260 has an SFP+ cage.
 
 ## Requirements
 

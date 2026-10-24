@@ -47,6 +47,7 @@ test-unit:
 test-api: models
 	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_kria_board.py" -v
 
 test-cpp: runtime
 	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v

@@ -20,7 +20,7 @@ Generated from the docstrings in `compiler/onnx2fpga`. The
 .. autofunction:: from_keras
 
 .. autoclass:: Accelerator
-   :members: compile, summary, evaluate, predict, simulate, build, deploy, disconnect, layers, device, hdl, out_dir, deployed, input_name, input_shape
+   :members: compile, summary, evaluate, predict, simulate, build, deploy, load_weights, disconnect, layers, device, hdl, out_dir, deployed, input_name, input_shape
 
 .. autoclass:: onnx2fpga.api.Layer
    :members: fold, quantize, folding, cycles, units

@@ -5,7 +5,7 @@ BIN      := bin
 
 .PHONY: all clean
 
-all: $(BIN)/check_matvec $(BIN)/otf_run
+all: $(BIN)/check_matvec $(BIN)/otf_run $(BIN)/kria_run
 
 $(BIN):
 	mkdir -p $(BIN)
@@ -14,6 +14,9 @@ $(BIN)/check_matvec: kernels/check_matvec.cpp include/otf/kernels.hpp | $(BIN)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 $(BIN)/otf_run: host/otf_run.cpp include/otf/sim_accelerator.hpp | $(BIN)
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+$(BIN)/kria_run: host/kria_run.cpp include/otf/hex_io.hpp include/otf/json.hpp | $(BIN)
 	$(CXX) $(CXXFLAGS) $< -o $@
 
 clean:
