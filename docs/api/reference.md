@@ -56,7 +56,9 @@ one row per unit with folding, cycles, LUT, DSP and block RAM, the bottleneck
 marked, totals against the budget, throughput, quantization and build path.
 Shapes are channel last. A fixed latency design prints one row per layer with
 its multipliers and latency in cycles instead, then the total latency in cycles
-and in nanoseconds at the device's clock.
+and in nanoseconds at the device's clock. Once a Kria build has left a Vivado
+`timing_summary.rpt` in the build directory, a `Clock:` line gives the measured
+fmax beside the estimate.
 
 ### `evaluate(x, y=None)`
 
@@ -84,15 +86,27 @@ when `x` is left out, and fails unless every answer arrives exactly
 ### `build(board="icepi_zero", verbose=False, **options)`
 
 Builds a bitstream and returns its path. Compiles for the board's device first
-if nothing is compiled. Options are board specific, see
-[Boards](../guides/boards.md). A fixed latency design raises `ConfigError`,
-since the board top streams frames over a serial port.
+if nothing is compiled. `board` is `"icepi_zero"`, `"kv260"` or `"kr260"`.
+Options are board specific, see [Boards](../guides/boards.md).
 
-### `deploy(port=None, program=True, timeout=2.0)`
+The Icepi Zero takes a streaming design, since its top streams frames over a
+serial port, and a fixed latency design raises `ConfigError`. The Kria boards
+take only fixed latency designs compiled for `k26`, see
+[006](../specs/006-kv260.md). They write a Vivado project and run it if
+`vivado` is on PATH; otherwise they raise `ToolchainError` after writing it.
+
+### `deploy(port=None, program=True, timeout=2.0, host=None)`
 
 Loads the bitstream into SRAM and opens the serial port. `program=False` only
 opens the port, for a board already loaded. `port` defaults to the board's USB
-serial device.
+serial device. `host=`, and any deploy after a Kria build, raises
+`NotImplementedError` until [003](../specs/003-reloadable-weights.md).
+
+### `load_weights(model)`
+
+Status: planned. Raises `NotImplementedError` until
+[003](../specs/003-reloadable-weights.md), which writes new weights into a
+running board without a rebuild.
 
 ### `disconnect()`
 

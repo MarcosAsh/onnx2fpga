@@ -13,14 +13,14 @@ import warnings
 
 import numpy as np
 
-from .board import IcepiZero
+from .board import BOARDS, Kria
 from .compile import Compiler
 from .doctor import TOOLS
 from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
                      NotDeployedError, SimulationError, ToolchainError,
                      UnknownLayerError)
 from .hardware_layer import CustomOp, custom_passes
-from .measure import calibration_samples
+from .measure import TimingReport, calibration_samples
 from .p1_ingest import OnnxModel
 from .p1_ingest.protobuf_codec import WireError
 from .p2_graph.datatype import DataType, IntType
@@ -442,8 +442,9 @@ class Accelerator:
                         _percent(getattr(total, ram), getattr(budget, ram))),
                        widths, right),
                   " Throughput: %d cycles a frame, %.1f frames/s at %.0f MHz"
-                  % (bottleneck, device.fmax_mhz * 1e6 / bottleneck, device.fmax_mhz),
-                  " Quantization: %s" % self._describe_quantization(),
+                  % (bottleneck, device.fmax_mhz * 1e6 / bottleneck, device.fmax_mhz)]
+        lines += self._measured_clock()
+        lines += [" Quantization: %s" % self._describe_quantization(),
                   " Build: %s" % self.out_dir, "_" * rule]
         return lines
 
@@ -473,10 +474,23 @@ class Accelerator:
                   _row(("Used", "", "", "", _percent(total.lut, budget.lut),
                         _percent(total.dsp, budget.dsp)), widths, right),
                   " Latency: %d cycles, %.1f ns at %.0f MHz, with a new input every cycle"
-                  % (latency, latency * 1e3 / device.fmax_mhz, device.fmax_mhz),
-                  " Quantization: %s" % self._describe_quantization(),
+                  % (latency, latency * 1e3 / device.fmax_mhz, device.fmax_mhz)]
+        lines += self._measured_clock()
+        lines += [" Quantization: %s" % self._describe_quantization(),
                   " Build: %s" % self.out_dir, "_" * rule]
         return lines
+
+    def _measured_clock(self):
+        """Vivado's fmax beside the estimate, once a board build has left a timing report."""
+        for path in sorted(self.out_dir.glob("*/timing_summary.rpt")):
+            try:
+                report = TimingReport.load(path)
+            except ValueError:
+                continue
+            return [" Clock: %.1f MHz estimated, %.1f MHz measured by Vivado (WNS %.3f ns, %s)"
+                    % (self.device.fmax_mhz, report.fmax_mhz, report.wns_ns,
+                       path.relative_to(self.out_dir))]
+        return []
 
     def _describe_target(self):
         kind, value = self.settings["target"]
@@ -617,39 +631,56 @@ class Accelerator:
         return ("golden/x_input.hex", "golden/x_expected.hex")
 
     def build(self, board="icepi_zero", verbose=False, **options):
-        """A bitstream for `board` using the open source flow; compiles first if nothing is compiled yet."""
-        if isinstance(board, str) and board != IcepiZero.NAME:
-            raise ConfigError("unknown board %r, expected icepi_zero" % board)
-        board_class = IcepiZero if isinstance(board, str) else board
+        """A bitstream for `board`, an Icepi Zero with the open flow or a Kria with Vivado; compiles first if nothing is compiled yet."""
+        if isinstance(board, str) and board not in BOARDS:
+            raise ConfigError("unknown board %r, expected one of %s"
+                              % (board, ", ".join(BOARDS)))
+        board_class = BOARDS[board] if isinstance(board, str) else type(board)
+        kria = issubclass(board_class, Kria)
         if self.result is None:
-            self.compile(device=board_class.DEVICE, hdl="hardcaml")
+            if kria:
+                self.compile(device=board_class.DEVICE, mode="fixed")
+            else:
+                self.compile(device=board_class.DEVICE, hdl="hardcaml")
         self._require_compiled("build")
-        if self.mode == "fixed":
-            raise ConfigError("build(board=...) needs mode='stream'")
         name = board_class.NAME
+        wanted = "fixed" if kria else "stream"
+        if self.mode != wanted:
+            raise ConfigError("build(board=%r) needs mode=%r" % (name, wanted))
         if self.device.name != board_class.DEVICE:
             raise ConfigError("%s carries %s, but this design was compiled for %s"
                               % (name, board_class.DEVICE, self.device.name))
         if self.hdl != "hardcaml":
             raise ConfigError("build(board=%r) needs the Hardcaml backend" % name)
-        missing = board_class.missing_tools()
-        if missing:
-            raise ToolchainError("build(board=%r) needs %s, which is not on PATH"
-                                 % (name, " and ".join(missing)),
-                                 tool=missing[0], remedy=TOOLS[missing[0]][1])
         if isinstance(board, str):
             board = board_class(self.out_dir, **options)
         elif pathlib.Path(board.out).resolve() != self.out_dir.resolve():
             raise ConfigError("the board writes to %s but the design is in %s"
                               % (board.out, self.out_dir))
-        board.run("bit")
+        missing = board_class.missing_tools()
+        if missing and kria:
+            board.write()
+            raise ToolchainError("build(board=%r) wrote the Vivado project to %s but needs "
+                                 "vivado on PATH to run it" % (name, board.build),
+                                 tool="vivado")
+        if missing:
+            raise ToolchainError("build(board=%r) needs %s, which is not on PATH"
+                                 % (name, " and ".join(missing)),
+                                 tool=missing[0], remedy=TOOLS[missing[0]][1])
+        if kria:
+            board.run()
+        else:
+            board.run("bit")
         if verbose:
-            print(board.render_report())
+            print("\n".join(self._measured_clock()) if kria else board.render_report())
         self.board = board
         return board.bitstream
 
-    def deploy(self, port=None, program=True, timeout=2.0):
+    def deploy(self, port=None, program=True, timeout=2.0, host=None):
         """Loads the bitstream into the board SRAM with openFPGALoader and opens its serial port."""
+        if host is not None or isinstance(self.board, Kria):
+            raise NotImplementedError("deploying to a Kria board over the network arrives "
+                                      "with spec 003, reloadable weights")
         if self.board is None:
             raise NotCompiledError("deploy needs acc.build(board='icepi_zero') first")
         self._require_compiled("deploy")
@@ -673,6 +704,10 @@ class Accelerator:
                                                         link.rx_depth, link.tx_depth))
         self.session = Session(link, port, timeout).open()
         return self
+
+    def load_weights(self, model):
+        """Swaps new weights into a running board without a rebuild; planned in spec 003."""
+        raise NotImplementedError("load_weights arrives with spec 003, reloadable weights")
 
     def disconnect(self):
         """Closes the serial port; predict goes back to the reference model."""

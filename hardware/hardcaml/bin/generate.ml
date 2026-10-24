@@ -68,9 +68,23 @@ let icepi_command =
         print_string (Icepi_top.verilog ~design ~mhz ~baud ~rx_depth ~tx_depth)]
 ;;
 
+let kria_command =
+  Command.basic
+    ~summary:
+      "Verilog for a fixed latency design on a Kria board, behind AXI4-Lite registers"
+    [%map_open.Command
+      let path = anon ("DESIGN_JSON" %: string) in
+      fun () ->
+        print_string (Kria_shell.verilog (Design.of_string (In_channel.read_all path)))]
+;;
+
 let () =
   Command_unix.run
     (Command.group
        ~summary:""
-       [ "design", design_command; "units", units_command; "icepi", icepi_command ])
+       [ "design", design_command
+       ; "units", units_command
+       ; "icepi", icepi_command
+       ; "kria", kria_command
+       ])
 ;;

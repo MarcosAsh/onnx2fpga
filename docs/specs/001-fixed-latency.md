@@ -96,9 +96,10 @@ already caught a real bug, and is not extended with fixed latency twins.
 `ConfigError`. Fixed mode needs the Hardcaml toolchain, and raises
 `ToolchainError` without it.
 
-The board flow in `build(board=...)` wraps a design in a UART that streams
-frames, so it refuses a fixed design with `ConfigError` until the KV260 work
-gives fixed designs a top of their own.
+The Icepi Zero flow in `build(board="icepi_zero")` wraps a design in a UART that
+streams frames, so it refuses a fixed design with `ConfigError`. Fixed designs
+get a top of their own on the Kria boards, behind AXI4-Lite registers; see
+[006](006-kv260.md).
 
 ## Errors
 

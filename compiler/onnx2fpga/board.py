@@ -1,4 +1,4 @@
-"""From a compiled design to a bitstream on a real board with the open ECP5 flow."""
+"""From a compiled design to a bitstream on a real board: the open ECP5 flow, or Vivado for Kria."""
 
 import json
 import pathlib
@@ -148,4 +148,130 @@ class IcepiZero:
     def host_command(self):
         port = " --port PORT_OF_YOUR_ADAPTER" if self.uart == "header" else ""
         return "python3 %s %s%s" % (self.directory / "host.py", self.out, port)
+
+
+class Kria:
+    """A K26 SOM carrier built with Vivado in batch mode: the PS, an AXI4-Lite register shell and a fixed latency design."""
+
+    NAME = None
+    DEVICE = "k26"
+    PART = "xck26-sfvc784-2LV-c"
+    # M_AXI_HPM0_FPD, where the PS sees the shell's 64 KiB window.
+    BASE = 0xA0000000
+    SPAN = 0x10000
+    SFP = False
+    FILES = ("build.tcl", "kria.xdc", "kria_top.v")
+    FLOW_TIMEOUT = 4 * 3600
+
+    def __init__(self, out, jobs=8, generator=None):
+        self.out = pathlib.Path(out)
+        self.jobs = jobs
+        self.generator = generator or HardcamlGenerator()
+
+    @property
+    def directory(self):
+        """hardware/boards/kria, next to the Hardcaml project."""
+        project = self.generator.project
+        if project is None:
+            raise BoardError("no Hardcaml project, so no board files")
+        return project.parent / "boards" / "kria"
+
+    @property
+    def build(self):
+        return self.out / self.NAME
+
+    @property
+    def bitstream(self):
+        return self.build / ("%s.bit" % self.NAME)
+
+    @property
+    def timing(self):
+        return self.build / "timing_summary.rpt"
+
+    @staticmethod
+    def tool(name):
+        return shutil.which(name)
+
+    @classmethod
+    def missing_tools(cls):
+        return [] if shutil.which("vivado") else ["vivado"]
+
+    def command(self):
+        return ["vivado", "-mode", "batch", "-nojournal", "-log", "vivado.log",
+                "-source", "build.tcl"]
+
+    def write(self):
+        """The Vivado project sources in the build directory, and the register map in manifest.json."""
+        self.build.mkdir(parents=True, exist_ok=True)
+        design = (self.out / "design.json").resolve()
+        (self.build / "kria_shell.v").write_text(self.generator.verilog(design, "kria"))
+        for name in self.FILES + (("sfp.xdc",) if self.SFP else ()):
+            shutil.copyfile(self.directory / name, self.build / name)
+        (self.build / "settings.tcl").write_text(
+            "set board %s\nset part %s\nset base 0x%08X\nset jobs %d\nset sfp %d\n"
+            % (self.NAME, self.PART, self.BASE, self.jobs, self.SFP))
+        described = json.loads(design.read_text())
+        widths = {stream["name"]: stream["width"] for stream in described["streams"]}
+        path = self.out / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["registers"] = registers(widths[described["input"]],
+                                          widths[described["output"]],
+                                          described["latency"], self.BASE, self.SPAN)
+        path.write_text(json.dumps(manifest, indent=2) + "\n")
+        return self.build / "build.tcl"
+
+    def run(self):
+        self.write()
+        completed = subprocess.run(self.command(), cwd=self.build, capture_output=True,
+                                   text=True, timeout=self.FLOW_TIMEOUT)
+        if completed.returncode != 0:
+            said = completed.stdout.strip().splitlines()[-8:]
+            raise BoardError("vivado failed in %s:\n%s" % (self.build, "\n".join(said)))
+        return completed.stdout
+
+
+class KV260(Kria):
+    """The KV260 vision kit; it has no SFP+ cage, so no 10G network."""
+
+    NAME = "kv260"
+
+
+class KR260(Kria):
+    """The KR260 robotics kit; its SFP+ cage is reserved in sfp.xdc for spec 007 stage B."""
+
+    NAME = "kr260"
+    SFP = True
+
+
+BOARDS = {board.NAME: board for board in (IcepiZero, KV260, KR260)}
+
+
+def registers(feature_bits, prediction_bits, latency, base, span):
+    """The AXI4-Lite map of kria_regs.ml, which must agree with its Offset module."""
+    def words(bits):
+        return (bits + 31) // 32
+
+    return {
+        "bus": "axi4-lite",
+        "base": base,
+        "span": span,
+        "word_bits": 32,
+        "map": {
+            "id": {"offset": 0x0000, "access": "r", "value": 0x4F544631},
+            "latency": {"offset": 0x0004, "access": "r", "value": latency},
+            "feature_bits": {"offset": 0x0008, "access": "r", "value": feature_bits},
+            "prediction_bits": {"offset": 0x000C, "access": "r", "value": prediction_bits},
+            "control": {"offset": 0x0010, "access": "w",
+                        "meaning": "write 1 to start an inference"},
+            "status": {"offset": 0x0014, "access": "r",
+                       "meaning": "bit 0 is set once the prediction has arrived"},
+            "cycles": {"offset": 0x0018, "access": "r",
+                       "meaning": "cycles from the last start to its prediction"},
+            "features": {"offset": 0x1000, "access": "rw", "words": words(feature_bits)},
+            "prediction": {"offset": 0x2000, "access": "r",
+                           "words": words(prediction_bits)},
+            "weights": {"offset": 0x8000, "access": "reserved", "words": 0x2000,
+                        "meaning": "weight reload, spec 003"},
+        },
+    }
 

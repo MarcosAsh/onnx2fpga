@@ -27,7 +27,7 @@ It is smaller and faster, and changing a weight means a rebuild.
 ## API
 
 ```python
-acc.compile(device="kv260", mode="fixed", weights="reloadable")
+acc.compile(device="k26", mode="fixed", weights="reloadable")
 acc.build(board="kv260")
 acc.deploy()
 acc.load_weights("model_2026-10-25.onnx")   # writes the idle bank, then swaps

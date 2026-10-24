@@ -17,7 +17,7 @@ summary, evaluate, simulate, build, deploy, predict.
 [Folding and budgets](guides/folding.md) explains how fast a design runs and
 what stops it going faster. [Quantization](guides/quantization.md) covers where
 the integer scales come from. [Boards](guides/boards.md) is the Icepi Zero
-today and the KV260 next. [Custom hardware layers](guides/custom-layers.md) is
+today and the Kria KV260 and KR260 next. [Custom hardware layers](guides/custom-layers.md) is
 for when a model uses an operator we do not have, and
 [Backends](guides/backends.md) is about Hardcaml versus SystemVerilog.
 
@@ -39,7 +39,7 @@ unit whose buffer sizing is easy to get wrong.
 | [003](specs/003-reloadable-weights.md) | Reloadable weights |
 | [004](specs/004-weight-specialised-arithmetic.md) | Weight specialised arithmetic |
 | [005](specs/005-tree-ensembles.md) | Tree ensembles |
-| [006](specs/006-kv260.md) | KV260 board |
+| [006](specs/006-kv260.md) | Kria boards: KV260 and KR260 |
 | [007](specs/007-tick-to-trade.md) | Tick to trade demo |
 | [008](specs/008-weights-in-block-ram.md) | Weights in block RAM |
 

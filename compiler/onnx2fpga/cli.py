@@ -110,7 +110,8 @@ def run_synth(args):
         acc, out = build(args, args.model.stem + "_synth")
         return open_flow(acc.result, out, device, args.impl, args.dry_run)
     acc, out = build(args, args.model.stem + "_synth")
-    runner = VivadoRunner(args.part or device.part, args.period, args.impl,
+    period = args.period or round(1000.0 / device.fmax_mhz, 3)
+    runner = VivadoRunner(args.part or device.part, period, args.impl,
                           executable=args.vivado)
     driver = Characterizer(runner, device)
     subjects = driver.subjects(acc.result.hardware_graph)
@@ -239,8 +240,8 @@ def parser():
                   run_synth)
     add_model_options(sub)
     sub.add_argument("--part", default=None, help="override the device's part")
-    sub.add_argument("--period", type=float, default=5.0,
-                     help="target clock period in ns")
+    sub.add_argument("--period", type=float, default=None,
+                     help="target clock period in ns, the device's clock by default")
     sub.add_argument("--impl", action="store_true",
                      help="place and route as well, which is slower and true")
     sub.add_argument("--dry-run", action="store_true",

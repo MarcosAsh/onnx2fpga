@@ -126,8 +126,9 @@ class HardcamlGenerator:
                 self._built[key] = (-1, "dune build timed out after %ds" % self.BUILD_TIMEOUT)
         return self._built[key]
 
-    def verilog(self, design_path):
-        completed = subprocess.run([str(self.executable), "design", str(design_path)],
+    def verilog(self, design_path, top="design"):
+        """Verilog from the generator's `top` command, design or kria."""
+        completed = subprocess.run([str(self.executable), top, str(design_path)],
                                    capture_output=True, text=True)
         if completed.returncode != 0:
             raise HardcamlError("the Hardcaml generator rejected %s:\n%s"

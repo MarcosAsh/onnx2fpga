@@ -27,7 +27,7 @@ anyone runs place and route.
 ## API
 
 ```python
-acc.compile(device="kv260", mode="fixed", clock_mhz=350)
+acc.compile(device="k26", mode="fixed", clock_mhz=350)
 acc.summary()        # clock, register stages per layer, latency in ns
 ```
 

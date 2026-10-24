@@ -168,6 +168,37 @@ class Characterizer:
         return comparisons
 
 
+class TimingReport:
+    """One clock's period and worst setup slack from a Vivado report_timing_summary file."""
+
+    def __init__(self, clock, period_ns, wns_ns):
+        self.clock = clock
+        self.period_ns = period_ns
+        self.wns_ns = wns_ns
+
+    @property
+    def fmax_mhz(self):
+        return 1000.0 / (self.period_ns - self.wns_ns)
+
+    @property
+    def met(self):
+        return self.wns_ns >= 0
+
+    @classmethod
+    def parse(cls, text, clock="otf_clk"):
+        name = re.escape(clock)
+        period = re.search(r"^\s*%s\s+\{[^}]*\}\s+([\d.]+)" % name, text, re.MULTILINE)
+        intra = text.split("Intra Clock Table", 1)[-1]
+        slack = re.search(r"^%s\s+(-?[\d.]+)" % name, intra, re.MULTILINE)
+        if "Intra Clock Table" not in text or not period or not slack:
+            raise ValueError("no timing for clock %s in the report" % clock)
+        return cls(clock, float(period.group(1)), float(slack.group(1)))
+
+    @classmethod
+    def load(cls, path, clock="otf_clk"):
+        return cls.parse(pathlib.Path(path).read_text(), clock)
+
+
 def calibration_samples(model, count=16, seed=0):
     """A quantized model states its scales; a float one needs data only of the right shape."""
     name = model.graph_inputs()[0]
