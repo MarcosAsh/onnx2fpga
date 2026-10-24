@@ -1,0 +1,114 @@
+name: hardcaml
+
+# Separate from ci.yml so it can run on main and pull requests only, and refresh its cache twice a week.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # GitHub drops a cache unused for 7 days; a cold OxCaml build takes over an hour.
+    - cron: "0 5 * * 1,4"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hardcaml-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  OPAM_VERSION: 2.5.2
+  OPAM_SHA256: edfca2630c373b44b7ee1c2f81cd8dcf67468d0db57d6c02158de553ac63dbd4
+  # The opam-repository and OxCaml repository commits the development switch was built from.
+  OPAM_DEFAULT_COMMIT: 5c9de9a5f012393cf6705a547743b3b879d9f60e
+  OPAM_OX_COMMIT: bb4555262936283daf5cbc82423509d4e7069b15
+  OPAM_SWITCH: 5.2.0+ox
+  OPAMYES: "1"
+  OPAMCONFIRMLEVEL: unsafe-yes
+  OSS_CAD_SUITE: 2026-09-16
+  OSS_CAD_SUITE_SHA256: 88b3d97cffabe85c9491625318f86797f35573904df276a505ebd6963b0f75b3
+
+jobs:
+  hardcaml:
+    name: make test with hardcaml and formal tools
+    # ubuntu-latest is still 24.04; 26.04 has the apt Verilator, yosys and nextpnr the project is tested with.
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: install apt packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf g++ make m4 patch rsync unzip bzip2 pkg-config \
+            libgmp-dev libffi-dev zlib1g-dev tcl \
+            verilator=5.032-1 yosys=0.52-2 nextpnr-ecp5=0.9-3 \
+            python3-numpy=1:2.3.5+ds-3ubuntu1 python3-setuptools=78.1.1-0.1build1
+
+      - name: install opam
+        run: |
+          curl -fsSL -o opam "https://github.com/ocaml/opam/releases/download/$OPAM_VERSION/opam-$OPAM_VERSION-x86_64-linux"
+          echo "$OPAM_SHA256  opam" | sha256sum -c -
+          sudo install -m 755 opam /usr/local/bin/opam
+          rm opam
+
+      # Unpacked where IcepiZero.TOOL_DIRS looks, off PATH, so the apt tools above stay the default.
+      - name: install the OSS CAD Suite for sby, its solvers and ecppack
+        run: |
+          stamp=${OSS_CAD_SUITE//-/}
+          curl -fsSL -o suite.tgz "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/$OSS_CAD_SUITE/oss-cad-suite-linux-x64-$stamp.tgz"
+          echo "$OSS_CAD_SUITE_SHA256  suite.tgz" | sha256sum -c -
+          mkdir -p ~/.local/opt
+          tar -xzf suite.tgz -C ~/.local/opt
+          rm suite.tgz
+          for tool in sby yosys-smtbmc bitwuzla yices-smt2 ecppack; do
+            test -x ~/.local/opt/oss-cad-suite/bin/$tool || { echo "OSS CAD Suite has no $tool"; exit 1; }
+          done
+
+      - name: restore the opam switch
+        id: opam-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.opam
+          key: opam-ubuntu-26.04-${{ env.OPAM_VERSION }}-${{ hashFiles('hardware/hardcaml/onnx2fpga_hardcaml.opam.locked') }}-${{ env.OPAM_DEFAULT_COMMIT }}-${{ env.OPAM_OX_COMMIT }}
+
+      - name: build the opam switch
+        if: steps.opam-cache.outputs.cache-hit != 'true'
+        run: |
+          rm -rf ~/.opam
+          opam init --bare --no-setup --disable-sandboxing default \
+            "git+https://github.com/ocaml/opam-repository.git#$OPAM_DEFAULT_COMMIT"
+          opam repository add --dont-select ox \
+            "git+https://github.com/oxcaml/opam-repository.git#$OPAM_OX_COMMIT"
+          opam option --global 'archive-mirrors=["https://opam.ocaml.org/cache"]'
+          opam switch create "$OPAM_SWITCH" --repos ox,default --empty
+          opam install --switch "$OPAM_SWITCH" --locked --deps-only --with-test --with-dev-setup \
+            ./hardware/hardcaml/onnx2fpga_hardcaml.opam
+          opam clean --download-cache --logs
+
+      # Saved before the tests so a failing test does not throw away an hour of compiling.
+      - name: save the opam switch
+        if: steps.opam-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.opam
+          key: ${{ steps.opam-cache.outputs.cache-primary-key }}
+
+      - name: versions
+        run: |
+          opam exec --switch "$OPAM_SWITCH" -- ocamlopt -version
+          opam exec --switch "$OPAM_SWITCH" -- dune --version
+          verilator --version
+          yosys -V
+          ~/.local/opt/oss-cad-suite/bin/yosys -V
+
+      - name: dune fmt and lint
+        working-directory: hardware/hardcaml
+        run: opam exec --switch "$OPAM_SWITCH" -- dune build @fmt @lint
+
+      - run: make models PYTHON=/usr/bin/python3
+
+      - name: make test
+        run: opam exec --switch "$OPAM_SWITCH" -- make test PYTHON=/usr/bin/python3

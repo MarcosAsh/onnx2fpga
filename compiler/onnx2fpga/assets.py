@@ -29,8 +29,9 @@ class AssetLocator:
             yield pathlib.Path(environment)
             return
         here = pathlib.Path(__file__).resolve().parent
-        yield here / "assets"          # installed from a wheel
-        yield here.parents[1]          # running from a checkout
+        # A checkout comes first so a stale copy left by make assets never shadows edited files.
+        yield here.parents[1]
+        yield here / "assets"
 
     @property
     def root(self):

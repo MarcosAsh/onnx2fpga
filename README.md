@@ -182,8 +182,9 @@ runtime/                    C++. Everything that runs per inference.
 
 `hardware/` and `runtime/` are data the tool needs at run time, not just
 sources. From a checkout they are found beside the package; in a wheel they are
-staged inside it. `compiler/onnx2fpga/assets.py` is the only thing that knows
-the difference.
+staged inside it. A checkout always uses its own files, even when `make assets`
+has left a staged copy in the package. `compiler/onnx2fpga/assets.py` is the
+only thing that knows the difference.
 
 ### Why Python here and C++ there
 

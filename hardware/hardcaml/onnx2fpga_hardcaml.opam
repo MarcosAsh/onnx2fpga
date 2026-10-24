@@ -12,12 +12,17 @@ depends: [
   "core"
   "core_unix"
   "hardcaml"
-  "hardcaml_test_harness"
-  "hardcaml_waveterm"
   "jane_rope"
   "jsonaf"
   "ppx_hardcaml"
   "ppx_jane"
+  "expect_test_helpers_core" {with-test}
+  "hardcaml_lws" {with-test}
+  "hardcaml_test_harness" {with-test}
+  "hardcaml_waveterm" {with-test}
+  "re" {with-test}
+  "ocamlformat" {with-dev-setup}
+  "ppx_js_style" {with-dev-setup}
 ]
 available: arch != "x86_32"
 synopsis: "Hardcaml port of the onnx2fpga streaming unit library"

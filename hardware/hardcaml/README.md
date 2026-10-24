@@ -28,4 +28,7 @@ beside the module it ports in one Verilator model and compares every output on
 every cycle.
 
 Needs the `5.2.0+ox` opam switch with hardcaml, ppx_hardcaml, hardcaml_test_harness,
-hardcaml_waveterm, jsonaf and core_unix.
+hardcaml_waveterm, jsonaf and core_unix. `onnx2fpga_hardcaml.opam.locked` holds the exact
+versions of that switch, and `.github/workflows/hardcaml.yml` builds CI's switch from it with
+`opam install --locked --deps-only --with-test --with-dev-setup`. After changing the
+dependencies, regenerate it in your switch with `opam lock ./onnx2fpga_hardcaml.opam`.

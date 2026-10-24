@@ -11,6 +11,7 @@ from unittest import mock
 
 from support import Fixtures, ROOT, run
 
+from onnx2fpga import assets
 from onnx2fpga.assets import AssetError, AssetLocator
 
 
@@ -29,6 +30,19 @@ class Locator(unittest.TestCase):
         with mock.patch.dict(os.environ, {AssetLocator.ENV: str(empty)}):
             with self.assertRaises(AssetError):
                 AssetLocator().root
+
+    def test_stale_staged_copy(self):
+        """Files left by make assets must not shadow a checkout's own, edited ones."""
+        tree = Fixtures.build_dir("assets_stale")
+        package = tree / "compiler" / "onnx2fpga"
+        for root, text in ((tree, "fresh"), (package / "assets", "stale")):
+            for marker in AssetLocator.MARKERS:
+                (root / marker).parent.mkdir(parents=True, exist_ok=True)
+                (root / marker).write_text(text)
+        with mock.patch.object(assets, "__file__", str(package / "assets.py")):
+            locator = AssetLocator()
+            self.assertEqual(locator.root, tree)
+            self.assertEqual((locator.runtime_dir / "sim" / "harness.cpp").read_text(), "fresh")
 
     def test_missing(self):
         with self.assertRaises(AssetError) as caught:
