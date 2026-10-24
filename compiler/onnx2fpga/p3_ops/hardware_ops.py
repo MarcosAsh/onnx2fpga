@@ -15,6 +15,27 @@ def divisors(value, limit=None):
     return [d for d in range(1, limit + 1) if value % d == 0]
 
 
+def csd(value):
+    """Canonical signed digits of value as (digit, position), most significant first."""
+    digits, position = [], 0
+    while value:
+        if value & 1:
+            digit = 2 - (value & 3)
+            digits.append((digit, position))
+            value -= digit
+        value >>= 1
+        position += 1
+    return digits[::-1]
+
+
+def odd_part(value):
+    """(m, s) with abs(value) = m << s and m odd."""
+    value, shift = abs(int(value)), 0
+    while value % 2 == 0:
+        value, shift = value // 2, shift + 1
+    return value, shift
+
+
 def multiplier_bits(requant):
     return int(max(2, int(np.abs(requant.multipliers).max()).bit_length() + 1))
 
@@ -268,6 +289,7 @@ class DenseUnit(MatVecUnit):
     module = "otf_dense"
     hardcaml_only = True
     latency = 3
+    arithmetic = "multiplier"
 
     def default_folding(self):
         return {"simd": self.mw, "pe": self.mh}
@@ -277,18 +299,35 @@ class DenseUnit(MatVecUnit):
 
     @property
     def multipliers(self):
-        return self.mw * self.mh
+        return self.mw * self.mh if self.arithmetic == "multiplier" else 0
+
+    def constant_cost(self):
+        """LUT and flip flops of the shift and add products and the adder trees, one LUT a bit."""
+        act_bits, adders, ff = self.act_dtype.bits, 0, 0
+        for row in self.weights:
+            pairs = set()
+            for m in {odd_part(w)[0] for w in row if w}:
+                digits = csd(m)
+                pairs.update((1 << (high - low)) + da * db for (da, high), (db, low)
+                             in zip(digits[::2], digits[1::2]))
+                adders += (len(digits) + 1) // 2 - 1
+                ff += act_bits + (m - 1).bit_length()
+            adders += len(pairs)
+        tree = int(np.count_nonzero(self.weights)) * self.accumulator_dtype.bits
+        return Resources(lut=tree + adders * (act_bits + self.weight_dtype.bits), ff=ff)
 
     def amd_resources(self, device):
-        acc_bits = self.accumulator_dtype.bits
-        dsp = device.dsp_cost(self.multipliers, self.act_dtype.bits, self.weight_dtype.bits)
+        acc_bits, act_bits = self.accumulator_dtype.bits, self.act_dtype.bits
+        dsp = 0
         if self.requant.shift < acc_bits + self.mult_bits:
             dsp += self.mh * (2 if acc_bits > 27 else 1)
-        product_bits = self.act_dtype.bits + self.weight_dtype.bits
-        return Resources(lut=self.multipliers * acc_bits,
-                         ff=self.mh * (self.mw * product_bits + acc_bits
-                                       + self.out_dtype.bits),
-                         dsp=dsp)
+        out = Resources(ff=self.mh * (acc_bits + self.out_dtype.bits), dsp=dsp)
+        if self.arithmetic == "constant":
+            return self.constant_cost() + out
+        product_bits = act_bits + self.weight_dtype.bits
+        return out + Resources(
+            lut=self.multipliers * acc_bits, ff=self.multipliers * product_bits,
+            dsp=device.dsp_cost(self.multipliers, act_bits, self.weight_dtype.bits))
 
     def memories(self, graph):
         return {
@@ -306,6 +345,7 @@ class DenseUnit(MatVecUnit):
             "MULT_BITS": self.mult_bits, "SHIFT": self.requant.shift,
             "OUT_MIN": self.requant.lower_clamp, "OUT_MAX": self.requant.upper_clamp,
             "OUT_ZP": self.requant.zero_point,
+            "CONSTANT": int(self.arithmetic == "constant"),
         }
 
 

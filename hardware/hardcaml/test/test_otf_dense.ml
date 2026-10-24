@@ -23,6 +23,7 @@ let config
   ?(out_min = -128)
   ?(out_max = 127)
   ?(out_zp = 0)
+  ?(arithmetic = `Multiplier)
   ~mw
   ~mh
   seed
@@ -46,6 +47,7 @@ let config
     let out_min = out_min
     let out_max = out_max
     let out_zp = out_zp
+    let arithmetic = arithmetic
     let weight_values = weight_values
     let bias_values = bias_values
     let mult_values = mult_values
@@ -121,14 +123,15 @@ module Make_test (Config : Params) = struct
 end
 
 let%expect_test "every vector comes out exactly three cycles later" =
-  List.iter
-    [ "mlp first layer", config ~mw:32 ~mh:64 1
-    ; "relu at a zero point", config ~mw:16 ~mh:8 ~out_zp:(-5) ~out_min:(-5) 2
-    ; "one by one", config ~mw:1 ~mh:1 ~acc_bits:17 ~shift:4 3
-    ; "no shift", config ~mw:4 ~mh:3 ~acc_bits:18 ~shift:0 ~mult_bits:3 4
-    ; "quotient always zero", config ~mw:3 ~mh:2 ~acc_bits:18 ~shift:36 5
+  let cases arithmetic =
+    [ "mlp first layer", config ~arithmetic ~mw:32 ~mh:64 1
+    ; "relu at a zero point", config ~arithmetic ~mw:16 ~mh:8 ~out_zp:(-5) ~out_min:(-5) 2
+    ; "one by one", config ~arithmetic ~mw:1 ~mh:1 ~acc_bits:17 ~shift:4 3
+    ; "no shift", config ~arithmetic ~mw:4 ~mh:3 ~acc_bits:18 ~shift:0 ~mult_bits:3 4
+    ; "quotient always zero", config ~arithmetic ~mw:3 ~mh:2 ~acc_bits:18 ~shift:36 5
     ; ( "narrow"
       , config
+          ~arithmetic
           ~mw:6
           ~mh:5
           ~act_bits:4
@@ -141,20 +144,76 @@ let%expect_test "every vector comes out exactly three cycles later" =
           ~out_max:7
           6 )
     ]
-    ~f:(fun (name, (module Config)) ->
+  in
+  List.iter [ `Multiplier; `Constant ] ~f:(fun arithmetic ->
+    List.iter (cases arithmetic) ~f:(fun (name, (module Config : Params)) ->
       let module T = Make_test (Config) in
       let checked =
         List.map [ 100; 60; 5 ] ~f:(fun duty -> T.run ~seed:7 ~cycles:300 ~duty ())
       in
-      print_s [%message name ~latency:(T.Dut.latency : int) (checked : int list)]);
+      print_s
+        [%message
+          name
+            (arithmetic : [ `Multiplier | `Constant ])
+            ~latency:(T.Dut.latency : int)
+            (checked : int list)]));
   [%expect
     {|
-    ("mlp first layer" (latency 3) (checked (297 174 16)))
-    ("relu at a zero point" (latency 3) (checked (297 177 13)))
-    ("one by one" (latency 3) (checked (297 173 10)))
-    ("no shift" (latency 3) (checked (297 188 14)))
-    ("quotient always zero" (latency 3) (checked (297 187 12)))
-    (narrow (latency 3) (checked (297 185 13)))
+    ("mlp first layer" (arithmetic Multiplier) (latency 3)
+     (checked (297 174 16)))
+    ("relu at a zero point" (arithmetic Multiplier) (latency 3)
+     (checked (297 177 13)))
+    ("one by one" (arithmetic Multiplier) (latency 3) (checked (297 173 10)))
+    ("no shift" (arithmetic Multiplier) (latency 3) (checked (297 188 14)))
+    ("quotient always zero" (arithmetic Multiplier) (latency 3)
+     (checked (297 187 12)))
+    (narrow (arithmetic Multiplier) (latency 3) (checked (297 185 13)))
+    ("mlp first layer" (arithmetic Constant) (latency 3) (checked (297 174 16)))
+    ("relu at a zero point" (arithmetic Constant) (latency 3)
+     (checked (297 177 13)))
+    ("one by one" (arithmetic Constant) (latency 3) (checked (297 173 10)))
+    ("no shift" (arithmetic Constant) (latency 3) (checked (297 188 14)))
+    ("quotient always zero" (arithmetic Constant) (latency 3)
+     (checked (297 187 12)))
+    (narrow (arithmetic Constant) (latency 3) (checked (297 185 13)))
+    |}]
+;;
+
+let%expect_test "constant arithmetic on the mlp first layer needs no multiplier per \
+                 weight"
+  =
+  List.iter [ `Multiplier; `Constant ] ~f:(fun arithmetic ->
+    let (module Config) = config ~arithmetic ~mw:32 ~mh:64 1 in
+    let module Dut = Otf_dense.Make (Config) in
+    let module C = Circuit.With_interface (Dut.I) (Dut.O) in
+    let scope = Scope.create ~flatten_design:true () in
+    let circuit = C.create_exn ~name:"otf_dense" (Dut.hierarchical scope) in
+    let wanted = [ "adders"; "subtractors"; "signed_multipliers"; "registers" ] in
+    let utilization =
+      match [%sexp_of: Circuit_utilization.t] (Circuit_utilization.create circuit) with
+      | List (_ :: fields) ->
+        List.filter fields ~f:(function
+          | List (Atom field :: _) -> List.mem wanted field ~equal:String.equal
+          | _ -> false)
+      | _ -> []
+    in
+    print_s
+      [%message (arithmetic : [ `Multiplier | `Constant ]) (utilization : Sexp.t list)]);
+  [%expect
+    {|
+    ((arithmetic Multiplier)
+     (utilization
+      ((adders ((count 1084) (total_bits 22896) (max_instance_bits 39)))
+       (subtractors ((count 1021) (total_bits 20420) (max_instance_bits 20)))
+       (signed_multipliers
+        ((count 2105) (total_bits 37129) (max_instance_bits 38)))
+       (registers ((count 2172) (total_bits 34451))))))
+    ((arithmetic Constant)
+     (utilization
+      ((adders ((count 1667) (total_bits 32224) (max_instance_bits 39)))
+       (subtractors ((count 1613) (total_bits 29892) (max_instance_bits 20)))
+       (signed_multipliers ((count 64) (total_bits 2432) (max_instance_bits 38)))
+       (registers ((count 1308) (total_bits 17786))))))
     |}]
 ;;
 

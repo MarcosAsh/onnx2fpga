@@ -1,4 +1,4 @@
-"""Fixed latency mode on the example MLP: the latency, the summary, the errors, simulation and the proof."""
+"""Fixed latency mode on the example MLP: the latency, the summary, the errors, simulation and the proofs."""
 
 import json
 import os
@@ -14,6 +14,7 @@ from support import Fixtures, Hdl
 import onnx2fpga as otf
 from onnx2fpga.board import IcepiZero
 from onnx2fpga.errors import BudgetError, ConfigError
+from onnx2fpga.p6_emit.hardcaml import HardcamlGenerator
 
 HARDCAML = Hdl.skip_reason("hardcaml")
 
@@ -36,6 +37,17 @@ CHECK = """module valid_delay_check (
     end
     always @(*) if (cleared) assert (prediction_valid == history[%(latency)d-1]);
     always @(*) cover (cleared && prediction_valid);
+endmodule
+"""
+
+# Every flip flop becomes a wire, which is sound here because each path crosses the same three stages.
+WIRES = """module \\$dff (CLK, D, Q);
+    parameter WIDTH = 1;
+    parameter CLK_POLARITY = 1'b1;
+    input CLK;
+    input [WIDTH-1:0] D;
+    output [WIDTH-1:0] Q;
+    assign Q = D;
 endmodule
 """
 
@@ -64,12 +76,37 @@ check.sv
 """
 
 
-def mlp(device="vu9p", **options):
+def mlp(device="vu9p", arithmetic=None, **options):
     acc = otf.load(Fixtures.factory().mlp(), name="mlp")
+    for name, kind in (arithmetic or {}).items():
+        acc.layers[name].arithmetic(kind)
     x = np.random.default_rng(5).normal(0, 1, (8, 32)).astype(np.float32)
+    folder = "fixed_mlp_%s%s" % (device, "".join("_%s_%s" % item for item in
+                                                 sorted((arithmetic or {}).items())))
     acc.compile(device=device, mode="fixed", calibration=x,
-                out_dir=Fixtures.build_dir("fixed_mlp_%s" % device), **options)
+                out_dir=Fixtures.build_dir(folder), **options)
     return acc
+
+
+def equivalent(left, right, module):
+    """ABC's cec on module in two Verilog files with registers made wires; True if it is the same logic."""
+    yosys, abc = IcepiZero.tool("yosys"), IcepiZero.tool("yosys-abc")
+    folder = pathlib.Path(left).parent.parent / "cec"
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir()
+    (folder / "wires.v").write_text(WIRES)
+    for name, verilog in (("left", left), ("right", right)):
+        script = ("read_verilog %s; hierarchy -top %s; proc; flatten; techmap -map wires.v; "
+                  "opt_clean; techmap; opt -fast; aigmap; opt_clean; write_aiger %s.aig"
+                  % (verilog, module, name))
+        subprocess.run([yosys, "-q", "-p", script], cwd=folder, check=True, timeout=900)
+    completed = subprocess.run([abc, "-c", "cec left.aig right.aig"], cwd=folder,
+                               capture_output=True, text=True, timeout=1800)
+    if "Networks are equivalent" in completed.stdout:
+        return True
+    if "Verification failed" in completed.stdout:
+        return False
+    raise AssertionError(completed.stdout[-2000:] + completed.stderr[-2000:])
 
 
 def prove(build, width, latency):
@@ -112,6 +149,22 @@ class Errors(unittest.TestCase):
         with self.assertRaisesRegex(BudgetError, "largest layer fc0 has 2048"):
             mlp(device="icepi25")
 
+    def test_arithmetic_name(self):
+        acc = otf.load(Fixtures.factory().mlp())
+        with self.assertRaisesRegex(ConfigError, "'constant', 'multiplier' or 'auto'"):
+            acc.layers["fc0"].arithmetic("shifts")
+
+    def test_arithmetic_without_weights(self):
+        acc = otf.load(Fixtures.factory().cnn())
+        with self.assertRaisesRegex(ConfigError, "flat0 .* has no weights"):
+            acc.layers["flat0"].arithmetic("constant")
+
+    def test_constant_streaming(self):
+        acc = otf.load(Fixtures.factory().mlp())
+        acc.layers["fc1"].arithmetic("constant")
+        with self.assertRaisesRegex(ConfigError, "fc1 is folded in mode='stream'"):
+            acc.compile(mode="stream", calibration=np.zeros((1, 32)))
+
     @unittest.skipIf(HARDCAML, HARDCAML)
     def test_fold_pin(self):
         acc = otf.load(Fixtures.factory().mlp())
@@ -138,9 +191,28 @@ class Mlp(unittest.TestCase):
         lines = []
         self.acc.summary(print_fn=lines.append)
         text = "\n".join(lines)
-        self.assertIn("fc0 (Gemm+Relu)", text)
-        self.assertRegex(text, r"Total\s+3232\s+9")
+        self.assertRegex(text, r"fc0 \(Gemm\+Relu\)\s+32 -> 64\s+constant\s+0\s+3")
+        self.assertRegex(text, r"Total\s+0\s+9")
+        self.assertIn("Constant arithmetic: 3232 multipliers saved", text)
         self.assertIn("Latency: 9 cycles, 30.0 ns at 300 MHz", text)
+
+    def test_arithmetic(self):
+        acc = mlp(arithmetic={"fc1": "multiplier"})
+        lines = []
+        acc.summary(print_fn=lines.append)
+        self.assertRegex("\n".join(lines), r"fc1 \(Gemm\+Relu\)\s+64 -> 16\s+multiplier\s+1024")
+        self.assertIn("2208 multipliers saved", "\n".join(lines))
+        self.assertEqual(acc.latency, 9)
+        design = json.loads((acc.out_dir / "design.json").read_text())
+        self.assertEqual([node["params"]["CONSTANT"] for node in design["nodes"]], [1, 0, 1])
+        manifest = json.loads((acc.out_dir / "manifest.json").read_text())
+        self.assertEqual([node["arithmetic"] for node in manifest["nodes"]],
+                         ["constant", "multiplier", "constant"])
+
+    def test_auto(self):
+        """The sim device has as many LUT as DSP, so the multipliers are the cheaper choice there."""
+        acc = mlp(device="sim")
+        self.assertIn("arithmetic multiplier", repr(acc.layers["fc0"]))
 
     def test_board(self):
         with self.assertRaisesRegex(ConfigError, "needs mode='stream'"):
@@ -161,6 +233,21 @@ class Mlp(unittest.TestCase):
         self.assertTrue(ok, log[-3000:])
         self.assertIn("successful proof by k-induction", log)
         self.assertFalse(prove(build, width, 8)[0], "a latency of 8 must not prove")
+
+    @unittest.skipIf(IcepiZero.tool("yosys-abc") is None, "yosys-abc not found")
+    def test_equivalence(self):
+        """fc2, a whole layer, is the same logic with constant arithmetic as with multipliers."""
+        multiplier = mlp(arithmetic={name: "multiplier" for name in ("fc0", "fc1", "fc2")})
+        built = [pathlib.Path(self.acc.out_dir) / "rtl" / "top.v",
+                 pathlib.Path(multiplier.out_dir) / "rtl" / "top.v"]
+        self.assertTrue(equivalent(*built, "otf_dense_2"))
+        design = json.loads((self.acc.out_dir / "design.json").read_text())
+        design["nodes"][2]["memories"]["weights"]["values"][5] ^= 4
+        wrong = pathlib.Path(self.acc.out_dir) / "wrong"
+        wrong.mkdir(exist_ok=True)
+        (wrong / "design.json").write_text(json.dumps(design))
+        (wrong / "top.v").write_text(HardcamlGenerator().verilog(wrong / "design.json"))
+        self.assertFalse(equivalent(wrong / "top.v", built[1], "otf_dense_2"))
 
 
 if __name__ == "__main__":

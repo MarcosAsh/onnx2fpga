@@ -217,6 +217,11 @@ class Accelerator:
             goal = ("fit", None, None)
             hdl = _fixed_hdl(hdl)
         else:
+            constant = [name for name, kind in self.layers.arithmetic().items()
+                        if kind == "constant"]
+            if constant:
+                raise ConfigError("%s is folded in mode='stream', so arithmetic('constant') "
+                                  "needs mode='fixed'" % constant[0])
             goal = self._target(device, target, target_fps, target_cycles,
                                 previous.get("target", ("fit", None)))
             hdl = resolve_hdl(hdl) if hdl is not None or "hdl" not in previous \
@@ -250,6 +255,7 @@ class Accelerator:
                             top_name=top, verbose=verbose, hdl=hdl,
                             folding=self.layers.pins(),
                             weight_dtypes=self.layers.weight_dtypes(),
+                            arithmetic=self.layers.arithmetic(),
                             custom_objects=self.custom_objects, mode=mode)
         with _translated():
             result = compiler.compile(self.model, samples, out_dir)
@@ -449,32 +455,35 @@ class Accelerator:
 
     def _fixed_summary(self):
         graph, device = self.result.hardware_graph, self.device
-        widths = (30, 12, 12, 9, 9, 7)
-        right = (False, True, True, True, True, True)
+        widths = (30, 12, 12, 12, 9, 9, 7)
+        right = (False, True, True, True, True, True, True)
         rule = sum(widths)
         lines = ['Accelerator: "%s" on %s (%s), hdl %s, fixed latency'
                  % (self.name, device.name, device.part, self.hdl), "_" * rule,
-                 _row(("Layer (kind)", "In -> out", "Multipliers", "Latency", "LUT", "DSP"),
-                      widths, right), "=" * rule]
+                 _row(("Layer (kind)", "In -> out", "Arithmetic", "Multipliers", "Latency",
+                       "LUT", "DSP"), widths, right), "=" * rule]
         units = graph.topological_order()
         costs = [unit.resources(device) for unit in units]
         for unit, cost in zip(units, costs):
             lines.append(_row(("%s (%s)" % (unit.name, self.layers[unit.name].kind),
-                               "%d -> %d" % (unit.mw, unit.mh), unit.multipliers,
-                               unit.latency, int(cost.lut), _number(cost.dsp)),
-                              widths, right))
+                               "%d -> %d" % (unit.mw, unit.mh), unit.arithmetic,
+                               unit.multipliers, unit.latency, int(cost.lut),
+                               _number(cost.dsp)), widths, right))
         total, budget = _sum(costs), device.budget
         latency = self.latency
+        saved = sum(unit.weights.size - unit.multipliers for unit in units)
         lines += ["=" * rule,
-                  _row(("Total", "", sum(unit.multipliers for unit in units), latency,
+                  _row(("Total", "", "", sum(unit.multipliers for unit in units), latency,
                         int(total.lut), _number(total.dsp)), widths, right),
-                  _row(("Budget on %s" % device.name, "", "", "", budget.lut, budget.dsp),
-                       widths, right),
-                  _row(("Used", "", "", "", _percent(total.lut, budget.lut),
+                  _row(("Budget on %s" % device.name, "", "", "", "", budget.lut,
+                        budget.dsp), widths, right),
+                  _row(("Used", "", "", "", "", _percent(total.lut, budget.lut),
                         _percent(total.dsp, budget.dsp)), widths, right),
                   " Latency: %d cycles, %.1f ns at %.0f MHz, with a new input every cycle"
-                  % (latency, latency * 1e3 / device.fmax_mhz, device.fmax_mhz),
-                  " Quantization: %s" % self._describe_quantization(),
+                  % (latency, latency * 1e3 / device.fmax_mhz, device.fmax_mhz)]
+        if saved:
+            lines.append(" Constant arithmetic: %d multipliers saved" % saved)
+        lines += [" Quantization: %s" % self._describe_quantization(),
                   " Build: %s" % self.out_dir, "_" * rule]
         return lines
 
@@ -742,6 +751,7 @@ class Layer:
         self.custom = isinstance(node, CustomOp)
         self.pinned = {}
         self.weight_dtype = None
+        self.arithmetic_choice = "auto"
 
     def fold(self, **factors):
         """Pins how parallel this layer is (simd, pe), overriding the allocator; none hands it back."""
@@ -768,6 +778,17 @@ class Layer:
         if weights is not None and not self.has_weights:
             raise ConfigError("%s (%s) has no weights" % (self.name, self.kind))
         self.weight_dtype = None if weights is None else _weight_dtype(weights, self.name)
+        self._accelerator._changed()
+        return self
+
+    def arithmetic(self, kind="auto"):
+        """How fixed latency mode multiplies by this layer's weights: "constant", "multiplier" or "auto"."""
+        if kind not in ("constant", "multiplier", "auto"):
+            raise ConfigError("arithmetic is 'constant', 'multiplier' or 'auto', not %r"
+                              % (kind,))
+        if not self.has_weights:
+            raise ConfigError("%s (%s) has no weights" % (self.name, self.kind))
+        self.arithmetic_choice = kind
         self._accelerator._changed()
         return self
 
@@ -809,6 +830,8 @@ class Layer:
             parts.append("fold " + _folding(self.pinned))
         if self.weight_dtype is not None:
             parts.append("weights " + self.weight_dtype.name.lower())
+        if self.arithmetic_choice != "auto":
+            parts.append("arithmetic " + self.arithmetic_choice)
         return ", ".join(parts)
 
     def __repr__(self):
@@ -820,6 +843,9 @@ class Layer:
             parts.append("pinned " + _folding(self.pinned))
         if self.weight_dtype is not None:
             parts.append("weights " + self.weight_dtype.name.lower())
+        arithmetic = getattr(self._unit(), "arithmetic", None)
+        if arithmetic:
+            parts.append("arithmetic " + arithmetic)
         return "<Layer %s (%s)%s>" % (self.name, self.kind,
                                       ": " + ", ".join(parts) if parts else "")
 
@@ -851,6 +877,10 @@ class Layers(collections.abc.Mapping):
     def weight_dtypes(self):
         return {name: layer.weight_dtype for name, layer in self._layers.items()
                 if layer.weight_dtype is not None}
+
+    def arithmetic(self):
+        return {name: layer.arithmetic_choice for name, layer in self._layers.items()
+                if layer.arithmetic_choice != "auto"}
 
     def __repr__(self):
         return "<Layers %s>" % ", ".join(self._layers)

@@ -46,8 +46,11 @@ those are the only registers `clear` touches. The data registers have no reset
 and no enable, so the datapath runs every cycle whatever the valid bit says.
 Where to place more registers to reach a clock is [002](002-pipelined-matvec.md).
 
-Weights are constants in the generated Verilog. A general multiplier per weight
-is the baseline that [004](004-weight-specialised-arithmetic.md) will specialise.
+Weights are constants in the generated Verilog. Stage 1 gives each weight a
+general multiplier with `arithmetic("multiplier")`, or logic for that one
+weight with constant arithmetic, the default since
+[004](004-weight-specialised-arithmetic.md). The stages and the latency are the
+same either way.
 
 ## API
 
@@ -164,6 +167,9 @@ yosys -p "read_verilog rtl/top.v; synth_ecp5 -top otf_top; stat"
 |---|---|---|---|---|---|
 | `synth_xilinx -family xcup` | 2853 DSP48E2 | 249435 LUT1 to LUT6, plus 198474 MUXF7/F8/F9 | 1483 CARRY4 | 43748 FDRE | 4 min 16 s |
 | `synth_ecp5` | 2933 MULT18X18D | 62904 LUT4, plus 14888 PFUMX/L6MUX21 | 16894 CCU2C | 43748 TRELLIS_FF | 5 min 1 s |
+
+These figures predate [004](004-weight-specialised-arithmetic.md), which made
+constant arithmetic the default and measures both versions again.
 
 Each multiplier by a weight gets a whole DSP slice. Of the 3232 weights,
 yosys turns the zeros and powers of two into wiring and leaves 2763

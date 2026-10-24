@@ -327,6 +327,7 @@ let of_fixed_node (node : Design.Node.t) : (module Fixed_instance) =
           let out_min = param "OUT_MIN"
           let out_max = param "OUT_MAX"
           let out_zp = param "OUT_ZP"
+          let arithmetic = if param "CONSTANT" = 1 then `Constant else `Multiplier
           let weights = words "weights"
           let bias = words "bias"
           let mult = words "mult"

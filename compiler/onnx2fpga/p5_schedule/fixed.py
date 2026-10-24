@@ -17,8 +17,9 @@ def check_fixed_ops(graph):
 class UnrollForFixedLatency(Pass):
     name = "unroll"
 
-    def __init__(self, utilisation_limit=0.80):
+    def __init__(self, utilisation_limit=0.80, arithmetic=None):
         self.utilisation_limit = utilisation_limit
+        self.arithmetic = dict(arithmetic or {})
 
     def run(self, graph, context):
         for node in list(graph.topological_order()):
@@ -31,6 +32,8 @@ class UnrollForFixedLatency(Pass):
         graph.infer()
         units = graph.topological_order()
         graph.tensor(graph.inputs[0]).elems_per_beat = units[0].mw
+        for unit in units:
+            unit.arithmetic = self._arithmetic(unit, context.device)
         self._check_budget(units, context.device)
 
         latency = sum(unit.latency for unit in units)
@@ -39,6 +42,18 @@ class UnrollForFixedLatency(Pass):
         context.note("unroll: %d layers, latency %d cycles" % (len(units), latency))
         return graph
 
+    def _arithmetic(self, unit, device):
+        """Auto takes constant arithmetic unless it leaves the layer's busiest resource busier."""
+        chosen = self.arithmetic.get(unit.name, "auto")
+        if chosen != "auto":
+            return chosen
+
+        def worst(arithmetic):
+            unit.arithmetic = arithmetic
+            return unit.resources(device).worst_utilisation(device.budget)
+
+        return "constant" if worst("constant") <= worst("multiplier") else "multiplier"
+
     def _check_budget(self, units, device):
         total = sum((unit.resources(device) for unit in units[1:]),
                     units[0].resources(device))
@@ -46,9 +61,9 @@ class UnrollForFixedLatency(Pass):
         if not over:
             return
         field, used, allowed = over[0]
-        largest = max(units, key=lambda unit: unit.multipliers)
+        largest = max(units, key=lambda unit: unit.weights.size)
         raise BudgetError("the unrolled model needs %d %s, past the %d allowed on %s "
-                          "(largest layer %s has %d multipliers)"
+                          "(largest layer %s has %d weights)"
                           % (used, field.upper(), allowed, device.name, largest.name,
-                             largest.multipliers))
+                             largest.weights.size))
 

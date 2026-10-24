@@ -20,6 +20,9 @@ module type Config = sig
   val out_max : int
   val out_zp : int
 
+  (** [`Constant] builds the products from shifts and adds; values do not change. *)
+  val arithmetic : [ `Multiplier | `Constant ]
+
   (** One word per output channel, element k of channel c's word being w[k][c]. *)
   val weights : Bits.t list
 

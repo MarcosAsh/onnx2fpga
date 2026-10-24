@@ -3,12 +3,13 @@ open! Hardcaml
 open Hardcaml_lws
 open Onnx2fpga_hardcaml
 
-(* Weights are listed channel by channel, [c][k] flattened. *)
+(* Weights are listed channel by channel, [c][k] flattened; fc1 uses constant arithmetic. *)
 type layer =
   { weights : int list
   ; bias : int list
   ; mult : int list
   ; out_min : int
+  ; constant : bool
   }
 
 let fc0 =
@@ -16,6 +17,7 @@ let fc0 =
   ; bias = [ 100; -50; 7 ]
   ; mult = [ 40; 90; 127 ]
   ; out_min = 0
+  ; constant = false
   }
 ;;
 
@@ -24,10 +26,11 @@ let fc1 =
   ; bias = [ -3; 20 ]
   ; mult = [ 70; 33 ]
   ; out_min = -128
+  ; constant = true
   }
 ;;
 
-let dense ~name ~input ~output { weights; bias; mult; out_min } =
+let dense ~name ~input ~output { weights; bias; mult; out_min; constant } =
   let ints values = String.concat ~sep:", " (List.map values ~f:Int.to_string) in
   let mh = List.length bias in
   let mw = List.length weights / mh in
@@ -35,7 +38,7 @@ let dense ~name ~input ~output { weights; bias; mult; out_min } =
     {|{"name": "%s", "instance": "u_%s", "kind": "otf_dense",
        "params": {"MW": %d, "MH": %d, "ACT_BITS": 8, "WGT_BITS": 8, "ACC_BITS": 18,
                   "OUT_BITS": 8, "MULT_BITS": 8, "SHIFT": 6, "OUT_MIN": %d,
-                  "OUT_MAX": 127, "OUT_ZP": 0},
+                  "OUT_MAX": 127, "OUT_ZP": 0, "CONSTANT": %d},
        "memories": {"weights": {"elem_bits": 8, "lanes": %d, "values": [%s]},
                     "bias": {"elem_bits": 18, "lanes": 1, "values": [%s]},
                     "mult": {"elem_bits": 8, "lanes": 1, "values": [%s]}},
@@ -45,6 +48,7 @@ let dense ~name ~input ~output { weights; bias; mult; out_min } =
     mw
     mh
     out_min
+    (Bool.to_int constant)
     mw
     (ints (List.map weights ~f:(fun w -> w land 0xff)))
     (ints (List.map bias ~f:(fun b -> b land 0x3ffff)))
@@ -65,7 +69,7 @@ let description ~latency =
     (dense ~name:"fc1" ~input:"h" ~output:"y" fc1)
 ;;
 
-let layer x { weights; bias; mult; out_min } =
+let layer x { weights; bias; mult; out_min; constant = _ } =
   List.mapi bias ~f:(fun c b ->
     let dot =
       List.foldi x ~init:b ~f:(fun k sum a ->

@@ -79,17 +79,33 @@ Each dense layer costs three cycles: one for the products, one for the sum and
 one for the rescale. The example MLP has three layers, so it answers 9 cycles
 after its input, 30 ns at the 300 MHz the vu9p model assumes. `simulate`
 checks every one of the 10000 answers lands on exactly that cycle and matches
-the integer model. The summary lists each layer's multipliers and latency:
+the integer model. The summary lists each layer's arithmetic, multipliers and
+latency:
 
 ```
- Layer (kind)                    In -> out Multipliers  Latency      LUT    DSP
-===============================================================================
- fc0 (Gemm+Relu)                  32 -> 64        2048        3    40960   1088
- fc1 (Gemm+Relu)                  64 -> 16        1024        3    21504    528
- fc2 (Gemm)                       16 -> 10         160        3     3040     90
-===============================================================================
- Total                                            3232        9    65504   1706
+ Layer (kind)                    In -> out  Arithmetic Multipliers  Latency      LUT    DSP
+===========================================================================================
+ fc0 (Gemm+Relu)                  32 -> 64    constant           0        3    59364     64
+ fc1 (Gemm+Relu)                  64 -> 16    constant           0        3    37190     16
+ fc2 (Gemm)                       16 -> 10    constant           0        3     6064     10
+===========================================================================================
+ Total                                                           0        9   102618     90
 ```
+
+The weights are fixed when the hardware is generated, so by default each
+product becomes logic for its own weight instead of a multiplier: a zero weight
+costs nothing, a power of two is a shift, and anything else is a few shifts and
+adds. The answers and the 9 cycles do not change. The 90 DSPs left are the
+rescale, one per output channel. A layer can be told which to use:
+
+```python
+acc.layers["fc1"].arithmetic("multiplier")   # one multiplier per weight
+acc.layers["fc1"].arithmetic("constant")     # shifts and adds
+acc.layers["fc1"].arithmetic("auto")         # the default
+```
+
+See [004](../specs/004-weight-specialised-arithmetic.md) for what this costs
+in LUTs and how it is checked.
 
 Fixed mode builds Gemm and MatMul layers with a fused Relu, and treats Flatten
 and Reshape as wiring. Anything else, a `Conv` for instance, raises

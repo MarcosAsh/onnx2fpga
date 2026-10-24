@@ -92,12 +92,15 @@ class Ecp5CostModel:
 
     def otf_dense(self, node):
         acc, act = node.accumulator_dtype.bits, node.act_dtype.bits
-        dsp = sum(constant_multipliers(w, act) for w in node.weights.flat)
-        dsp += node.mh * self._requant_multipliers(acc, node.mult_bits, node.requant.shift)
+        dsp = node.mh * self._requant_multipliers(acc, node.mult_bits, node.requant.shift)
+        out = Resources(ff=node.mh * (acc + node.out_dtype.bits), dsp=dsp)
+        if node.arithmetic == "constant":
+            cost = node.constant_cost()
+            return out + Resources(lut=2.25 * cost.lut, ff=cost.ff)
         product_bits = act + node.weight_dtype.bits
-        return Resources(lut=2.25 * node.multipliers * acc,
-                         ff=node.mh * (node.mw * product_bits + acc + node.out_dtype.bits),
-                         dsp=dsp)
+        return out + Resources(
+            lut=2.25 * node.multipliers * acc, ff=node.multipliers * product_bits,
+            dsp=sum(constant_multipliers(w, act) for w in node.weights.flat))
 
     def _window(self, node):
         h_stride, w_stride = node.strides

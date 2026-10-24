@@ -112,6 +112,7 @@ class ProjectWriter:
             manifest["latency"] = self.latency
             for row, node in zip(manifest["nodes"], self.graph.topological_order()):
                 row["latency"] = node.latency
+                row["arithmetic"] = node.arithmetic
         if folding:
             manifest["cycles_per_frame"] = folding.bottleneck_cycles
             manifest["estimated_fps"] = round(folding.frames_per_second, 2)

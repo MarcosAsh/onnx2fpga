@@ -55,8 +55,9 @@ Before compile: layers, output shapes, parameter counts and any pins. After:
 one row per unit with folding, cycles, LUT, DSP and block RAM, the bottleneck
 marked, totals against the budget, throughput, quantization and build path.
 Shapes are channel last. A fixed latency design prints one row per layer with
-its multipliers and latency in cycles instead, then the total latency in cycles
-and in nanoseconds at the device's clock.
+its arithmetic, multipliers and latency in cycles instead, then the total
+latency in cycles and in nanoseconds at the device's clock, and how many
+multipliers constant arithmetic saved.
 
 ### `evaluate(x, y=None)`
 
@@ -121,6 +122,19 @@ listing the valid ones.
 
 `weights="int2"` to `"int8"`. `activations` is planned and raises
 `ConfigError` today.
+
+### `Layer.arithmetic(kind="auto")`
+
+How a fixed latency design multiplies by this layer's weights.
+`"multiplier"` gives every weight its own multiplier. `"constant"` turns each
+product into logic for that weight: nothing for a zero, an add or subtract for
+plus or minus one, a shift for a power of two and a few shifts and adds for
+anything else. The outputs and the latency in cycles are the same either way,
+see [004](../specs/004-weight-specialised-arithmetic.md). `"auto"`, the
+default, takes constant arithmetic unless the layer's estimate on the device
+then fills its busiest resource further than with multipliers. A layer without
+weights, or a value other than these three, raises `ConfigError`, and so does
+compiling with `mode="stream"` while a layer is set to `"constant"`.
 
 ### `Layer.folding`, `Layer.cycles`, `Layer.latency`, `Layer.units`
 
