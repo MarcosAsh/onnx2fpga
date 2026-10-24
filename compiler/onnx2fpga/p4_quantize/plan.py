@@ -15,6 +15,7 @@ class QuantizationPlan:
         self.mult_bits = mult_bits
         self.specs = {}
         self.from_model = False
+        self.source = "calibration"
         self.layer_weight_dtypes = {}
 
     @classmethod
@@ -30,6 +31,7 @@ class QuantizationPlan:
         for name, spec in annotations.items():
             plan.annotate(name, spec)
         plan.from_model = True
+        plan.source = "model"
         return plan
 
     def annotate(self, name, spec):
@@ -48,6 +50,11 @@ class QuantizationPlan:
         """Scale preserving operations pass their grid through unchanged."""
         if source in self.specs:
             self.specs[target] = self.specs[source]
+
+    def quantize(self, name, real):
+        """Codes for real values of tensor `name`, per element when its grid is per feature."""
+        spec = self.spec(name)
+        return self.act_dtype.clamp(np.rint(real / spec.scale) + spec.zero_point)
 
     def scale(self, name):
         return float(self.spec(name).scale.flat[0])

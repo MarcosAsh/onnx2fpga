@@ -340,6 +340,51 @@ let of_fixed_node (node : Design.Node.t) : (module Fixed_instance) =
         (M.hierarchical ~instance:node.instance scope { clocking; x }).y
       ;;
     end)
+  | "otf_trees" ->
+    let ints name ~f = Array.of_list (List.map (words name) ~f) in
+    let kind = ints "kind" ~f:Bits.to_unsigned_int in
+    let feature = ints "feature" ~f:Bits.to_unsigned_int in
+    let value = ints "value" ~f:Bits.to_signed_int in
+    let if_true = ints "if_true" ~f:Bits.to_unsigned_int in
+    let if_false = ints "if_false" ~f:Bits.to_unsigned_int in
+    (* Kind 2 is a leaf, 1 an equality split and 0 a less or equal split. *)
+    let rec tree index : Otf_trees.Tree.t =
+      if kind.(index) = 2
+      then Leaf value.(index)
+      else
+        Node
+          { split =
+              { feature = feature.(index)
+              ; threshold = value.(index)
+              ; equal = kind.(index) = 1
+              }
+          ; if_true = tree if_true.(index)
+          ; if_false = tree if_false.(index)
+          }
+    in
+    (module struct
+      module M = Otf_trees.Make (struct
+          let features = param "FEATURES"
+          let feature_bits = param "FEATURE_BITS"
+          let leaf_bits = param "LEAF_BITS"
+          let sum_bits = param "SUM_BITS"
+
+          let trees =
+            List.map (words "roots") ~f:(fun root -> tree (Bits.to_unsigned_int root))
+          ;;
+
+          let bias = Bits.to_signed_int (List.hd_exn (words "bias"))
+          let decision = param "DECISION" = 1
+        end)
+
+      let latency = M.latency
+
+      include Circuit_of (M)
+
+      let connect scope clocking x =
+        (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+      ;;
+    end)
   | kind ->
     raise_s [%message "design.json: no fixed latency Hardcaml unit for" kind node.name]
 ;;

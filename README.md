@@ -155,12 +155,15 @@ compiler/onnx2fpga/         Python. Graph rewriting. Runs once, in milliseconds.
   p3_ops/                   the operator library
     onnx_ops.py               float ops, for calibration and shape inference
     hardware_ops.py           streaming units, one per module in hardware/rtl
+    trees.py                  tree ensembles as flat node arrays
   p4_quantize/              float IR            -> integer hardware IR
     calibrate.py plan.py      measure ranges, choose scales
     requantize.py             the fixed point rescale contract
     lower.py                  float ops -> hardware ops
+    trees.py                  feature grids from tree thresholds, integer splits
   p5_schedule/              hardware IR         -> a balanced pipeline
     folding.py                how parallel each unit gets
+    fixed.py                  fixed latency mode, every unit unrolled
     streams.py                width converters and FIFOs
   p6_emit/                  hardware IR         -> a build directory
     systemverilog.py memories.py stream_io.py project.py

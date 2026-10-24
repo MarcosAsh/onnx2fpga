@@ -4,11 +4,13 @@ import numpy as np
 
 from ..errors import ModelError, UnsupportedOpError
 from ..p1_ingest import TensorProto
+from ..p1_ingest.onnx_model import tensor_to_numpy
 from ..p2_graph.datatype import FLOAT32, IntType, QuantSpec, UINT8
 from ..p2_graph.graph import Graph
 from ..p2_graph.layout import LayoutAdapter
 from ..p2_graph.tensor import Tensor
 from ..p3_ops.onnx_ops import AddOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
+from ..p3_ops.trees import LEAF, MODES, Ensemble, TreeEnsembleOp
 
 QUANTIZED = {TensorProto.INT8: IntType(8, True), TensorProto.UINT8: IntType(8, False)}
 QDQ = ("QuantizeLinear", "DequantizeLinear")
@@ -140,12 +142,93 @@ def import_flatten(node, importer):
                             [importer.rename(node.output[0])]))
 
 
+def import_trees(node, importer):
+    """TreeEnsembleRegressor with one target, or a binary TreeEnsembleClassifier, from ai.onnx.ml 1 or 3."""
+    attrs = node.attributes()
+    op, name = node.op_type, node.name or node.op_type
+    classifier = op == "TreeEnsembleClassifier"
+
+    def floats(key):
+        if key + "_as_tensor" in attrs:
+            return tensor_to_numpy(attrs[key + "_as_tensor"]).astype(np.float64).reshape(-1)
+        return np.asarray(attrs.get(key, []), dtype=np.float64)
+
+    def refuse(text):
+        raise UnsupportedOpError(op, name, message="%s %r %s" % (op, name, text))
+
+    transforms = ("NONE", "LOGISTIC") if classifier else ("NONE",)
+    transform = attrs.get("post_transform", "NONE")
+    if transform not in transforms:
+        refuse("has post_transform %s, and only %s is supported"
+               % (transform, " or ".join(transforms)))
+    aggregate = attrs.get("aggregate_function", "SUM")
+    if aggregate not in ("SUM", "AVERAGE"):
+        refuse("has aggregate_function %s, and only SUM and AVERAGE are supported" % aggregate)
+    unknown = sorted(set(attrs["nodes_modes"]) - set(MODES))
+    if unknown:
+        refuse("has a node mode %s that is not supported" % unknown[0])
+    prefix = "class" if classifier else "target"
+    ids = attrs.get(prefix + "_ids", [])
+    if classifier:
+        labels = attrs.get("classlabels_int64s") or attrs.get("classlabels_strings") or []
+        if len(labels) != 2 or len(set(ids)) > 1:
+            refuse("has %d classes scored %d ways, and only binary classifiers with one "
+                   "score are supported" % (len(labels), len(set(ids))))
+    elif int(attrs.get("n_targets", 1)) != 1:
+        refuse("has %d targets, and only one is supported" % int(attrs["n_targets"]))
+    base = floats("base_values")
+    if len(base) > 1:
+        refuse("has %d base values, and only one is supported" % len(base))
+
+    trees = attrs["nodes_treeids"]
+    index = {key: k for k, key in enumerate(zip(trees, attrs["nodes_nodeids"]))}
+    mode = np.array([MODES.index(m) for m in attrs["nodes_modes"]])
+    count = len(mode)
+    if_true, if_false = np.arange(count), np.arange(count)
+    for k in np.flatnonzero(mode != LEAF):
+        if_true[k] = index[(trees[k], attrs["nodes_truenodeids"][k])]
+        if_false[k] = index[(trees[k], attrs["nodes_falsenodeids"][k])]
+    children = set(if_true[mode != LEAF]) | set(if_false[mode != LEAF])
+    roots = {}
+    for k, tree in enumerate(trees):
+        if k not in children:
+            roots.setdefault(tree, k)
+    value = np.zeros(count)
+    for tree, nodeid, weight in zip(attrs[prefix + "_treeids"], attrs[prefix + "_nodeids"],
+                                    floats(prefix + "_weights")):
+        value[index[(tree, nodeid)]] += weight
+    if aggregate == "AVERAGE":
+        value /= len(roots)
+    ensemble = Ensemble([roots[tree] for tree in sorted(roots)], attrs["nodes_featureids"],
+                        floats("nodes_values"), mode, if_true, if_false, value)
+    # ONNX Runtime labels a binary one score classifier on the raw score, at 0.5 when no weight is negative.
+    decision = None
+    if classifier:
+        decision = 0.5 if np.all(floats("class_weights") >= 0) else 0.0
+        importer.drop(node.output[1])
+    importer.emit(TreeEnsembleOp(name, [importer.rename(node.input[0])],
+                                 [importer.rename(node.output[0])], ensemble,
+                                 base[0] if len(base) else 0.0, decision, op))
+
+
+def refuse_tree_ensemble(node, importer):
+    raise UnsupportedOpError(node.op_type, node.name, message=(
+        "TreeEnsemble %r is ai.onnx.ml opset 5, which is not supported yet; export "
+        "TreeEnsembleRegressor or TreeEnsembleClassifier instead" % node.name))
+
+
+def drop_zipmap(node, importer):
+    importer.drop(node.output[0])
+
+
 BUILTIN = {
     "Conv": import_conv, "Gemm": import_gemm, "MatMul": import_gemm,
     "Relu": import_relu, "MaxPool": import_maxpool, "Add": import_add,
     "Flatten": import_flatten, "Reshape": import_flatten, "Squeeze": import_flatten,
     "QuantizeLinear": import_qdq, "DequantizeLinear": import_qdq,
     "Identity": import_identity,
+    "TreeEnsembleRegressor": import_trees, "TreeEnsembleClassifier": import_trees,
+    "TreeEnsemble": refuse_tree_ensemble, "ZipMap": drop_zipmap,
 }
 
 
@@ -160,6 +243,7 @@ class OnnxImporter:
                 self.rules[op_type] = handler.handle
         self._renames = {}
         self.annotations = {}
+        self.dropped = set()
 
     def run(self):
         for name in self.model.graph_inputs():
@@ -182,7 +266,8 @@ class OnnxImporter:
                 raise UnsupportedOpError(node.op_type, node.name, sorted(self.rules))
             rule(node, self)
         for name in self.model.graph_outputs():
-            self.graph.outputs.append(self.rename(name))
+            if self.rename(name) not in self.dropped:
+                self.graph.outputs.append(self.rename(name))
         self.graph.annotations = {self.rename(k): v for k, v in self.annotations.items()}
         self.graph.infer()
         return self.graph
@@ -220,6 +305,10 @@ class OnnxImporter:
                 self.annotations[name] = self.annotations[candidate]
                 break
         return name
+
+    def drop(self, name):
+        """An output the hardware does not compute, such as a classifier's probabilities."""
+        self.dropped.add(name)
 
     def alias(self, name, target):
         self._renames[name] = target
