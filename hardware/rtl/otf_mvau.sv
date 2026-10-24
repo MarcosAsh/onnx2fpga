@@ -1,15 +1,4 @@
-// Folded matrix-vector engine with fused bias and rescale.
-//
-// The bias carries more than the model's own bias term. An asymmetric input
-// quantiser contributes -zx * sum_k(W[k][c]) per output channel, which is a
-// constant, so it is folded in here at compile time and costs no hardware.
-//
-// SIMD input elements are consumed per cycle and PE output channels are
-// produced in parallel, so one input vector costs (MW/SIMD)*(MH/PE) cycles.
-// Weights sit in PE independent memories addressed by {neuron fold, synapse
-// fold}; each word holds the SIMD weights one lane needs that cycle. When the
-// output is folded (NF > 1) the input vector is held locally and replayed for
-// each neuron fold rather than re-fetched upstream.
+// Folded matrix-vector engine; the compile-time bias also folds in -zx * sum_k(W[k][c]) for asymmetric inputs.
 `default_nettype none
 
 module otf_mvau #(

@@ -1,0 +1,5 @@
+# Pins shared by every Icepi Zero revision, from the upstream icepi-zero lpf files.
+
+# Button 0, low when pressed.
+LOCATE COMP "button_n" SITE "C4";
+IOBUF PORT "button_n" IO_TYPE=LVCMOS33 PULLMODE=UP;

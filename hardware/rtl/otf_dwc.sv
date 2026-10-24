@@ -1,5 +1,4 @@
-// Repacks a stream from IN_ELEMS to OUT_ELEMS per beat. Element 0 occupies the
-// least significant bits of every beat.
+// Repacks a stream from IN_ELEMS to OUT_ELEMS per beat, element 0 in the low bits.
 `default_nettype none
 
 module otf_dwc #(

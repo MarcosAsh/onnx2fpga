@@ -1,9 +1,4 @@
-// Fixed-point rescale shared by every compute unit.
 // out = clamp(((acc * mult + 2**(SHIFT-1)) >>> SHIFT) + OUT_ZP, OUT_MIN, OUT_MAX)
-//
-// OUT_ZP is the zero point of the output tensor. It is zero for a symmetric
-// quantiser and non zero for an asymmetric one, where the integer standing for
-// real zero is not itself zero.
 `default_nettype none
 
 module otf_requant #(
@@ -21,6 +16,9 @@ module otf_requant #(
 );
     localparam int PROD_BITS = ACC_BITS + MULT_BITS + 1;
 
+    // Below SHIFT = ACC_BITS+MULT_BITS the product plus rounding constant fits PROD_BITS; from there the quotient is 0, so no multiplier is built.
+    localparam bit QUOTIENT_IS_ZERO = SHIFT >= ACC_BITS + MULT_BITS;
+
     logic signed [PROD_BITS-1:0] product;
     logic signed [PROD_BITS-1:0] rounded;
     logic signed [PROD_BITS-1:0] shifted;
@@ -28,13 +26,15 @@ module otf_requant #(
     logic signed [PROD_BITS-1:0] lo_limit;
     logic signed [PROD_BITS-1:0] hi_limit;
 
-    assign round_add = (SHIFT > 0) ? (PROD_BITS'(1) << (SHIFT - 1)) : '0;
+    assign round_add = (SHIFT > 0 && !QUOTIENT_IS_ZERO) ? (PROD_BITS'(1) << (SHIFT - 1)) : '0;
     assign lo_limit  = PROD_BITS'(OUT_MIN);
     assign hi_limit  = PROD_BITS'(OUT_MAX);
 
     always_comb begin
         product = acc * mult;
-        shifted = (SHIFT > 0) ? ((product + round_add) >>> SHIFT) : product;
+        if (QUOTIENT_IS_ZERO) shifted = '0;
+        else if (SHIFT > 0)   shifted = (product + round_add) >>> SHIFT;
+        else                  shifted = product;
         rounded = shifted + PROD_BITS'(OUT_ZP);
         if (rounded < lo_limit)      out = OUT_BITS'(lo_limit);
         else if (rounded > hi_limit) out = OUT_BITS'(hi_limit);

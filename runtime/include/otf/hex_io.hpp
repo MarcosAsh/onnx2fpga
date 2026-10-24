@@ -1,6 +1,4 @@
-// Reading and writing the $readmemh style vectors the compiler emits.
-// A beat of arbitrary width is held as little endian 32 bit words so the same
-// container feeds a Verilator port, a C++ kernel or a DMA buffer.
+// Reads and writes $readmemh style vectors; a beat of any width is held as little endian 32 bit words.
 #pragma once
 
 #include <algorithm>

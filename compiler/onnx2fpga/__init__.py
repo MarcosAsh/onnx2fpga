@@ -1,16 +1,11 @@
-"""onnx2fpga: an ONNX to streaming-dataflow FPGA compiler.
-
-The pipeline runs strictly in stage order:
-
-    p1_ingest    .onnx bytes            -> ONNX protos
-    p2_graph     ONNX protos            -> compiler IR, channel-last
-    p3_ops       operator library used by every later stage
-    p4_quantize  float IR               -> integer hardware IR
-    p5_schedule  hardware IR            -> folding factors, FIFOs, a balanced pipeline
-    p6_emit      hardware IR            -> SystemVerilog, memory images, build files
-
-targets holds the device models the scheduler budgets against; reference holds
-the numpy golden model the generated RTL is checked against.
-"""
+"""An ONNX to streaming-dataflow FPGA compiler; the public API is in onnx2fpga.api."""
 
 __version__ = "0.1.0"
+
+from . import errors  # noqa: E402
+from .api import Accelerator, from_keras, load  # noqa: E402
+from .errors import Onnx2FpgaError  # noqa: E402
+from .hardware_layer import HardwareLayer  # noqa: E402
+
+__all__ = ["Accelerator", "HardwareLayer", "Onnx2FpgaError", "errors", "from_keras",
+           "load"]

@@ -1,9 +1,4 @@
-"""Rewrites float operators into integer streaming hardware nodes.
-
-This is the stage where the graph stops being a mathematical description and
-starts being a machine: after it runs, every node corresponds to exactly one
-SystemVerilog module and every edge to one stream.
-"""
+"""Rewrites float operators into integer streaming nodes, each one SystemVerilog module."""
 
 import numpy as np
 
@@ -61,8 +56,7 @@ class LoweringContext:
         return self.plan.specs.get(name)
 
     def require_same_grid(self, source, target, op_name):
-        """Max is scale preserving, so the unit does no rescale. If the model
-        asked for one anyway, say so rather than quietly ignoring it."""
+        """Max is scale preserving so the unit does no rescale; say so if the model asked for one."""
         if not self.plan.from_model or not self.plan.has(target):
             return
         same_scale = abs(self.scale(source) - self.scale(target)) <= 1e-9 * max(
@@ -85,10 +79,7 @@ class LoweringContext:
             zero_point=self.zero_point(out_name))
 
     def quantize_bias(self, node, index, unit_scale, channels, weights, in_zero):
-        """The model's own bias plus the correction an asymmetric input needs.
-
-        Expanding sum_k (x_k - zx) * w_kc leaves -zx * sum_k w_kc, which is a
-        per channel constant, so it costs nothing to fold in here."""
+        """The model bias plus -zx * sum_k w_kc, the per channel constant an asymmetric input needs."""
         folded = np.zeros(channels, dtype=np.int64)
         if len(node.inputs) > index:
             raw = np.asarray(self.graph.tensor(node.inputs[index]).data,
@@ -105,8 +96,10 @@ class GemmLowering(Lowering):
     def apply(self, node, ctx):
         source = ctx.graph.tensor(node.inputs[0])
         weights = np.asarray(ctx.graph.tensor(node.inputs[1]).data, dtype=np.float64)
-        scales = ctx.plan.weight_scales(weights, ctx.weight_spec(node.inputs[1]))
-        quantized = ctx.plan.quantize_weights(weights, scales)
+        dtype = ctx.plan.weight_dtype_for(node.name)
+        scales = ctx.plan.weight_scales(weights, ctx.weight_spec(node.inputs[1]),
+                                        dtype, node.name)
+        quantized = ctx.plan.quantize_weights(weights, scales, dtype)
         in_scale = ctx.scale(node.inputs[0])
         in_zero = ctx.zero_point(node.inputs[0])
         bias = ctx.quantize_bias(node, 2, in_scale * scales, weights.shape[1],
@@ -116,7 +109,7 @@ class GemmLowering(Lowering):
         vectors = source.numel // weights.shape[0]
         return [MatVecUnit(node.name, [node.inputs[0]], node.outputs, quantized,
                            bias, requant, ctx.plan.act_dtype, ctx.plan.act_dtype,
-                           ctx.plan.weight_dtype, vectors=vectors)]
+                           dtype, vectors=vectors)]
 
 
 class ConvLowering(Lowering):
@@ -127,8 +120,10 @@ class ConvLowering(Lowering):
         weights = np.asarray(ctx.graph.tensor(node.inputs[1]).data, dtype=np.float64)
         kh, kw, cin, cout = weights.shape
         matrix = weights.reshape(kh * kw * cin, cout)
-        scales = ctx.plan.weight_scales(matrix, ctx.weight_spec(node.inputs[1]))
-        quantized = ctx.plan.quantize_weights(matrix, scales)
+        dtype = ctx.plan.weight_dtype_for(node.name)
+        scales = ctx.plan.weight_scales(matrix, ctx.weight_spec(node.inputs[1]),
+                                        dtype, node.name)
+        quantized = ctx.plan.quantize_weights(matrix, scales, dtype)
         in_scale = ctx.scale(node.inputs[0])
         in_zero = ctx.zero_point(node.inputs[0])
         bias = ctx.quantize_bias(node, 2, in_scale * scales, cout, quantized, in_zero)
@@ -145,7 +140,7 @@ class ConvLowering(Lowering):
         out_h, out_w = window.ofm_dim
         matvec = MatVecUnit(node.name, window.outputs, node.outputs, quantized,
                             bias, requant, ctx.plan.act_dtype, ctx.plan.act_dtype,
-                            ctx.plan.weight_dtype, vectors=out_h * out_w)
+                            dtype, vectors=out_h * out_w)
         return [window, matvec]
 
 
@@ -238,10 +233,10 @@ class LowerToHardware(Pass):
     LOWERINGS = (GemmLowering(), ConvLowering(), MaxPoolLowering(), ReluLowering(),
                  AddLowering(), FlattenLowering())
 
-    def __init__(self, plan):
+    def __init__(self, plan, lowerings=()):
         self.plan = plan
         self._dispatch = {}
-        for lowering in self.LOWERINGS:
+        for lowering in tuple(self.LOWERINGS) + tuple(lowerings):
             for op_class in lowering.handles:
                 self._dispatch[op_class] = lowering
 

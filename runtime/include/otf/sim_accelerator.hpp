@@ -1,8 +1,4 @@
-// Accelerator backed by the Verilator model of a compiled design.
-//
-// It writes the stimulus in the same hex form the simulation harness reads,
-// invokes the harness, and reads the beats back, so the host path and the
-// verification path exercise the same design and the same encoding.
+// Accelerator backed by the Verilator model; it writes hex stimulus, runs the harness and reads the beats back.
 #pragma once
 
 #include <cstdio>
@@ -41,8 +37,7 @@ public:
         }
         write_beats(build_dir_ + "/golden/host_input.hex", input, in);
 
-        // $readmemh paths in the generated netlist are relative to the build
-        // directory, so the model has to run from there.
+        // $readmemh paths in the netlist are relative to the build directory, so run from there.
         const std::string command =
             "cd " + build_dir_ + " && " + binary_ +
             " --input golden/host_input.hex --output-beats " +

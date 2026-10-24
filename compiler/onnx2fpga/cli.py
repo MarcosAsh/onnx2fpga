@@ -1,14 +1,4 @@
-"""Command line front end.
-
-    onnx2fpga doctor                          what this machine can do
-    onnx2fpga inspect model.onnx              what the compiler sees
-    onnx2fpga compile model.onnx --out build/m
-    onnx2fpga simulate model.onnx             compile, then prove it in Verilator
-    onnx2fpga synth model.onnx --device z7020 measured resources and timing
-    onnx2fpga devices                         target parts and their budgets
-
-Also reachable as `python -m onnx2fpga` from a checkout, with no install.
-"""
+"""Command line front end; compile, simulate and bitstream are thin layers over onnx2fpga.api."""
 
 import argparse
 import json
@@ -18,13 +8,23 @@ import sys
 
 import numpy as np
 
-from .compile import Compiler
+from .api import load
+from .board import BOARDS, BoardError
 from .doctor import Doctor
-from .measure import Characterizer, VivadoRunner, calibration_samples, render
+from .errors import Onnx2FpgaError, SimulationError, ToolchainError
+from .measure import Characterizer, VivadoRunner, calibration_samples, open_flow, render
 from .p1_ingest import OnnxModel
 from .p2_graph.onnx_importer import OnnxImporter
-from .simulate import SimulationRunner
+from .p6_emit.hardcaml import HardcamlError
+from .p6_emit.project import ProjectWriter
 from .targets.device import Device
+
+
+def add_hdl_option(parser):
+    parser.add_argument("--hdl", default="sv", choices=ProjectWriter.HDLS,
+                        help="sv instantiates the hand written library; hardcaml "
+                             "elaborates the same units in Hardcaml, which needs "
+                             "dune and the hardcaml opam switch")
 
 
 class Command:
@@ -57,19 +57,20 @@ class CompileCommand(Command):
         parser.add_argument("--samples", type=int, default=32)
         parser.add_argument("--seed", type=int, default=0)
         parser.add_argument("--top", default="otf_top")
+        add_hdl_option(parser)
         parser.add_argument("--quiet", action="store_true")
 
     def run(self, args):
-        model = OnnxModel.load(args.model)
-        samples = self._samples(model, args)
-        compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
-                            utilisation_limit=args.utilisation,
-                            mult_bits=args.mult_bits, top_name=args.top,
-                            verbose=not args.quiet)
-        result = compiler.compile(model, samples, args.out)
+        """strict=False because an unmet target is reported in the log and the balanced design written anyway."""
+        acc = load(args.model)
+        acc.compile(device=args.device, target_cycles=args.target_cycles,
+                    utilisation=args.utilisation, mult_bits=args.mult_bits,
+                    top=args.top, hdl=args.hdl, out_dir=args.out,
+                    calibration=batch(self._samples(acc.model, args)),
+                    verbose=not args.quiet, strict=False)
         if not args.quiet:
             print()
-            print(result.folding.render())
+            print(acc.result.folding.render())
             print()
             print("wrote %s" % args.out)
             print("run   cd %s && make run" % args.out)
@@ -97,13 +98,17 @@ class ModelCommand(Command):
         parser.add_argument("--quiet", action="store_true")
 
     def build(self, args, default_out):
-        model = OnnxModel.load(args.model)
+        """A Hardcaml build gets its own default directory so backends never mix sources."""
+        acc = load(args.model)
+        hdl = getattr(args, "hdl", "sv")
+        if hdl != "sv":
+            default_out = "%s_%s" % (default_out, hdl)
         out = args.out or pathlib.Path("build") / default_out
-        compiler = Compiler(device=args.device, target_cycles=args.target_cycles,
-                            verbose=not args.quiet)
-        result = compiler.compile(model, calibration_samples(
-            model, args.samples, args.seed), out)
-        return result, out
+        acc.compile(device=args.device, target_cycles=args.target_cycles, hdl=hdl,
+                    out_dir=out, verbose=not args.quiet, strict=False,
+                    calibration=batch(calibration_samples(acc.model, args.samples,
+                                                          args.seed)))
+        return acc, out
 
 
 class SimulateCommand(ModelCommand):
@@ -112,25 +117,26 @@ class SimulateCommand(ModelCommand):
 
     def configure(self, parser):
         ModelCommand.configure(self, parser)
+        add_hdl_option(parser)
         parser.add_argument("--sweep", action="store_true",
                             help="also run a randomised backpressure sweep, which "
                                  "is where stream designs actually fail")
 
     def run(self, args):
-        result, out = self.build(args, args.model.stem)
+        acc, out = self.build(args, args.model.stem)
         if not args.quiet:
             print()
-            print(result.folding.render())
+            print(acc.result.folding.render())
             print()
 
-        runner = SimulationRunner(out)
-        built = runner.build()
-        if built.returncode != 0:
-            print(built.stdout[-4000:], file=sys.stderr)
-            print(built.stderr[-4000:], file=sys.stderr)
+        try:
+            report = acc.simulate(sweep=args.sweep)
+        except SimulationError as error:
+            print(error.stdout[-4000:], file=sys.stderr)
+            print(error.stderr[-4000:], file=sys.stderr)
             return 1
 
-        first = runner.once()
+        first = report.first
         print(first.output.strip())
         if not first.ok:
             return 1
@@ -138,7 +144,7 @@ class SimulateCommand(ModelCommand):
             return 0
 
         print("\nbackpressure sweep")
-        results = runner.sweep()
+        results = report.sweep
         for entry in results:
             print(entry.render())
         failed = [entry for entry in results if not entry.ok]
@@ -167,8 +173,13 @@ class SynthCommand(ModelCommand):
 
     def run(self, args):
         args.quiet = True
-        result, out = self.build(args, args.model.stem + "_synth")
         device = Device.get(args.device)
+        if device.nextpnr_args:
+            args.hdl = "hardcaml"
+            acc, out = self.build(args, args.model.stem + "_synth")
+            return open_flow(acc.result, out, device, args.impl, args.dry_run)
+        acc, out = self.build(args, args.model.stem + "_synth")
+        result = acc.result
         runner = VivadoRunner(args.part or device.part, args.period, args.impl,
                               executable=args.vivado)
         driver = Characterizer(runner, device)
@@ -200,6 +211,52 @@ class SynthCommand(ModelCommand):
         return 0
 
 
+class BitstreamCommand(ModelCommand):
+    name = "bitstream"
+    help = "compile a model and build a bitstream that runs it on a board"
+
+    def configure(self, parser):
+        ModelCommand.configure(self, parser)
+        parser.add_argument("--board", default="icepi_zero", choices=sorted(BOARDS))
+        parser.add_argument("--rev", default="v1.4",
+                            help="board revision, from the silkscreen")
+        parser.add_argument("--mhz", type=int, default=None,
+                            help="clock from the PLL, a divisor of 480 (default 20)")
+        parser.add_argument("--baud", type=int, default=None,
+                            help="serial rate to the host (default 1000000)")
+        parser.add_argument("--seeds", default="1 2 3 4 5 6 7 8",
+                            help="placement seeds to try until one meets timing")
+        parser.add_argument("--uart", default="usb", choices=("usb", "header"),
+                            help="usb: the board's own USB serial port; header: pins "
+                                 "8 (TX) and 10 (RX) for an external adapter")
+        parser.set_defaults(device="icepi25")
+
+    def run(self, args):
+        options = {"rev": args.rev, "seeds": [int(s) for s in args.seeds.split()],
+                   "uart": args.uart}
+        if args.mhz:
+            options["mhz"] = args.mhz
+        if args.baud:
+            options["baud"] = args.baud
+        args.hdl = "hardcaml"
+        args.out = args.out or pathlib.Path("build") / ("%s_%s" % (args.model.stem,
+                                                                   args.board))
+        board = BOARDS[args.board](args.out, **options)
+        acc, _ = self.build(args, args.model.stem)
+        if not args.quiet:
+            print()
+            print(acc.result.folding.render())
+            print()
+            print("running yosys, nextpnr-ecp5 and ecppack in %s" % board.build)
+        acc.build(board=board)
+        print(board.render_report())
+        print()
+        print("bitstream %s" % board.bitstream)
+        print("load      make -C %s prog" % board.build)
+        print("run       %s" % board.host_command())
+        return 0
+
+
 class DoctorCommand(Command):
     name = "doctor"
     help = "report what this machine can compile, simulate and measure"
@@ -216,13 +273,14 @@ class DevicesCommand(Command):
     help = "list the device models the scheduler can budget against"
 
     def run(self, args):
-        print("%-8s %-26s %9s %9s %8s %7s  %s"
-              % ("name", "part", "lut", "dsp", "bram36", "source", "notes"))
+        print("%-8s %-26s %9s %9s %13s %7s  %s"
+              % ("name", "part", "lut", "dsp", "block ram", "source", "notes"))
         for name in Device.names():
             device = Device.get(name)
-            print("%-8s %-26s %9d %9d %8d %7s  %s"
+            ram = "%d %s" % (getattr(device.budget, device.block_ram), device.block_ram)
+            print("%-8s %-26s %9d %9d %13s %7s  %s"
                   % (name, device.part, device.budget.lut, device.budget.dsp,
-                     device.budget.bram36, device.provenance, device.notes))
+                     ram, device.provenance, device.notes))
         return 0
 
 
@@ -250,7 +308,8 @@ class InspectCommand(Command):
 
 class CommandLine:
     COMMANDS = (DoctorCommand(), InspectCommand(), CompileCommand(),
-                SimulateCommand(), SynthCommand(), DevicesCommand())
+                SimulateCommand(), SynthCommand(), DevicesCommand(),
+                BitstreamCommand())
 
     def build_parser(self):
         parser = argparse.ArgumentParser(
@@ -265,10 +324,26 @@ class CommandLine:
 
     def main(self, argv=None):
         args = self.build_parser().parse_args(argv)
-        return args.handler.run(args)
+        try:
+            return args.handler.run(args)
+        except HardcamlError as error:
+            print("%s\nRun `onnx2fpga doctor` for more, or use --hdl sv." % error,
+                  file=sys.stderr)
+            return 2
+        except BoardError as error:
+            print(error, file=sys.stderr)
+            return 1
+        except Onnx2FpgaError as error:
+            print(error, file=sys.stderr)
+            return 2 if isinstance(error, ToolchainError) else 1
 
 
 SYNTH_FIELDS = ("lut", "ff", "dsp", "bram36", "uram")
+
+
+def batch(samples):
+    """The API takes calibration as one (N, ...) batch; these are N single-sample feeds concatenated back."""
+    return np.concatenate([next(iter(feed.values())) for feed in samples])
 
 
 def main(argv=None):

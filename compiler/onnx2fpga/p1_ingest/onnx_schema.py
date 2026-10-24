@@ -1,9 +1,4 @@
-"""ONNX message schema, expressed against the wire codec in wire.py.
-
-Field numbers come from onnx/onnx.proto3. Only the subset the compiler reads
-or writes is declared; unknown fields are skipped on decode and dropped on
-re-encode.
-"""
+"""The subset of onnx.proto3 the compiler reads and writes; unknown fields are skipped on decode."""
 
 import struct
 

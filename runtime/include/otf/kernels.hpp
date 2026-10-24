@@ -1,10 +1,4 @@
-// Integer reference kernels.
-//
-// These are a third independent implementation of the arithmetic, alongside
-// the numpy model in the compiler and the RTL itself. Agreement between three
-// implementations written against the same written contract is what makes a
-// mismatch a real finding rather than a shared misreading. They are also fast
-// enough to sweep a full dataset, which numpy is not.
+// Integer reference kernels, a third implementation of the arithmetic next to the numpy model and the RTL.
 #pragma once
 
 #include <algorithm>
@@ -36,8 +30,7 @@ struct WindowSpec {
     }
 };
 
-// Folded matrix vector product with per channel bias and rescale.
-// Input is row major (vectors, mw); weights are (mw, mh).
+// Folded matrix vector product with per channel bias and rescale; input is (vectors, mw), weights are (mw, mh).
 class MatVecKernel {
 public:
     MatVecKernel(int mw, int mh, std::vector<int8_t> weights,
@@ -79,8 +72,7 @@ private:
     int64_t zero_point_ = 0;
 };
 
-// Channel last window extraction. Out of range positions emit the integer
-// standing for real zero, which is the zero point.
+// Channel last window extraction; out of range positions emit the zero point.
 class SlidingWindowKernel {
 public:
     SlidingWindowKernel(Shape2d input, int channels, WindowSpec spec, Shape2d output,

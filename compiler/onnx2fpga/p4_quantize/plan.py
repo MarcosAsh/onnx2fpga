@@ -1,19 +1,8 @@
-"""The quantization plan: what integer grid every tensor lives on.
-
-The plan can be filled two ways. Calibration measures activation ranges on
-float data and derives symmetric scales. Annotation reads the scales an
-external quantizer already chose and recorded in the model as QuantizeLinear
-and DequantizeLinear pairs. Everything downstream reads the plan and does not
-care which produced it.
-
-Weights are per output channel, activations per tensor. Activation zero points
-may be non zero; weight zero points may not, because a weight zero point
-introduces a term proportional to the sum of the input, which is not a compile
-time constant and would cost real hardware.
-"""
+"""The quantization plan: the integer grid of every tensor, from calibration or QDQ annotation."""
 
 import numpy as np
 
+from ..errors import ConfigError
 from ..p2_graph.datatype import INT8, QuantSpec
 
 TINY = 1e-12
@@ -26,6 +15,7 @@ class QuantizationPlan:
         self.mult_bits = mult_bits
         self.specs = {}
         self.from_model = False
+        self.layer_weight_dtypes = {}
 
     @classmethod
     def from_peaks(cls, peaks, act_dtype=INT8, weight_dtype=INT8, mult_bits=18):
@@ -72,8 +62,17 @@ class QuantizationPlan:
     def offset(self, name):
         return self.spec(name).offset
 
-    def weight_scales(self, weights, spec=None):
+    def weight_dtype_for(self, layer):
+        """The weight precision of a layer if set, else the plan; activations keep one width."""
+        return self.layer_weight_dtypes.get(layer, self.weight_dtype)
+
+    def weight_scales(self, weights, spec=None, dtype=None, layer=None):
         """Per output channel, with the output channel axis last."""
+        if spec is not None and layer in self.layer_weight_dtypes:
+            raise ConfigError(
+                "%s's weights were quantized by the model itself, so its precision "
+                "cannot be overridden. Quantize the model with the precision you want "
+                "instead, or start from the float model" % layer)
         if spec is not None:
             if not spec.is_symmetric:
                 raise NotImplementedError(
@@ -84,10 +83,10 @@ class QuantizationPlan:
                 return np.full(weights.shape[-1], float(scales[0]))
             return scales
         peaks = np.max(np.abs(weights), axis=tuple(range(weights.ndim - 1)))
-        return np.maximum(peaks, TINY) / self.weight_dtype.max
+        return np.maximum(peaks, TINY) / (dtype or self.weight_dtype).max
 
-    def quantize_weights(self, weights, scales):
-        return self.weight_dtype.clamp(np.rint(weights / scales))
+    def quantize_weights(self, weights, scales, dtype=None):
+        return (dtype or self.weight_dtype).clamp(np.rint(weights / scales))
 
     def __repr__(self):
         asymmetric = sum(1 for s in self.specs.values() if not s.is_symmetric)

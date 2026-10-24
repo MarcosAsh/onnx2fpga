@@ -1,9 +1,4 @@
-// Host side interface to a compiled design.
-//
-// Everything above this line is float and channel-last in the caller's layout;
-// everything below is quantised beats on a stream. Backends differ only in
-// where those beats go: a Verilator binary today, an XRT kernel on an F2
-// instance once the shell integration lands.
+// Host side interface; backends differ only in where the quantised beats go (Verilator today, XRT later).
 #pragma once
 
 #include <algorithm>

@@ -104,8 +104,7 @@ class FoldingTest(unittest.TestCase):
 
 
 class BeatWidthTest(unittest.TestCase):
-    """Neighbouring units must meet at an integer ratio, or the converter
-    between them throttles the edge to their common divisor."""
+    """Neighbouring units must meet at an integer ratio, or the converter throttles the edge to their common divisor."""
 
     TARGETS = (400, 200, 100, 50, 25)
 

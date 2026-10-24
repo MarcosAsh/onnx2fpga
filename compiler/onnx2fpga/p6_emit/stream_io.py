@@ -1,9 +1,4 @@
-"""Conversion between a logical tensor and the beats that carry it.
-
-The stream order is the tensor flattened channel-last. Each beat holds
-`elems_per_beat` consecutive elements with element 0 in the least significant
-bits, which is the layout every RTL module slices with.
-"""
+"""Conversion between a tensor and its beats: channel-last, element 0 in the low bits."""
 
 import numpy as np
 

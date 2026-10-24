@@ -1,35 +1,4 @@
-// Sliding window generator, line buffered, with optional parallel windows.
-//
-// Holds only the pixels a window can still reach: the (KH-1) rows above the
-// current one plus the current partial row. Capture and replay run in the same
-// cycles, so a convolution costs its replay term alone rather than replay plus
-// a full frame capture, and the memory is a span rather than an image.
-//
-// PAR emits PAR adjacent kernel columns per beat instead of one. A first layer
-// with few input channels cannot fold on channels at all, so without this its
-// replay term is the floor for the whole pipeline. Reading PAR pixels at once
-// needs PAR read ports, which is done by replicating the buffer: the writer
-// writes every copy, and copy j is read at an offset of j*DIL_W pixels. That
-// costs PAR times the memory and keeps the read address a plain bit slice,
-// which a banked layout would not.
-//
-// Addressing is a circular buffer over pixel indices. The span of one window
-// in raster order is
-//
-//     SPAN = (KH-1)*DIL_H*IFM_W + (KW-1)*DIL_W + 1
-//
-// but the span alone is not enough to size the buffer. With top padding two
-// output rows can start on the same input row, so when the reader wraps from
-// the end of one output row to the start of the next it walks backwards to a
-// pixel it already passed. The buffer therefore has to cover the span plus
-// that backward reach, TAIL, and the oldest pixel still needed is the minimum
-// over the rest of this output row and the start of the next one, not just the
-// current position. Getting either of these wrong silently corrupts the first
-// window of every output row on a padded, non square image.
-//
-// Capacity is rounded up to a power of two so addressing is bit slicing rather
-// than a modulo. All pixel counters are free running and compared by signed
-// difference, so they wrap harmlessly and frames overlap without a reset.
+// Line buffered sliding window generator; buffer is a power of two circular span plus the TAIL backward reach, pixel counters wrap by signed difference.
 `default_nettype none
 
 module otf_swu_line #(
@@ -78,8 +47,7 @@ module otf_swu_line #(
     localparam int OW_W  = (OFM_W <= 1) ? 1 : $clog2(OFM_W);
     localparam int AD_W  = $clog2(DEPTH * CG);
 
-    // PAR > 1 consumes whole pixels, so channel folding and column parallelism
-    // are mutually exclusive by construction.
+    // PAR > 1 consumes whole pixels, so channel folding and column parallelism are exclusive.
     initial begin
         if (PAR > 1 && CG != 1)
             $fatal(1, "otf_swu_line: PAR > 1 requires SIMD == IFM_CH");
@@ -126,7 +94,7 @@ module otf_swu_line #(
         end
     endgenerate
 
-    // Every copy that will actually be read has to have arrived already.
+    // Every copy that will be read must have arrived.
     logic read_ok;
     always_comb begin
         read_ok = 1'b1;
@@ -135,10 +103,7 @@ module otf_swu_line #(
         end
     end
 
-    // Oldest pixel any remaining read can still reach. Padding puts part of
-    // the window outside the image, so clamp to the first real pixel. Output
-    // row oh+1 restarts at the left edge, which can be behind where row oh has
-    // reached, so it has to be considered too.
+    // Oldest pixel any remaining read reaches; includes the start of the next output row, which can sit behind this one.
     wire signed [31:0] row0_raw = 32'($signed({1'b0, oh})) * STRIDE_H - PAD_T;
     wire signed [31:0] col0_raw = 32'($signed({1'b0, ow})) * STRIDE_W - PAD_L;
     wire signed [31:0] row0 = (row0_raw < 0) ? 32'sd0 : row0_raw;

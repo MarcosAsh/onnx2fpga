@@ -1,10 +1,4 @@
-"""Memory images in $readmemh form.
-
-Values are written as two's complement of exactly the declared width, because
-that is how the RTL reads them back. Weight words pack SIMD elements with
-element 0 in the least significant bits, matching the bit slicing in
-otf_mvau.sv.
-"""
+"""Memory images in $readmemh form, two's complement at the declared width, element 0 in the low bits."""
 
 import numpy as np
 

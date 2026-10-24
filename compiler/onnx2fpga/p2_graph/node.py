@@ -1,10 +1,4 @@
-"""Node hierarchy.
-
-Two families live here. Frontend nodes mirror ONNX operators and only know how
-to infer shapes and run a numpy reference. Hardware nodes additionally know
-their folding factors, cycle count, resource cost and SystemVerilog form. The
-lowering passes rewrite the first family into the second.
-"""
+"""Frontend nodes mirror ONNX ops; hardware nodes add folding, cycles, cost and SystemVerilog form."""
 
 from abc import ABC, abstractmethod
 
@@ -35,8 +29,7 @@ class Node(ABC):
 
 
 class MemorySpec:
-    """One initialised memory: the values, how wide each element is, and
-    whether the last axis is packed into a single word."""
+    """One initialised memory: values, element width, and whether the last axis is packed into one word."""
 
     def __init__(self, array, elem_bits, packed=False):
         self.array = array
@@ -70,6 +63,23 @@ class HwNode(Node):
         self.folding.update(choice)
 
     @property
+    def pinned_folding(self):
+        """Factors a user fixed by hand; the scheduler still chooses the ones left out."""
+        return dict(self.attrs.get("pinned_folding", {}))
+
+    def allowed_foldings(self):
+        """folding_options narrowed to the pinned factors; every folding choice goes through this."""
+        pinned = self.pinned_folding
+        return [option for option in self.folding_options()
+                if all(option.get(key) == value for key, value in pinned.items())]
+
+    def starting_folding(self):
+        """The cheapest allowed folding, which for an unpinned node is its default."""
+        if not self.pinned_folding:
+            return self.default_folding()
+        return dict(self.allowed_foldings()[0])
+
+    @property
     @abstractmethod
     def cycles(self):
         """Cycles to process one frame once the pipeline is primed."""
@@ -86,6 +96,10 @@ class HwNode(Node):
         """Named MemorySpec entries to emit as $readmemh initialisation files."""
         return {}
 
+    def rtl_files(self):
+        """SystemVerilog sources this unit brings beyond the library, by file name."""
+        return {}
+
     def sv_input_prefixes(self):
         return ["s"]
 
@@ -93,8 +107,7 @@ class HwNode(Node):
         return ["m"]
 
     def sv_connections(self, graph, nets):
-        """Port map for this node's instance. Overridden by units whose RTL
-        ports are not the plain single-in single-out stream pair."""
+        """Port map for this node instance; overridden by units without the plain stream pair."""
         wiring = {"clk": "clk", "rst_n": "rst_n"}
         for prefix, name in zip(self.sv_input_prefixes(), self.stream_inputs(graph)):
             wiring["%s_tdata" % prefix] = nets.data(name)

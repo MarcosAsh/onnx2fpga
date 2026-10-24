@@ -1,0 +1,27 @@
+opam-version: "2.0"
+maintainer: "Marcos Ashton"
+authors: ["Marcos Ashton"]
+license: "Apache-2.0"
+x-maintenance-intent: ["(latest)"]
+build: [
+  ["dune" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml" {>= "5.1.0"}
+  "dune" {>= "3.17.0"}
+  "core"
+  "core_unix"
+  "hardcaml"
+  "hardcaml_test_harness"
+  "hardcaml_waveterm"
+  "jane_rope"
+  "jsonaf"
+  "ppx_hardcaml"
+  "ppx_jane"
+]
+available: arch != "x86_32"
+synopsis: "Hardcaml port of the onnx2fpga streaming unit library"
+description: "
+The streaming units onnx2fpga instantiates, written in Hardcaml, and a generator
+that turns a compiled design description into one Verilog file.
+"

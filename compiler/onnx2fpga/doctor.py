@@ -1,9 +1,4 @@
-"""Reports what this machine can do, and what each missing piece would unlock.
-
-The tool degrades in stages rather than all at once: compiling needs nothing
-but Python and numpy, simulating needs Verilator and a C++ compiler, and
-measuring real resources needs Vivado. This says which stage you are at.
-"""
+"""Reports what this machine can do and what each missing piece would unlock."""
 
 import os
 import pathlib
@@ -11,14 +6,35 @@ import shutil
 import subprocess
 
 from .assets import AssetError, AssetLocator
+from .p6_emit.hardcaml import HardcamlError, HardcamlGenerator
 
-# Vivado still links against the ncurses 5 ABI, which Ubuntu dropped after
-# 24.04. Symlinking the 6 ABI over it is the standard workaround.
+# Vivado links against the ncurses 5 ABI, which Ubuntu dropped; symlinking the 6 ABI over it works.
 LEGACY_NCURSES = "libtinfo.so.5"
 LIB_DIR = pathlib.Path("/usr/lib/x86_64-linux-gnu")
 
 VIVADO_ROOTS = ("/opt/Xilinx", "/tools/Xilinx", "~/Xilinx", "~/xilinx",
                 "/usr/local/Xilinx")
+
+OSS_CAD_SUITE = ("the OSS CAD Suite from github.com/YosysHQ/oss-cad-suite-build, "
+                 "unpacked to ~/.local/opt/oss-cad-suite or with its bin on PATH")
+
+# What each tool unlocks and how to get it; the report and the API errors both read this.
+TOOLS = {
+    "verilator": ("simulating a compiled design",
+                  "sudo apt install verilator  (version 5 or newer)"),
+    "g++": ("the simulation harness and kernels", "sudo apt install g++"),
+    "make": ("building a generated project", "sudo apt install make"),
+    "tclsh": ("exercising the synthesis script offline", "sudo apt install tcl"),
+    "hardcaml": ("compile and simulate --hdl hardcaml",
+                 "opam switch 5.2.0+ox with hardcaml, ppx_hardcaml, jsonaf "
+                 "and core_unix, then eval $(opam env)"),
+    "vivado": ("measured resources and timing", "free ML Standard edition from AMD"),
+    "yosys": ("an ECP5 bitstream", OSS_CAD_SUITE),
+    "nextpnr-ecp5": ("an ECP5 bitstream", OSS_CAD_SUITE),
+    "ecppack": ("an ECP5 bitstream", OSS_CAD_SUITE),
+    "openFPGALoader": ("loading a bitstream onto a board", OSS_CAD_SUITE),
+    "pyserial": ("talking to a board over its serial port", "pip install pyserial"),
+}
 
 
 class Check:
@@ -79,22 +95,33 @@ class Doctor:
 
     def simulation(self):
         return [
-            self._tool("verilator", "verilator", "simulating a compiled design",
-                       "sudo apt install verilator  (version 5 or newer)",
+            self._tool("verilator", "verilator", *TOOLS["verilator"],
                        version=lambda p: self._first_line(p, "--version")),
-            self._tool("g++", "c++ compiler", "the simulation harness and kernels",
-                       "sudo apt install g++",
+            self._tool("g++", "c++ compiler", *TOOLS["g++"],
                        version=lambda p: self._first_line(p, "--version")),
-            self._tool("make", "make", "building a generated project",
-                       "sudo apt install make"),
-            self._tool("tclsh", "tclsh", "exercising the synthesis script offline",
-                       "sudo apt install tcl", required=False),
+            self._tool("make", "make", *TOOLS["make"]),
+            self._tool("tclsh", "tclsh", *TOOLS["tclsh"], required=False),
         ]
 
+    def hardcaml(self):
+        """Building the generator is the only honest test, since dune on PATH says nothing about hardcaml."""
+        generator = HardcamlGenerator()
+        reason = generator.unavailable()
+        if reason is not None:
+            return [Check("hardcaml", False, reason.splitlines()[0],
+                          *TOOLS["hardcaml"], required=False)]
+        try:
+            executable = generator.executable
+        except HardcamlError as error:
+            return [Check("hardcaml", False, str(error).splitlines()[0],
+                          "compile and simulate --hdl hardcaml",
+                          "cd %s && dune build" % generator.project, required=False)]
+        detail = "%s  (dune %s)" % (executable,
+                                    self._first_line(shutil.which("dune"), "--version"))
+        return [Check("hardcaml", True, detail)]
+
     def synthesis(self):
-        checks = [self._tool(self.vivado, "vivado",
-                             "measured resources and timing",
-                             "free ML Standard edition from AMD",
+        checks = [self._tool(self.vivado, "vivado", *TOOLS["vivado"],
                              required=False,
                              version=lambda p: self._first_line(p, "-version"))]
         if not shutil.which(self.vivado):
@@ -132,6 +159,7 @@ class Doctor:
     def report(self):
         sections = (("compiling", self.core()),
                     ("simulating", self.simulation()),
+                    ("hardcaml backend", self.hardcaml()),
                     ("measuring", self.synthesis()))
         blocking = 0
         for title, checks in sections:

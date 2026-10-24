@@ -1,0 +1,6 @@
+# Serial pair on header pin 8 (FPGA tx, GPIO14) and pin 10 (rx, GPIO15); use a crossed 3.3 V adapter.
+
+LOCATE COMP "rxd" SITE "N1";
+IOBUF PORT "rxd" IO_TYPE=LVCMOS33 PULLMODE=UP;
+LOCATE COMP "txd" SITE "P1";
+IOBUF PORT "txd" IO_TYPE=LVCMOS33 DRIVE=4;

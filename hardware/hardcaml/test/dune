@@ -1,0 +1,20 @@
+(library
+ (name onnx2fpga_hardcaml_test)
+ (libraries
+  core
+  hardcaml
+  hardcaml_lws
+  hardcaml_test_harness
+  hardcaml_waveterm
+  expect_test_helpers_core
+  onnx2fpga_hardcaml
+  re)
+ (inline_tests
+  (deps
+   (glob_files *.ml))
+  (flags
+   (-source-tree-root .)))
+ (lint
+  (pps ppx_js_style -check-doc-comments))
+ (preprocess
+  (pps ppx_hardcaml ppx_jane)))

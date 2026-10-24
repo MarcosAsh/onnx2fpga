@@ -1,0 +1,6 @@
+# Serial pair on the board's FT231X (upstream usb_rx and usb_tx).
+
+LOCATE COMP "rxd" SITE "K16";
+IOBUF PORT "rxd" IO_TYPE=LVCMOS33 PULLMODE=UP;
+LOCATE COMP "txd" SITE "K15";
+IOBUF PORT "txd" IO_TYPE=LVCMOS33 PULLMODE=UP DRIVE=4;

@@ -1,10 +1,4 @@
-// Cross language contract test.
-//
-// The Python compiler writes a fixture describing a matrix-vector layer and
-// the exact integer output it expects. This program recomputes it with the C++
-// kernel. If the two disagree, one of them has drifted from the written
-// arithmetic contract, and the RTL is checked against the same contract, so
-// catching it here is much cheaper than catching it in simulation.
+// Recomputes a Python-written matrix-vector fixture with the C++ kernel to catch drift from the arithmetic contract.
 
 #include <fstream>
 #include <iostream>

@@ -1,17 +1,4 @@
-"""Buffer sizing from an as-soon-as-possible schedule.
-
-The question a FIFO answers is how far one producer can run ahead of its
-consumer. On a straight chain that is small. Across a fork that rejoins, it is
-the whole difference in depth between the two branches, because the join
-cannot take a beat from the short side until the long side catches up, and
-everything the short side produced in the meantime has to sit somewhere.
-
-Undersizing there is not a slowdown, it is a deadlock: the short branch fills,
-which stalls the fork, which stalls the long branch, which never reaches the
-join. So the analysis below computes the peak occupancy of every edge under
-unbounded buffers, and each FIFO is sized to it. Real backpressure can only
-lower occupancy relative to that schedule, so the answer is safe.
-"""
+"""Buffer sizing from an as-soon-as-possible schedule: peak edge occupancy, since undersizing deadlocks forks."""
 
 
 class EdgeOccupancy:
@@ -24,8 +11,7 @@ class EdgeOccupancy:
 
     @property
     def peak(self):
-        """Occupancy only ever rises at a production, so checking those is
-        enough. Both sequences are sorted, so one walk does it."""
+        """Occupancy only rises at a production, and both sequences are sorted, so one walk does it."""
         peak, taken = 0, 0
         for index, moment in enumerate(self.produced):
             while taken < len(self.consumed) and self.consumed[taken] <= moment:
@@ -68,8 +54,7 @@ class TokenAnalysis:
         return self.edges
 
     def _start_of(self, node):
-        """Earliest the unit can begin without ever waiting mid stream: every
-        beat must have arrived by the moment the schedule wants it."""
+        """Earliest the unit can begin without waiting mid stream: every beat has arrived when wanted."""
         start = 0
         for index, name in enumerate(node.stream_inputs(self.graph)):
             arrivals = self.arrivals.get(name)

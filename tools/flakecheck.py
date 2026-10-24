@@ -1,13 +1,4 @@
-"""Runs the test suite repeatedly, shuffled, to catch flaky tests.
-
-Two things make a suite unreliable, and both hide in a single ordered run.
-Tests that depend on the order they run in, and code that depends on Python's
-per process string hash randomisation. This varies both and fails if any run
-disagrees with the others.
-
-    python tools/flakecheck.py                       everything, three times
-    python tools/flakecheck.py --repeat 10 --fast    unit tests only, ten times
-"""
+"""Runs the test suite repeatedly, shuffled, to catch order dependent and hash seed dependent tests."""
 
 import argparse
 import os
@@ -21,7 +12,7 @@ RUNNER = ROOT / "tests" / "shuffled_runner.py"
 
 FAST = ("test_ingest.py", "test_numerics.py", "test_pipeline.py",
         "test_determinism.py", "test_quantized_import.py",
-        "test_characterize.py", "test_synth_script.py")
+        "test_characterize.py", "test_synth_script.py", "test_hardcaml_backend.py")
 
 
 class Run:

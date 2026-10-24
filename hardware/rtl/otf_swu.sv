@@ -1,9 +1,4 @@
-// Sliding window generator, channel-last.
-//
-// Frame-buffer strategy: one feature map is captured, then windows are read
-// out of it in (row, col, ky, kx, channel-group) order, which is the order the
-// downstream matrix-vector engine expects its input vector in. Padding is
-// synthesised as PAD_VALUE, the integer that stands for real zero.
+// Frame buffered sliding window generator, channel-last; padding is PAD_VALUE.
 `default_nettype none
 
 module otf_swu #(

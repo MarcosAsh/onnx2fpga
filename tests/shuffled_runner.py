@@ -1,9 +1,4 @@
-"""Runs the test suite in a shuffled order.
-
-Tests that pass only in the order they were written are a slow leak: one of
-them is leaving state behind. Shuffling with a recorded seed turns that from
-something noticed months later into something a run fails on, reproducibly.
-"""
+"""Runs the test suite in a shuffled order with a recorded seed, to expose order dependent tests."""
 
 import argparse
 import random

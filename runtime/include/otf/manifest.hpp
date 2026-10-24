@@ -1,5 +1,4 @@
-// Typed view over the manifest.json the compiler writes next to the RTL.
-// This is the contract between a compiled design and any host that drives it.
+// Typed view over manifest.json, the contract between a compiled design and its host.
 #pragma once
 
 #include <fstream>
