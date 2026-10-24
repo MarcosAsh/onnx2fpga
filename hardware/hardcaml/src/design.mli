@@ -61,4 +61,5 @@ type t =
 (** Raises on anything malformed, naming the field. *)
 val of_string : string -> t
 
+val of_json : Jsonaf.t -> t
 val width : t -> string -> int

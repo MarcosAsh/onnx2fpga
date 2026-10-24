@@ -68,9 +68,37 @@ let icepi_command =
         print_string (Icepi_top.verilog ~design ~mhz ~baud ~rx_depth ~tx_depth)]
 ;;
 
+let tick_to_trade_command =
+  Command.basic
+    ~summary:"Verilog for the tick to trade path, from a JSON config holding the model"
+    [%map_open.Command
+      let path = anon ("CONFIG_JSON" %: string)
+      and unit =
+        flag
+          "unit"
+          (optional string)
+          ~doc:"NAME only this unit, moldudp64_step or book_side, under a top named dut"
+      and stages = flag "stages" no_arg ~doc:" print each unit's latency instead" in
+      fun () ->
+        let params = Tick_to_trade.Params.of_string (In_channel.read_all path) in
+        if stages
+        then
+          let module T =
+            Tick_to_trade.Make (struct
+              let params = params
+            end)
+          in
+          print_s [%sexp (T.stages : (string * int) list)]
+        else print_string (Tick_to_trade.verilog ?unit params)]
+;;
+
 let () =
   Command_unix.run
     (Command.group
        ~summary:""
-       [ "design", design_command; "units", units_command; "icepi", icepi_command ])
+       [ "design", design_command
+       ; "units", units_command
+       ; "icepi", icepi_command
+       ; "tick-to-trade", tick_to_trade_command
+       ])
 ;;

@@ -12,8 +12,10 @@ Hardcaml, Jane Street's OCaml hardware language, and kept cycle for cycle
 identical to a SystemVerilog twin.
 
 What runs today: the Python API below, both backends, a fixed latency mode that
-answers the example MLP exactly 9 cycles after its input, and a small MLP on an
-Icepi Zero that came back bit exact on 300 random inputs. Pages marked
+answers the example MLP exactly 9 cycles after its input, a small MLP on an
+Icepi Zero that came back bit exact on 300 random inputs, and, in simulation, a
+tick to trade path from ITCH packets to orders that decides 14 cycles after
+each message's last byte. Pages marked
 "planned" are specs for work not built yet. We write the page first and then
 make the code match it.
 
@@ -45,6 +47,7 @@ guides/quantization
 guides/boards
 guides/backends
 guides/custom-layers
+guides/tick-to-trade
 ```
 
 ```{toctree}
