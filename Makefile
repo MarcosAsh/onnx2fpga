@@ -12,7 +12,7 @@ help:
 	@echo "make models     build the example ONNX models"
 	@echo "make test       run everything (unit, C++ contract, Verilator)"
 	@echo "make test-unit  fast tests only, no simulation"
-	@echo "make test-sim   Verilator end to end, both example models"
+	@echo "make test-sim   Verilator end to end, both example models and the tick to trade replay"
 	@echo "make test-api   the Python API, end to end, streaming, fixed latency and trees"
 	@echo "make test-cpp   C++ kernels against the Python model"
 	@echo "make test-hardcaml  the Hardcaml library's own tests (needs dune)"
@@ -65,6 +65,7 @@ test-sim:
 	$(PYTHON) -m unittest discover -s tests -p "test_simulation.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_hardcaml_lockstep.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_icepi_board.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_tick_to_trade.py" -v
 
 # Hardcaml tests skip where dune is missing.
 test-hardcaml:
