@@ -50,7 +50,7 @@ class Im2Col:
 
 
 class GemmOp(FrontendNode):
-    """y = x @ W + b with W already normalised to (in_features, out_features)."""
+    """y = x @ W + b with W already normalised to (in_features, out_features), or y > 0 for a label."""
 
     op_type = "Gemm"
 
@@ -67,6 +67,8 @@ class GemmOp(FrontendNode):
         y = x @ w
         if len(self.inputs) > 2:
             y = y + graph.tensor(self.inputs[2]).data
+        if self.attrs.get("label"):
+            return [(y > 0).astype(np.float64)]
         return [np.maximum(y, 0) if self.attrs.get("relu") else y]
 
 
@@ -149,16 +151,28 @@ class MaxPoolOp(FrontendNode):
 
 
 class FlattenOp(FrontendNode):
-    """Stream no-op: channel-last data already arrives in flattened order."""
+    """Stream no-op: channel-last data already arrives in flattened order, or in `shape`."""
 
     op_type = "Flatten"
 
     def infer(self, graph):
         x = graph.tensor(self.inputs[0])
         out = self._out(graph)
-        out.shape = (x.shape[0], x.numel // x.shape[0])
+        out.shape = tuple(self.attrs.get("shape") or (x.shape[0], x.numel // x.shape[0]))
         out.dtype = x.dtype
 
     def execute(self, graph, values):
-        x = values[self.inputs[0]]
-        return [x.reshape(x.shape[0], -1)]
+        x, shape = values[self.inputs[0]], self.attrs.get("shape")
+        return [x.reshape((x.shape[0],) + tuple(shape[1:]) if shape else (x.shape[0], -1))]
+
+
+class BinarizerOp(FrontendNode):
+    op_type = "Binarizer"
+
+    def infer(self, graph):
+        source = graph.tensor(self.inputs[0])
+        out = self._out(graph)
+        out.shape, out.dtype = source.shape, source.dtype
+
+    def execute(self, graph, values):
+        return [(values[self.inputs[0]] > self.attrs["threshold"]).astype(np.float64)]

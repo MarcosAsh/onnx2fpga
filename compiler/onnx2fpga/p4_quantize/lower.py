@@ -2,10 +2,10 @@
 
 import numpy as np
 
-from ..p2_graph.datatype import INT32
+from ..p2_graph.datatype import INT32, IntType, QuantSpec
 from ..p2_graph.tensor import Tensor
 from ..p3_ops.elementwise import ElementwiseOp
-from ..p3_ops.onnx_ops import AddOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
+from ..p3_ops.onnx_ops import AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
 from ..p3_ops.hardware_ops import (ActivationUnit, AddUnit, MatVecUnit, PoolUnit,
                                    SlidingWindowUnit)
 from ..pipeline import Pass
@@ -82,19 +82,22 @@ class LoweringContext:
             pad_value=self.zero_point(node.inputs[0]))
 
     def matvec(self, node, matrix, inputs, vectors):
-        """The input zero point folds into the bias as -zx * sum_k w_kc per channel."""
+        """Per feature input scales fold into the weights, zero points into the bias."""
         plan = self.plan
-        scales = plan.weight_scales(matrix, plan.specs.get(node.inputs[1]), node.name)
+        spec = plan.spec(node.inputs[0])
+        weight_spec = plan.specs.get(node.inputs[1])
+        in_scale, in_zero = float(spec.scale[0]), np.broadcast_to(spec.zero_point,
+                                                                  matrix.shape[:1])
+        if spec.scale.size > 1:
+            matrix, in_scale, weight_spec = matrix * spec.scale[:, None], 1.0, None
+        scales = plan.weight_scales(matrix, weight_spec, node.name)
         weights = plan.quantize_weights(matrix, scales, node.name)
-        in_scale = self.scale(node.inputs[0])
-        in_zero = self.zero_point(node.inputs[0])
-        bias = np.zeros(matrix.shape[1], dtype=np.int64)
+        raw = np.zeros(matrix.shape[1])
         if len(node.inputs) > 2:
             raw = np.asarray(self.graph.tensor(node.inputs[2]).data,
                              dtype=np.float64).reshape(-1)
-            bias = np.rint(raw / (in_scale * scales)).astype(np.int64)
-        if in_zero:
-            bias = bias - in_zero * np.sum(weights, axis=0).astype(np.int64)
+        # A large zero point times the rounded weights would scale their rounding error by it.
+        bias = np.rint((raw - in_scale * (in_zero @ matrix)) / (in_scale * scales))
         requant = Requantizer.from_real_multipliers(
             in_scale * scales / self.scale(node.outputs[0]), plan.act_dtype,
             plan.mult_bits, relu=bool(node.attrs.get("relu")),
@@ -105,9 +108,30 @@ class LoweringContext:
 
 
 def lower_gemm(node, ctx):
+    """A label is one bit, the sign of the margin: a multiplier of 1 and a clamp to 0 and 1."""
     source = ctx.graph.tensor(node.inputs[0])
     matrix = np.asarray(ctx.graph.tensor(node.inputs[1]).data, dtype=np.float64)
-    return [ctx.matvec(node, matrix, [node.inputs[0]], source.numel // matrix.shape[0])]
+    if node.attrs.get("label"):
+        ctx.plan.annotate(node.outputs[0], QuantSpec(1.0))
+    unit = ctx.matvec(node, matrix, [node.inputs[0]], source.numel // matrix.shape[0])
+    if node.attrs.get("label"):
+        unit.out_dtype = IntType(1, False)
+        unit.requant = Requantizer(np.ones(1), 0, unit.out_dtype)
+    return [unit]
+
+
+def lower_binarizer(node, ctx):
+    """Identity weights and a bias of minus the floor of the threshold's code, clamped to 0 and 1."""
+    source = ctx.graph.tensor(node.inputs[0])
+    spec, width = ctx.plan.spec(node.inputs[0]), source.shape[-1]
+    code = np.broadcast_to(node.attrs["threshold"] / spec.scale + spec.zero_point, (width,))
+    ctx.plan.annotate(node.outputs[0], QuantSpec(1.0))
+    dtype = ctx.plan.act_dtype
+    requant = Requantizer(np.ones(width), 0, dtype, lower_clamp=0, upper_clamp=1)
+    return [MatVecUnit(node.name, node.inputs, node.outputs, np.eye(width),
+                       -np.clip(np.floor(code), dtype.min - 1, dtype.max), requant, dtype,
+                       dtype, ctx.plan.weight_dtype_for(node.name),
+                       vectors=source.numel // width)]
 
 
 def lower_conv(node, ctx):
@@ -182,7 +206,8 @@ def lower_flatten(node, ctx):
 
 BUILTIN = {GemmOp: lower_gemm, ConvOp: lower_conv, MaxPoolOp: lower_maxpool,
            ReluOp: lower_relu, AddOp: lower_add, FlattenOp: lower_flatten,
-           TreeEnsembleOp: lower_trees, ElementwiseOp: lower_elementwise}
+           BinarizerOp: lower_binarizer, TreeEnsembleOp: lower_trees,
+           ElementwiseOp: lower_elementwise}
 
 
 class LowerToHardware(Pass):

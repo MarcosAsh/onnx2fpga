@@ -611,7 +611,8 @@ class Accelerator:
 
     @property
     def _labels(self):
-        return getattr(self.result.hardware_graph.nodes[-1], "decision", False)
+        graph = self.result.hardware_graph
+        return graph.tensor(graph.outputs[0]).dtype.bits == 1
 
     def predict(self, x, on=None, quantized=False):
         """Outputs for a batch of inputs, from the reference model until deployed and from the board after."""

@@ -16,6 +16,8 @@ class Graph:
         self.outputs = []
         self.layouts = {}
         self.annotations = {}
+        # Inputs a model scales itself, which get a quantization grid per feature.
+        self.feature_grids = set()
 
     def add_tensor(self, tensor):
         if tensor.name in self._tensors:

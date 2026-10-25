@@ -5,7 +5,7 @@ import numpy as np
 from ..errors import BudgetError, ConfigError
 from ..p3_ops.elementwise import ElementwiseOp, EltwiseUnit, TableUnit
 from ..p3_ops.hardware_ops import DenseUnit, MatVecUnit, TreeEnsembleUnit
-from ..p3_ops.onnx_ops import AddOp, FlattenOp, GemmOp, ReluOp
+from ..p3_ops.onnx_ops import AddOp, BinarizerOp, FlattenOp, GemmOp, ReluOp
 from ..p3_ops.trees import TreeEnsembleOp
 from ..pipeline import Pass
 from .folding import FoldingReport
@@ -31,8 +31,8 @@ def predicted_fmax(units, delays):
 
 def check_fixed_ops(graph):
     for node in graph.topological_order():
-        if not isinstance(node, (GemmOp, FlattenOp, TreeEnsembleOp, ElementwiseOp, ReluOp,
-                                 AddOp)):
+        if not isinstance(node, (GemmOp, FlattenOp, BinarizerOp, TreeEnsembleOp, ElementwiseOp,
+                                 ReluOp, AddOp)):
             kind = node.op_type + ("+Relu" if node.attrs.get("relu") else "")
             raise ConfigError("mode='fixed' cannot build %s (%s) yet" % (node.name, kind))
 

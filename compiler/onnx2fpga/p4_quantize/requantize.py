@@ -6,13 +6,14 @@ import numpy as np
 
 
 class Requantizer:
-    def __init__(self, multipliers, shift, out_dtype, lower_clamp=None, zero_point=0):
+    def __init__(self, multipliers, shift, out_dtype, lower_clamp=None, zero_point=0,
+                 upper_clamp=None):
         self.multipliers = np.asarray(multipliers, dtype=np.int64)
         self.shift = int(shift)
         self.out_dtype = out_dtype
         self.zero_point = int(zero_point)
         self.lower_clamp = out_dtype.min if lower_clamp is None else lower_clamp
-        self.upper_clamp = out_dtype.max
+        self.upper_clamp = out_dtype.max if upper_clamp is None else upper_clamp
 
     @classmethod
     def from_real_multipliers(cls, reals, out_dtype, mult_bits=18, relu=False,
@@ -40,10 +41,11 @@ class Requantizer:
         """The same rescale with multipliers for `shift`, rounded when it is smaller."""
         multipliers = np.rint(self.multipliers * 2.0 ** (shift - self.shift)).astype(np.int64)
         return Requantizer(multipliers, shift, self.out_dtype, self.lower_clamp,
-                           self.zero_point)
+                           self.zero_point, self.upper_clamp)
 
     def broadcast_to(self, channels):
         if self.multipliers.size == channels:
             return self
         return Requantizer(np.full(channels, self.multipliers.flat[0], dtype=np.int64),
-                           self.shift, self.out_dtype, self.lower_clamp, self.zero_point)
+                           self.shift, self.out_dtype, self.lower_clamp, self.zero_point,
+                           self.upper_clamp)

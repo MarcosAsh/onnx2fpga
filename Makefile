@@ -13,7 +13,7 @@ help:
 	@echo "make test       run everything (unit, C++ contract, Verilator)"
 	@echo "make test-unit  fast tests only, no simulation"
 	@echo "make test-sim   Verilator end to end, both example models and the tick to trade replay"
-	@echo "make test-api   the Python API, end to end, streaming, fixed latency, elementwise, trees and reloads"
+	@echo "make test-api   the Python API, end to end, streaming, fixed latency, elementwise, trees, reloads, corpus"
 	@echo "make test-cpp   C++ kernels against the Python model"
 	@echo "make test-hardcaml  the Hardcaml library's own tests (needs dune)"
 	@echo "make runtime    build the host tools in runtime/bin"
@@ -37,6 +37,7 @@ test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_determinism.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_quantized_import.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_operators.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_characterize.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_packaging.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_synth_script.py" -v
@@ -51,6 +52,7 @@ test-api: models
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_board.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_trees.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_reload.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_corpus.py" -v
 
 test-cpp: runtime
 	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v

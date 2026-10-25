@@ -15,7 +15,10 @@ noise and print a warning. That is fine for checking that a model compiles. It
 is useless for accuracy.
 
 Activations get one scale per tensor and can be asymmetric, signed or
-unsigned. Weights get one scale per output channel and are symmetric. Two
+unsigned. The one exception is an input the model scales itself, through a
+`Scaler` or a `BatchNormalization`: it gets a scale and zero point per feature,
+fitted to the calibration data, which the first layer's weights and bias take
+in ([009](../specs/009-operator-coverage.md)). Weights get one scale per output channel and are symmetric. Two
 tricks keep this cheap in hardware. An input zero point folds into the bias at
 compile time and costs nothing. And an unsigned activation rides on the signed
 grid with a recorded offset, so there is one datapath, not two.

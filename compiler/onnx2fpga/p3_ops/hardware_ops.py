@@ -397,7 +397,9 @@ class DenseUnit(MatVecUnit):
     def accumulator_dtype(self):
         """Reloadable, it holds every product of the grid at its largest plus a bias as large again."""
         if not self.reloadable:
-            return MatVecUnit.accumulator_dtype.fget(self)
+            dtype = MatVecUnit.accumulator_dtype.fget(self)
+            product = self.act_dtype.bits + self.weight_dtype.bits
+            return dtype if dtype.bits >= product else IntType(product, True)
         span = (self.mw * 2 ** (self.weight_dtype.bits - 1)
                 * max(-self.act_dtype.min, self.act_dtype.max))
         return IntType.smallest_for(-2 * span, 2 * span)
