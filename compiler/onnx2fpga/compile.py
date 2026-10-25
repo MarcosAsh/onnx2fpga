@@ -42,12 +42,12 @@ class CompilationResult:
 
 
 class Compiler:
-    """`folding`, `weight_dtypes`, `arithmetic` and `custom_objects` are the per-layer settings built by onnx2fpga.api; `weights` is "frozen" or "reloadable"."""
+    """`folding`, `weight_dtypes`, `arithmetic`, `memory` and `custom_objects` are the per-layer settings built by onnx2fpga.api; `weights` is "frozen" or "reloadable"."""
 
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
                  hdl="sv", folding=None, weight_dtypes=None, custom_objects=None,
-                 mode="stream", arithmetic=None, weights="frozen"):
+                 mode="stream", arithmetic=None, memory=None, weights="frozen"):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
@@ -61,6 +61,7 @@ class Compiler:
         self.custom_handlers, self.custom_lowerings = custom_passes(custom_objects)
         self.mode = mode
         self.arithmetic = dict(arithmetic or {})
+        self.memory = dict(memory or {})
         self.weights = weights
 
     def compile(self, model, samples=None, out_dir="build/out"):
@@ -87,7 +88,8 @@ class Compiler:
             passes = [
                 LowerToHardware(plan, self.custom_lowerings),
                 InsertDuplicates(),
-                FoldingAllocator(self.target_cycles, self.utilisation_limit, self.folding),
+                FoldingAllocator(self.target_cycles, self.utilisation_limit, self.folding,
+                                 self.memory),
                 AlignBeatWidths(),
                 InsertWidthConverters(),
                 InsertFifos(cap=self.fifo_cap),

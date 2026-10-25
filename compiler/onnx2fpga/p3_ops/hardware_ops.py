@@ -4,7 +4,7 @@ from abc import abstractmethod
 
 import numpy as np
 
-from ..targets.resources import Resources, memory_cost
+from ..targets.resources import Resources, block_ram_cost, lut_memory_cost, memory_cost
 from ..p2_graph.datatype import IntType
 from ..p2_graph.node import MemorySpec, Node
 from .onnx_ops import Im2Col
@@ -139,6 +139,9 @@ class MatVecUnit(StreamingNode):
 
     module = "otf_mvau"
 
+    # Set by the folding allocator once the folding is final; adds a cycle of latency.
+    block_ram = False
+
     def __init__(self, name, inputs, outputs, weights, bias, requant,
                  act_dtype, out_dtype, weight_dtype, vectors=1):
         self.weights = np.asarray(weights, dtype=np.int64)
@@ -202,6 +205,15 @@ class MatVecUnit(StreamingNode):
     def mult_bits(self):
         return multiplier_bits(self.requant)
 
+    def uses_block_ram(self, device):
+        """Where memory() put the weights, else where the device says a table this shape belongs."""
+        depth = self.synapse_fold * self.neuron_fold
+        choice = self.attrs.get("memory", "auto")
+        if depth == 1 or choice == "lut" or not device.has_block_ram:
+            return False
+        return choice == "block" or device.worth_a_block(
+            depth, self.pe * self.simd * self.weight_dtype.bits)
+
     def amd_resources(self, device):
         acc_bits = self.accumulator_dtype.bits
         dsp = device.dsp_cost(self.pe * self.simd, self.act_dtype.bits, self.weight_dtype.bits)
@@ -211,7 +223,10 @@ class MatVecUnit(StreamingNode):
                             dsp=dsp)
         depth = self.synapse_fold * self.neuron_fold
         width = self.simd * self.weight_dtype.bits
-        cost = compute + memory_cost(depth, width) * self.pe
+        if self.uses_block_ram(device):
+            cost = compute + block_ram_cost(depth, self.pe * width)
+        else:
+            cost = compute + lut_memory_cost(depth, width) * self.pe
         if self.neuron_fold > 1:
             width = self.simd * self.act_dtype.bits
             cost = cost + memory_cost(self.synapse_fold, width)
@@ -246,19 +261,23 @@ class MatVecUnit(StreamingNode):
                 for sf in range(self.synapse_fold)]
 
     def output_schedule(self, graph, index=0):
+        """Each result leaves after its fold's last step, one cycle later from block RAM."""
         stride = self.synapse_fold * self.neuron_fold
-        return [v * stride + nf * self.synapse_fold + self.synapse_fold - 1
+        last = self.synapse_fold - 1 + int(self.block_ram)
+        return [v * stride + nf * self.synapse_fold + last
                 for v in range(self.vectors)
                 for nf in range(self.neuron_fold)]
 
     def memories(self, graph):
-        """One weight memory per PE, addressed by (neuron fold, synapse fold)."""
+        """Weights by (neuron fold, synapse fold): a memory per PE, or one block RAM word for all."""
         pe, simd = self.pe, self.simd
         packed = np.zeros((pe, self.neuron_fold * self.synapse_fold, simd), dtype=np.int64)
         for p in range(pe):
             for nf in range(self.neuron_fold):
                 column = self.weights[:, nf * pe + p].reshape(self.synapse_fold, simd)
                 packed[p, nf * self.synapse_fold:(nf + 1) * self.synapse_fold] = column
+        if self.block_ram:
+            packed = packed.transpose(1, 0, 2).reshape(-1, pe * simd)
         return {
             "weights": MemorySpec(packed, self.weight_dtype.bits, packed=True),
             "bias": MemorySpec(self.bias.reshape(self.neuron_fold, pe).T,
@@ -278,6 +297,7 @@ class MatVecUnit(StreamingNode):
             "SHIFT": self.requant.shift,
             "OUT_MIN": self.requant.lower_clamp, "OUT_MAX": self.requant.upper_clamp,
             "OUT_ZP": self.requant.zero_point,
+            "BLOCK_RAM": int(self.block_ram),
             "WEIGHT_FILE": paths.get("weights", ""),
             "BIAS_FILE": paths.get("bias", ""),
             "MULT_FILE": paths.get("mult", ""),

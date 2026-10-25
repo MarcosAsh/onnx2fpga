@@ -191,6 +191,17 @@ weights, or a value other than these three, raises `ConfigError`, and so does
 compiling with `mode="stream"` or `weights="reloadable"` while a layer is set
 to `"constant"`.
 
+### `Layer.memory(kind="auto")`
+
+Where a streaming design keeps this layer's weight table. `"block"` puts it in
+block RAM, which adds one cycle of latency to the unit and none to its
+throughput. `"lut"` keeps it in logic. `"auto"`, the default, uses block RAM
+when the table is big enough to be worth the blocks, see
+[008](../specs/008-weights-in-block-ram.md). A layer without weights, a value
+other than these three, or `mode="fixed"` raises `ConfigError`. Compiling for a
+device without block RAM raises `ConfigError`, and forced tables that need more
+blocks than the device has raise `BudgetError`.
+
 ### `Layer.folding`, `Layer.cycles`, `Layer.latency`, `Layer.units`
 
 What the last compile chose for this layer. `latency` is the cycles the layer

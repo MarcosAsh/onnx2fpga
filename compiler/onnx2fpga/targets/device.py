@@ -26,6 +26,14 @@ class Device:
         self.notes = notes
         self.block_ram = block_ram
 
+    @property
+    def has_block_ram(self):
+        return getattr(self.budget, self.block_ram) > 0
+
+    def worth_a_block(self, depth, width):
+        """Whether a weight table of `depth` words of `width` bits belongs in block RAM."""
+        return depth > 64
+
     def limits(self, utilisation_limit):
         """Fraction of the budget each resource may use."""
         return {f: 1.0 if f in self.HARD_FIELDS else utilisation_limit

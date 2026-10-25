@@ -24,6 +24,8 @@ from onnx2fpga.p6_emit.hardcaml import HardcamlGenerator
 from onnx2fpga.p6_emit.stream_io import StreamCodec
 from onnx2fpga.reference.runner import GraphRunner
 from onnx2fpga.serial_link import Link, read_hex
+from onnx2fpga.targets.device import Device
+from onnx2fpga.targets.resources import Resources
 
 MODELS = {"mlp": (Fixtures.MLP_SHAPE, 64), "cnn": (Fixtures.CNN_SHAPE, 400)}
 
@@ -372,6 +374,46 @@ class Precision(unittest.TestCase):
         qdq.layers[first].quantize(weights="int4")
         with self.assertRaisesRegex(ConfigError, "quantized by the model itself"):
             qdq.compile(hdl="sv", out_dir=Fixtures.build_dir("api_qdq_int4"))
+
+
+class Memory(unittest.TestCase):
+    def test_override(self):
+        acc = otf.load(model("mlp"))
+        acc.layers["fc0"].memory("lut")
+        acc.layers["fc2"].memory("block")
+        self.assertIn("memory block", summary_text(acc))
+        acc.compile(device="icepi25", hdl="sv", target_cycles=256,
+                    calibration=batch(Fixtures.MLP_SHAPE),
+                    out_dir=Fixtures.build_dir("api_memory"))
+        units = {n.name: n for n in acc.result.hardware_graph.nodes}
+        self.assertEqual([units[n].block_ram for n in ("fc0", "fc1", "fc2")],
+                         [False, True, True])
+        self.assertIn("weights in block RAM", repr(acc.layers["fc2"]))
+        acc.layers["fc0"].memory()
+        acc.compile()
+        self.assertIn("weights in block RAM", repr(acc.layers["fc0"]))
+
+    def test_errors(self):
+        acc = otf.load(model("cnn"))
+        with self.assertRaisesRegex(ConfigError, "'block', 'lut' or 'auto', not 'bram'"):
+            acc.layers["fc1"].memory("bram")
+        with self.assertRaisesRegex(ConfigError, "no weights"):
+            acc.layers["pool0"].memory("block")
+        acc.layers["fc1"].memory("block")
+        with self.assertRaisesRegex(ConfigError, "needs mode='stream'"):
+            acc.compile(mode="fixed")
+        no_ram = Device("no_ram", "none", Resources(lut=10 ** 6, ff=10 ** 6, dsp=10 ** 4),
+                        100.0, "DSP48E2")
+        with self.assertRaisesRegex(ConfigError, "fc1 cannot go in block RAM because "
+                                                 "no_ram has none"):
+            acc.compile(device=no_ram, hdl="sv", calibration=batch(Fixtures.CNN_SHAPE),
+                        out_dir=Fixtures.build_dir("api_memory_none"))
+        mlp = otf.load(model("mlp"))
+        mlp.layers["fc0"].fold(simd=32, pe=8).memory("block")
+        with self.assertRaisesRegex(BudgetError, "block RAM for fc0 takes the design to "
+                                                 "58 ebr, past the 56 on icepi25"):
+            mlp.compile(device="icepi25", hdl="sv", calibration=batch(Fixtures.MLP_SHAPE),
+                        out_dir=Fixtures.build_dir("api_memory_budget"))
 
 
 class Errors(unittest.TestCase):

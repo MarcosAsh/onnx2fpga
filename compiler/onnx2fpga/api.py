@@ -267,7 +267,8 @@ class Accelerator:
                             folding=self.layers.pins(),
                             weight_dtypes=self.layers.weight_dtypes(),
                             arithmetic=self.layers.arithmetic(),
-                            custom_objects=self.custom_objects, mode=mode, weights=weights)
+                             memory=self.layers.memory(),
+                             custom_objects=self.custom_objects, mode=mode, weights=weights)
         with _translated():
             result = compiler.compile(self.model, samples, out_dir)
         if strict and cycles is not None:
@@ -302,6 +303,10 @@ class Accelerator:
         if pins:
             raise ConfigError("mode='fixed' cannot use the fold() pins on %s"
                               % ", ".join(sorted(pins)))
+        memory = self.layers.memory()
+        if memory:
+            raise ConfigError("mode='fixed' keeps weights in logic, so memory() on %s "
+                              "needs mode='stream'" % ", ".join(sorted(memory)))
 
     @staticmethod
     def _device(name):
@@ -870,6 +875,7 @@ class Layer:
         self.pinned = {}
         self.weight_dtype = None
         self.arithmetic_choice = "auto"
+        self.memory_choice = "auto"
 
     def fold(self, **factors):
         """Pins how parallel this layer is (simd, pe), overriding the allocator; none hands it back."""
@@ -907,6 +913,16 @@ class Layer:
         if not self.has_weights:
             raise ConfigError("%s (%s) has no weights" % (self.name, self.kind))
         self.arithmetic_choice = kind
+        self._accelerator._changed()
+        return self
+
+    def memory(self, kind="auto"):
+        """Where a streaming design keeps this layer's weights: "block" RAM, "lut" or "auto"."""
+        if kind not in ("block", "lut", "auto"):
+            raise ConfigError("memory is 'block', 'lut' or 'auto', not %r" % (kind,))
+        if not self.has_weights:
+            raise ConfigError("%s (%s) has no weights" % (self.name, self.kind))
+        self.memory_choice = kind
         self._accelerator._changed()
         return self
 
@@ -950,6 +966,8 @@ class Layer:
             parts.append("weights " + self.weight_dtype.name.lower())
         if self.arithmetic_choice != "auto":
             parts.append("arithmetic " + self.arithmetic_choice)
+        if self.memory_choice != "auto":
+            parts.append("memory " + self.memory_choice)
         return ", ".join(parts)
 
     def __repr__(self):
@@ -964,6 +982,8 @@ class Layer:
         arithmetic = getattr(self._unit(), "arithmetic", None)
         if arithmetic:
             parts.append("arithmetic " + arithmetic)
+        if getattr(self._unit(), "block_ram", False):
+            parts.append("weights in block RAM")
         return "<Layer %s (%s)%s>" % (self.name, self.kind,
                                       ": " + ", ".join(parts) if parts else "")
 
@@ -999,6 +1019,10 @@ class Layers(collections.abc.Mapping):
     def arithmetic(self):
         return {name: layer.arithmetic_choice for name, layer in self._layers.items()
                 if layer.arithmetic_choice != "auto"}
+
+    def memory(self):
+        return {name: layer.memory_choice for name, layer in self._layers.items()
+                if layer.memory_choice != "auto"}
 
     def __repr__(self):
         return "<Layers %s>" % ", ".join(self._layers)
