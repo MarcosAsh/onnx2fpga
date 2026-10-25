@@ -78,6 +78,15 @@ let kria_command =
         print_string (Kria_shell.verilog (Design.of_string (In_channel.read_all path)))]
 ;;
 
+let kria_regs_command =
+  Command.basic
+    ~summary:"Verilog for the Kria register file alone, with no clock or PS, to simulate"
+    [%map_open.Command
+      let path = anon ("DESIGN_JSON" %: string) in
+      fun () ->
+        print_string (Kria_regs.verilog (Design.of_string (In_channel.read_all path)))]
+;;
+
 let tick_to_trade_command =
   Command.basic
     ~summary:"Verilog for the tick to trade path, from a JSON config holding the model"
@@ -110,6 +119,7 @@ let () =
        ; "units", units_command
        ; "icepi", icepi_command
        ; "kria", kria_command
+       ; "kria-regs", kria_regs_command
        ; "tick-to-trade", tick_to_trade_command
        ])
 ;;

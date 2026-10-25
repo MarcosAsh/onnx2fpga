@@ -37,7 +37,25 @@ module Offset : sig
   (** The last prediction, laid out like the features; read only. *)
   val prediction : int
 
-  (** From here to the end of the window is reserved for the weight reload of spec 003. *)
+  (** Reads the words in one weight bank, 0 when the weights are frozen. *)
+  val weights_words : int
+
+  (** Writing a 1 in bit 0 makes the idle bank active and counts a version. *)
+  val weights_commit : int
+
+  (** Reads the active bank, 0 or 1. *)
+  val weights_bank : int
+
+  (** Reads the commits since configuration. *)
+  val weights_version : int
+
+  (** Reads zlib's CRC-32 of the active bank's writes since the last one to word 0. *)
+  val weights_crc : int
+
+  (** Reads the same CRC for the idle bank, to check before a commit. *)
+  val weights_idle_crc : int
+
+  (** To the end of the window, the idle bank, one value per word; write only. *)
   val weights : int
 end
 
@@ -78,3 +96,6 @@ module Make (_ : Config) : sig
   (** One transfer at a time each way, always OKAY; write strobes are ignored. *)
   val hierarchical : ?instance:string -> Scope.t -> Signal.t I.t -> Signal.t O.t
 end
+
+(** One Verilog file with [kria_regs] as the top, for simulating the register file alone. *)
+val verilog : Design.t -> string

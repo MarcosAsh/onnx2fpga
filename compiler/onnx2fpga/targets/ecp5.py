@@ -98,9 +98,13 @@ class Ecp5CostModel:
             cost = node.constant_cost()
             return out + Resources(lut=2.25 * cost.lut, ff=cost.ff)
         product_bits = act + node.weight_dtype.bits
-        return out + Resources(
-            lut=2.25 * node.multipliers * acc, ff=node.multipliers * product_bits,
-            dsp=sum(constant_multipliers(w, act) for w in node.weights.flat))
+        if node.reloadable:
+            dsp = node.multipliers * multipliers(act, node.weight_dtype.bits)
+            out = out + node.bank_cost()
+        else:
+            dsp = sum(constant_multipliers(w, act) for w in node.weights.flat)
+        return out + Resources(lut=2.25 * node.multipliers * acc,
+                               ff=node.multipliers * product_bits, dsp=dsp)
 
     def _window(self, node):
         h_stride, w_stride = node.strides

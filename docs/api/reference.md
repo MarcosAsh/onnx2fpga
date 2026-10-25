@@ -23,7 +23,7 @@ is called. Status: partial and no longer a priority; it exists but is untested.
 
 ## `Accelerator`
 
-### `compile(device=None, target=None, target_fps=None, target_cycles=None, hdl=None, calibration=None, utilisation=None, out_dir=None, strict=True, verbose=False, mult_bits=None, top=None, mode=None)`
+### `compile(device=None, target=None, target_fps=None, target_cycles=None, hdl=None, calibration=None, utilisation=None, out_dir=None, strict=True, verbose=False, mult_bits=None, top=None, mode=None, weights=None)`
 
 Quantizes, folds and emits the design.
 
@@ -31,6 +31,7 @@ Quantizes, folds and emits the design.
 |---|---|---|
 | `device` | `vu9p` | Device model to budget against. `onnx2fpga devices` lists them. See Open questions. |
 | `mode` | `"stream"` | `"stream"` folds layers onto handshaked streams. `"fixed"` unrolls every layer so the design takes a vector every cycle and answers a fixed number of cycles later, see [001](../specs/001-fixed-latency.md). |
+| `weights` | `"frozen"` | `"frozen"` builds the weights into the bitstream. `"reloadable"` keeps them in two register banks a host rewrites while the design runs, see [003](../specs/003-reloadable-weights.md). Fixed mode only. |
 | `target` | `"fit"` | `"fit"` is the fastest design that fits. |
 | `target_fps`, `target_cycles` | none | A throughput to balance to and stop at. |
 | `hdl` | see [Backends](../guides/backends.md) | `"hardcaml"` or `"sv"`. |
@@ -54,6 +55,13 @@ compiles only with `mode="fixed"`, and raises `ConfigError` otherwise. Its
 feature grids come from the model's thresholds, so `calibration` is not needed
 and does not change them. See [005](../specs/005-tree-ensembles.md).
 
+With `weights="reloadable"` every dense layer takes general multipliers fed
+from its banks, at the same latency, and its accumulator and rescale are sized
+for any model on the same grid. `"auto"` arithmetic picks multipliers, and a
+layer set to `"constant"` raises `ConfigError`, as do `mode="stream"` and a
+tree ensemble. Reloadable weights that do not fit the device, or need more than
+the 8192 words of the register window, raise `BudgetError`.
+
 ### `summary(print_fn=None)`
 
 Before compile: layers, output shapes, parameter counts and any pins. After:
@@ -62,7 +70,8 @@ marked, totals against the budget, throughput, quantization and build path.
 Shapes are channel last. A fixed latency design prints one row per layer with
 its arithmetic, multipliers and latency in cycles instead, then the total
 latency in cycles and in nanoseconds at the device's clock, and how many
-multipliers constant arithmetic saved. For a tree ensemble the row gives the
+multipliers constant arithmetic saved. A reloadable design adds a `Weights:`
+line with the bank size and the CRC of the weights loaded. For a tree ensemble the row gives the
 tree count and depth and the number of comparators, and leaves the arithmetic
 blank. Once a Kria build has left a Vivado `timing_summary.rpt` in the build
 directory, a `Clock:` line gives the measured fmax beside the estimate.
@@ -82,7 +91,7 @@ reference. `on="reference"` or `on="board"` forces one. Returns dequantized
 floats, or integer codes with `quantized=True`. A tree classifier returns the
 label's index in `classlabels`, as a float.
 
-### `simulate(x=None, sweep=False)`
+### `simulate(x=None, sweep=False, reload=None, commits=None)`
 
 Builds the RTL with Verilator and checks it against the integer model. With `x`,
 those inputs are used; without, the build's own golden vectors. `sweep=True`
@@ -93,6 +102,14 @@ In fixed mode the harness drives one vector on every cycle, 10000 random ones
 when `x` is left out, and fails unless every answer arrives exactly
 `acc.latency` cycles after its input and matches the integer model.
 `sweep=True` repeats with `features_valid` high on 50 and 10 percent of cycles.
+
+On a reloadable design, `reload` is a model (a path or an `OnnxModel`) for the
+idle bank. The harness writes it one word per cycle from the first cycle while
+the inputs stream, then pulses `weights_commit` on each cycle in `commits`,
+by default once halfway through the stream. Every answer must carry the bank
+that was active when its features arrived and match that bank's integer
+model, and at the end the version and both CRCs must read back right. A
+commit before the bank is written raises `ConfigError`.
 
 ### `build(board="icepi_zero", verbose=False, **options)`
 
@@ -111,13 +128,26 @@ take only fixed latency designs compiled for `k26`, see
 Loads the bitstream into SRAM and opens the serial port. `program=False` only
 opens the port, for a board already loaded. `port` defaults to the board's USB
 serial device. `host=`, and any deploy after a Kria build, raises
-`NotImplementedError` until [003](../specs/003-reloadable-weights.md).
+`NotImplementedError` until the Kria runtime is written.
 
-### `load_weights(model)`
+### `load_weights(model, registers=None)`
 
-Status: planned. Raises `NotImplementedError` until
-[003](../specs/003-reloadable-weights.md), which writes new weights into a
-running board without a rebuild.
+Loads a retrained model into a running reloadable design without a rebuild,
+see [003](../specs/003-reloadable-weights.md). `model` is a path or an
+`OnnxModel`. It must have the compiled architecture and fit the compiled
+grid; otherwise `ConfigError` names the first mismatch, such as
+`fc1 has weights shaped (64, 16) in the compiled model but (64, 32) in the new
+one`. A float model is calibrated on the compile's samples with its input and
+output grids pinned to the compiled ones.
+
+`registers` is any object with `read(offset)` and `write(offset, value)` on
+byte offsets into the register window. `onnx2fpga.simulate.SimulatedRegisters(out_dir)`
+is the build's `kria_regs` under Verilator, usable as a context manager.
+Without `registers` it raises `NotDeployedError`. It writes the idle bank,
+checks `weights_idle_crc` and raises `BoardError` without committing if the
+CRC is wrong, commits, and checks the bank, version and CRC again. Afterwards
+`predict` and `evaluate` use the new model. A design compiled with frozen
+weights raises `ConfigError`.
 
 ### `disconnect()`
 
@@ -158,7 +188,8 @@ see [004](../specs/004-weight-specialised-arithmetic.md). `"auto"`, the
 default, takes constant arithmetic unless the layer's estimate on the device
 then fills its busiest resource further than with multipliers. A layer without
 weights, or a value other than these three, raises `ConfigError`, and so does
-compiling with `mode="stream"` while a layer is set to `"constant"`.
+compiling with `mode="stream"` or `weights="reloadable"` while a layer is set
+to `"constant"`.
 
 ### `Layer.folding`, `Layer.cycles`, `Layer.latency`, `Layer.units`
 

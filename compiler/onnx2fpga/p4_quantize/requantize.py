@@ -36,6 +36,12 @@ class Requantizer:
             scaled = (scaled + (1 << (self.shift - 1))) >> self.shift
         return np.clip(scaled + self.zero_point, self.lower_clamp, self.upper_clamp)
 
+    def at_shift(self, shift):
+        """The same rescale with multipliers for `shift`, rounded when it is smaller."""
+        multipliers = np.rint(self.multipliers * 2.0 ** (shift - self.shift)).astype(np.int64)
+        return Requantizer(multipliers, shift, self.out_dtype, self.lower_clamp,
+                           self.zero_point)
+
     def broadcast_to(self, channels):
         if self.multipliers.size == channels:
             return self

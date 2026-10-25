@@ -216,7 +216,8 @@ class Kria:
         manifest = json.loads(path.read_text())
         manifest["registers"] = registers(widths[described["input"]],
                                           widths[described["output"]],
-                                          described["latency"], self.BASE, self.SPAN)
+                                          described["latency"], self.BASE, self.SPAN,
+                                          manifest["weights"].get("words", 0))
         path.write_text(json.dumps(manifest, indent=2) + "\n")
         return self.build / "build.tcl"
 
@@ -246,32 +247,51 @@ class KR260(Kria):
 BOARDS = {board.NAME: board for board in (IcepiZero, KV260, KR260)}
 
 
-def registers(feature_bits, prediction_bits, latency, base, span):
-    """The AXI4-Lite map of kria_regs.ml, which must agree with its Offset module."""
-    def words(bits):
+# Byte offsets of kria_regs.ml, which must agree with its Offset module.
+OFFSETS = {"id": 0x0000, "latency": 0x0004, "feature_bits": 0x0008,
+           "prediction_bits": 0x000C, "control": 0x0010, "status": 0x0014, "cycles": 0x0018,
+           "weights_words": 0x0020, "weights_commit": 0x0024, "weights_bank": 0x0028,
+           "weights_version": 0x002C, "weights_crc": 0x0030, "weights_idle_crc": 0x0034,
+           "features": 0x1000, "prediction": 0x2000, "weights": 0x8000}
+
+
+def registers(feature_bits, prediction_bits, latency, base, span, words=0):
+    """The AXI4-Lite map of kria_regs.ml; `words` is the size of a weight bank, 0 when frozen."""
+    def words_of(bits):
         return (bits + 31) // 32
 
+    entries = {
+        "id": {"access": "r", "value": 0x4F544631},
+        "latency": {"access": "r", "value": latency},
+        "feature_bits": {"access": "r", "value": feature_bits},
+        "prediction_bits": {"access": "r", "value": prediction_bits},
+        "control": {"access": "w", "meaning": "write 1 to start an inference"},
+        "status": {"access": "r", "meaning": "bit 0 is set once the prediction has arrived"},
+        "cycles": {"access": "r", "meaning": "cycles from the last start to its prediction"},
+        "weights_words": {"access": "r", "value": words},
+        "weights_commit": {"access": "w",
+                           "meaning": "write 1 to make the idle bank active"},
+        "weights_bank": {"access": "r", "meaning": "the active bank, 0 or 1"},
+        "weights_version": {"access": "r", "meaning": "commits since configuration"},
+        "weights_crc": {"access": "r",
+                        "meaning": "zlib CRC-32 of the words written to the active bank "
+                                   "since the last write to its word 0"},
+        "weights_idle_crc": {"access": "r",
+                             "meaning": "the same CRC for the idle bank, to check before "
+                                        "committing"},
+        "features": {"access": "rw", "words": words_of(feature_bits)},
+        "prediction": {"access": "r", "words": words_of(prediction_bits)},
+        "weights": ({"access": "w", "words": words,
+                     "meaning": "the idle bank, one value per word, laid out as "
+                                "manifest.json's weights section says"}
+                    if words else
+                    {"access": "reserved", "words": 0x2000,
+                     "meaning": "frozen weights; writes are ignored"}),
+    }
     return {
         "bus": "axi4-lite",
         "base": base,
         "span": span,
         "word_bits": 32,
-        "map": {
-            "id": {"offset": 0x0000, "access": "r", "value": 0x4F544631},
-            "latency": {"offset": 0x0004, "access": "r", "value": latency},
-            "feature_bits": {"offset": 0x0008, "access": "r", "value": feature_bits},
-            "prediction_bits": {"offset": 0x000C, "access": "r", "value": prediction_bits},
-            "control": {"offset": 0x0010, "access": "w",
-                        "meaning": "write 1 to start an inference"},
-            "status": {"offset": 0x0014, "access": "r",
-                       "meaning": "bit 0 is set once the prediction has arrived"},
-            "cycles": {"offset": 0x0018, "access": "r",
-                       "meaning": "cycles from the last start to its prediction"},
-            "features": {"offset": 0x1000, "access": "rw", "words": words(feature_bits)},
-            "prediction": {"offset": 0x2000, "access": "r",
-                           "words": words(prediction_bits)},
-            "weights": {"offset": 0x8000, "access": "reserved", "words": 0x2000,
-                        "meaning": "weight reload, spec 003"},
-        },
+        "map": {name: dict(offset=OFFSETS[name], **entry) for name, entry in entries.items()},
     }
-

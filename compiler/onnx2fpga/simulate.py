@@ -4,6 +4,10 @@ import pathlib
 import re
 import subprocess
 
+from .assets import AssetLocator
+from .errors import SimulationError
+from .p6_emit.hardcaml import HardcamlGenerator
+
 
 class SimulationResult:
     CYCLES = re.compile(r"^cycles\s+(\d+)", re.M)
@@ -73,13 +77,57 @@ class SimulationRunner:
 
 
 class FixedSimulationRunner(SimulationRunner):
-    """Runs a fixed latency build; the sweep thins features_valid instead of adding backpressure."""
+    """Runs a fixed latency build; the sweep thins features_valid instead of adding backpressure, and `reload` holds the harness flags for a second bank."""
 
     SWEEP = ((50, 100), (10, 100))
 
-    def __init__(self, build_dir, latency, top="otf_top", vectors=SimulationRunner.GOLDEN):
+    def __init__(self, build_dir, latency, top="otf_top", vectors=SimulationRunner.GOLDEN,
+                 reload=()):
         SimulationRunner.__init__(self, build_dir, top, vectors)
         self.latency = latency
+        self.reload = list(reload)
 
     def _duty(self, duty):
-        return ["--latency", str(self.latency), "--input-duty", str(duty[0])]
+        return ["--latency", str(self.latency), "--input-duty", str(duty[0])] + self.reload
+
+
+class SimulatedRegisters:
+    """kria_regs of a reloadable build under Verilator, one AXI4-Lite transfer at a time over a pipe, standing in for a board's register window."""
+
+    def __init__(self, build_dir, assets=None):
+        build_dir = pathlib.Path(build_dir)
+        folder = build_dir / "registers"
+        folder.mkdir(exist_ok=True)
+        (folder / "kria_regs.v").write_text(
+            HardcamlGenerator().verilog((build_dir / "design.json").resolve(), "kria-regs"))
+        harness = AssetLocator(assets).runtime_dir / "sim" / "regs_harness.cpp"
+        built = subprocess.run(
+            ["verilator", "--cc", "--exe", "--build", "-j", "0", "-Wno-fatal",
+             "--top-module", "kria_regs", "-CFLAGS", "-O1 -std=c++17", "kria_regs.v",
+             str(harness), "-o", "Vkria_regs"],
+            cwd=folder, capture_output=True, text=True)
+        if built.returncode != 0:
+            raise SimulationError("Verilator could not build the register file in %s:\n%s"
+                                  % (folder, built.stderr[-4000:]), built.stdout, built.stderr)
+        self.process = subprocess.Popen([str(folder / "obj_dir" / "Vkria_regs")],
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        text=True)
+
+    def write(self, offset, value):
+        self.process.stdin.write("w %x %x\n" % (offset, value))
+
+    def read(self, offset):
+        self.process.stdin.write("r %x\n" % offset)
+        self.process.stdin.flush()
+        return int(self.process.stdout.readline(), 16)
+
+    def close(self):
+        self.process.stdin.close()
+        self.process.wait()
+        self.process.stdout.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()

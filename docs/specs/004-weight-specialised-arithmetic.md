@@ -2,11 +2,9 @@
 
 Status: partial. Constant arithmetic is built for the dense layers of fixed
 latency mode, is the default there, and is proved equal to the multiplier
-version on the example MLP's first and last layers. Two things are missing.
-Nobody has timed it at the 322.265625 MHz trading clock: the `k26` device model
-from [006](006-kv260.md) now estimates it, but the timing needs Vivado. The
-`ConfigError` for reloadable weights waits for [003](003-reloadable-weights.md)
-to exist.
+version on the example MLP's first and last layers. Nobody has timed it at the
+322.265625 MHz trading clock: the `k26` device model from [006](006-kv260.md)
+now estimates it, but the timing needs Vivado.
 
 ## Problem
 
@@ -88,8 +86,9 @@ multipliers saved:
 A value other than the three raises `ConfigError`, and so does a layer without
 weights. Compiling with `mode="stream"` while a layer is set to `"constant"`
 raises `ConfigError: fc1 is folded in mode='stream', so arithmetic('constant')
-needs mode='fixed'`. `arithmetic("constant")` with reloadable weights will raise
-`ConfigError` too, since those weights are not constants, once 003 exists.
+needs mode='fixed'`. `arithmetic("constant")` with reloadable weights
+([003](003-reloadable-weights.md)) raises `ConfigError` too, since those weights
+are not constants, and `"auto"` picks multipliers there.
 
 ## Verification
 

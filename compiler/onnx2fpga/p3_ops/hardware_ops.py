@@ -291,6 +291,48 @@ class DenseUnit(MatVecUnit):
     hardcaml_only = True
     latency = 3
     arithmetic = "multiplier"
+    reloadable = False
+    # Rescale bits a reloadable layer keeps free for a retrained model's larger scales.
+    HEADROOM = 4
+
+    def make_reloadable(self, mult_bits):
+        """Moves the values into two banks of registers, sized for any model on the same grid."""
+        self.reloadable = True
+        self.arithmetic = "multiplier"
+        self.grid_mult_bits = mult_bits
+        self.requant = self.requant.broadcast_to(self.mh).at_shift(
+            max(0, self.requant.shift - self.HEADROOM))
+
+    @property
+    def accumulator_dtype(self):
+        """Reloadable, it holds every product of the grid at its largest plus a bias as large again."""
+        if not self.reloadable:
+            return MatVecUnit.accumulator_dtype.fget(self)
+        span = (self.mw * 2 ** (self.weight_dtype.bits - 1)
+                * max(-self.act_dtype.min, self.act_dtype.max))
+        return IntType.smallest_for(-2 * span, 2 * span)
+
+    @property
+    def mult_bits(self):
+        return self.grid_mult_bits if self.reloadable else multiplier_bits(self.requant)
+
+    @property
+    def words(self):
+        """32 bit words this layer takes in each bank: the weights, then a bias and a multiplier per channel."""
+        return self.mw * self.mh + 2 * self.mh if self.reloadable else 0
+
+    def image(self):
+        """The bank words, weights output channel by channel, each masked to its width."""
+        fields = ((self.weights.T.reshape(-1), self.weight_dtype.bits),
+                  (self.bias, self.accumulator_dtype.bits),
+                  (self.requant.broadcast_to(self.mh).multipliers, self.mult_bits))
+        return [int(value) & ((1 << bits) - 1) for values, bits in fields for value in values]
+
+    def bank_cost(self):
+        """Two registers and a select per bank bit."""
+        bits = (self.mw * self.mh * self.weight_dtype.bits
+                + self.mh * (self.accumulator_dtype.bits + self.mult_bits))
+        return Resources(lut=bits, ff=2 * bits)
 
     def default_folding(self):
         return {"simd": self.mw, "pe": self.mh}
@@ -325,6 +367,8 @@ class DenseUnit(MatVecUnit):
         out = Resources(ff=self.mh * (acc_bits + self.out_dtype.bits), dsp=dsp)
         if self.arithmetic == "constant":
             return self.constant_cost() + out
+        if self.reloadable:
+            out = out + self.bank_cost()
         product_bits = act_bits + self.weight_dtype.bits
         return out + Resources(
             lut=self.multipliers * acc_bits, ff=self.multipliers * product_bits,
@@ -347,6 +391,7 @@ class DenseUnit(MatVecUnit):
             "OUT_MIN": self.requant.lower_clamp, "OUT_MAX": self.requant.upper_clamp,
             "OUT_ZP": self.requant.zero_point,
             "CONSTANT": int(self.arithmetic == "constant"),
+            "RELOADABLE": int(self.reloadable),
         }
 
 

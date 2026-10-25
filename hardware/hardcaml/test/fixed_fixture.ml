@@ -1,4 +1,5 @@
 open! Core
+open! Hardcaml
 
 (* Weights are listed channel by channel, [c][k] flattened; fc1 uses constant arithmetic. *)
 type layer =
@@ -27,7 +28,26 @@ let fc1 =
   }
 ;;
 
-let dense ~name ~input ~output { weights; bias; mult; out_min; constant } =
+(* The same two layers retrained: what a reload writes into the idle bank. *)
+let fc0' =
+  { weights = [ -9; 4; 1; -6; 8; 2 ]
+  ; bias = [ -70; 33; 0 ]
+  ; mult = [ 55; 21; 99 ]
+  ; out_min = 0
+  ; constant = false
+  }
+;;
+
+let fc1' =
+  { weights = [ 7; -3; -12; 5; 0; 10 ]
+  ; bias = [ 15; -40 ]
+  ; mult = [ 64; 120 ]
+  ; out_min = -128
+  ; constant = false
+  }
+;;
+
+let dense ~name ~input ~output ~reloadable { weights; bias; mult; out_min; constant } =
   let ints values = String.concat ~sep:", " (List.map values ~f:Int.to_string) in
   let mh = List.length bias in
   let mw = List.length weights / mh in
@@ -35,7 +55,7 @@ let dense ~name ~input ~output { weights; bias; mult; out_min; constant } =
     {|{"name": "%s", "instance": "u_%s", "kind": "otf_dense",
        "params": {"MW": %d, "MH": %d, "ACT_BITS": 8, "WGT_BITS": 8, "ACC_BITS": 18,
                   "OUT_BITS": 8, "MULT_BITS": 8, "SHIFT": 6, "OUT_MIN": %d,
-                  "OUT_MAX": 127, "OUT_ZP": 0, "CONSTANT": %d},
+                  "OUT_MAX": 127, "OUT_ZP": 0, "CONSTANT": %d, "RELOADABLE": %d},
        "memories": {"weights": {"elem_bits": 8, "lanes": %d, "values": [%s]},
                     "bias": {"elem_bits": 18, "lanes": 1, "values": [%s]},
                     "mult": {"elem_bits": 8, "lanes": 1, "values": [%s]}},
@@ -45,7 +65,8 @@ let dense ~name ~input ~output { weights; bias; mult; out_min; constant } =
     mw
     mh
     out_min
-    (Bool.to_int constant)
+    (Bool.to_int (constant && not reloadable))
+    (Bool.to_int reloadable)
     mw
     (ints (List.map weights ~f:(fun w -> w land 0xff)))
     (ints (List.map bias ~f:(fun b -> b land 0x3ffff)))
@@ -54,7 +75,7 @@ let dense ~name ~input ~output { weights; bias; mult; out_min; constant } =
     output
 ;;
 
-let description ~latency =
+let design ~latency ~reloadable =
   sprintf
     {|{"format": 1, "top": "otf_top", "mode": "fixed", "latency": %d,
        "input": "x", "output": "y",
@@ -62,9 +83,12 @@ let description ~latency =
                    {"name": "y", "width": 16}],
        "nodes": [%s, %s]}|}
     latency
-    (dense ~name:"fc0" ~input:"x" ~output:"h" fc0)
-    (dense ~name:"fc1" ~input:"h" ~output:"y" fc1)
+    (dense ~name:"fc0" ~input:"x" ~output:"h" ~reloadable fc0)
+    (dense ~name:"fc1" ~input:"h" ~output:"y" ~reloadable fc1)
 ;;
+
+let description ~latency = design ~latency ~reloadable:false
+let reloadable = design ~latency:6 ~reloadable:true
 
 let layer x { weights; bias; mult; out_min; constant = _ } =
   List.mapi bias ~f:(fun c b ->
@@ -84,3 +108,15 @@ let layer x { weights; bias; mult; out_min; constant = _ } =
 ;;
 
 let model x = layer (layer x fc0) fc1
+let reloaded_model x = layer (layer x fc0') fc1'
+
+let image layers =
+  List.concat_map layers ~f:(fun { weights; bias; mult; _ } ->
+    Model.words_of_ints ~bits:8 weights
+    @ Model.words_of_ints ~bits:18 bias
+    @ Model.words_of_ints ~bits:8 mult)
+  |> List.map ~f:(Bits.uresize ~width:32)
+;;
+
+let compiled_image = image [ fc0; fc1 ]
+let reloaded_image = image [ fc0'; fc1' ]

@@ -256,3 +256,69 @@ let%expect_test "waveform of back to back vectors and a gap" =
     └───────┘└───────────────────────────────────────────────────────────────────────────────┘
     |}]
 ;;
+
+let%expect_test "a reloadable layer uses the bank each vector was tagged with" =
+  let (module Compiled) = config ~mw:8 ~mh:5 21 in
+  let (module Retrained) = config ~mw:8 ~mh:5 22 in
+  let module Old = Make_test (Compiled) in
+  let module New = Make_test (Retrained) in
+  let module Dut =
+    Otf_dense.Make_reloadable (struct
+      include Compiled
+
+      let base = 4
+    end)
+  in
+  let module Next =
+    Otf_dense.Make_reloadable (struct
+      include Retrained
+
+      let base = 4
+    end)
+  in
+  let module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O) in
+  let rng = Random.State.make [| 3 |] in
+  Harness.run
+    ~random_initial_state:`All
+    ~create:Dut.hierarchical
+    (fun (h @ local) ~inputs ~outputs ->
+       let o = Before_and_after_edge.before_edge outputs in
+       let store ~bank address data =
+         inputs.store.write := Bits.vdd;
+         inputs.store.bank := Bits.of_unsigned_int ~width:1 bank;
+         inputs.store.address
+         := Bits.of_unsigned_int ~width:Weight_banks.address_bits address;
+         inputs.store.data := data;
+         Lws.cycle h;
+         inputs.store.write := Bits.gnd
+       in
+       Stream_bench.clear h inputs.clocking.clear;
+       (* Words just outside the layer belong to other layers and must not land. *)
+       store ~bank:1 3 (Bits.ones 32);
+       List.iteri Next.image ~f:(fun index word -> store ~bank:1 (4 + index) word);
+       store ~bank:1 (4 + Dut.words) (Bits.ones 32);
+       let in_flight = Queue.create () in
+       let answered = Array.create ~len:2 0 in
+       List.iter (List.range 0 300) ~f:(fun _ ->
+         let x = Model.random_ints rng ~bits:8 8 in
+         let bank = Random.State.int rng 2 in
+         let valid = Random.State.int rng 100 < 80 in
+         inputs.x.value := Stream_bench.of_signed_lanes ~lane_bits:8 x;
+         inputs.x.valid := Bits.of_bool valid;
+         inputs.x_bank := Bits.of_unsigned_int ~width:1 bank;
+         Lws.cycle h;
+         Queue.enqueue in_flight (valid, bank, x);
+         if Queue.length in_flight > Dut.latency
+         then (
+           let valid, bank, x = Queue.dequeue_exn in_flight in
+           [%test_result: int] (Bits.to_unsigned_int !(o.y_bank)) ~expect:bank;
+           [%test_result: bool] (Bits.to_bool !(o.y.valid)) ~expect:valid;
+           if valid
+           then (
+             [%test_result: Bits.t]
+               !(o.y.value)
+               ~expect:(if bank = 0 then Old.expected x else New.expected x);
+             answered.(bank) <- answered.(bank) + 1)));
+       print_s [%message (Dut.words : int) (answered : int array)]);
+  [%expect {| ((Dut.words 50) (answered (127 110))) |}]
+;;

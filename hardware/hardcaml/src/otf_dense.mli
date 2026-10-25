@@ -52,3 +52,43 @@ module Make (_ : Config) : sig
   (** [y] is [x] through the layer [latency] cycles later; [clear] only clears valid. *)
   val hierarchical : ?instance:string -> Scope.t -> Signal.t I.t -> Signal.t O.t
 end
+
+module type Reloadable_config = sig
+  include Config
+
+  (** Word address of this layer's first value in the banks. *)
+  val base : int
+end
+
+(** The same layer with its values in two banks a host rewrites; needs [`Multiplier]. *)
+module Make_reloadable (_ : Reloadable_config) : sig
+  (** Three cycles, the same as frozen. *)
+  val latency : int
+
+  (** Values in a bank: weights channel by channel, then the biases, then the multipliers. *)
+  val words : int
+
+  (** The compiled values, which both banks start with, one 32 bit word each. *)
+  val image : Bits.t list
+
+  module I : sig
+    type 'a t =
+      { clocking : 'a Clocking.t
+      ; x : 'a With_valid.t
+      ; x_bank : 'a
+      ; store : 'a Weight_banks.Write.t
+      }
+    [@@deriving hardcaml]
+  end
+
+  module O : sig
+    type 'a t =
+      { y : 'a With_valid.t
+      ; y_bank : 'a
+      }
+    [@@deriving hardcaml]
+  end
+
+  (** Each stage uses the bank [x_bank] named when [x] arrived, which leaves as [y_bank]. *)
+  val hierarchical : ?instance:string -> Scope.t -> Signal.t I.t -> Signal.t O.t
+end

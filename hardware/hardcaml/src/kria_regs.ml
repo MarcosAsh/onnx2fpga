@@ -14,6 +14,12 @@ module Offset = struct
   let control = 0x0010
   let status = 0x0014
   let cycles = 0x0018
+  let weights_words = 0x0020
+  let weights_commit = 0x0024
+  let weights_bank = 0x0028
+  let weights_version = 0x002c
+  let weights_crc = 0x0030
+  let weights_idle_crc = 0x0034
   let features = 0x1000
   let prediction = 0x2000
   let weights = 0x8000
@@ -90,11 +96,31 @@ module Make (Config : Config) = struct
     let%hw features_valid =
       reg spec (writes (word Offset.control) &: i.s_axi_wdata.:(0))
     in
+    let reload signal = Option.some_if Accelerator.reloadable signal in
+    (* Initialised so that power up, before the first clear, never writes or commits. *)
+    let%hw weights_write =
+      reg spec ~initialize_to:Bits.gnd (write &: i.s_axi_awaddr.:(15))
+    in
+    let%hw weights_commit =
+      reg
+        spec
+        ~initialize_to:Bits.gnd
+        (writes (word Offset.weights_commit) &: i.s_axi_wdata.:(0))
+    in
     let accelerator =
       Accelerator.hierarchical
         scope
-        { clock = i.clock; clear = i.clear; features; features_valid }
+        { clock = i.clock
+        ; clear = i.clear
+        ; features
+        ; features_valid
+        ; weights_write = reload weights_write
+        ; weights_address = reload (reg spec i.s_axi_awaddr.:[14, 2])
+        ; weights_data = reload (reg spec i.s_axi_wdata)
+        ; weights_commit = reload weights_commit
+        }
     in
+    let reloaded field = Option.value field ~default:(zero 32) in
     let%hw prediction =
       reg spec ~enable:accelerator.prediction_valid accelerator.prediction
     in
@@ -127,6 +153,14 @@ module Make (Config : Config) = struct
          ; word_constant (word Offset.prediction_bits), constant prediction_bits
          ; word_constant (word Offset.status), uresize finished ~width:32
          ; word_constant (word Offset.cycles), cycles
+         ; word_constant (word Offset.weights_words), constant Accelerator.words
+         ; ( word_constant (word Offset.weights_bank)
+           , uresize (reloaded accelerator.weights_bank) ~width:32 )
+         ; ( word_constant (word Offset.weights_version)
+           , reloaded accelerator.weights_version )
+         ; word_constant (word Offset.weights_crc), reloaded accelerator.weights_crc
+         ; ( word_constant (word Offset.weights_idle_crc)
+           , reloaded accelerator.weights_idle_crc )
          ]
          @ window Offset.features feature_registers
          @ window Offset.prediction prediction_registers)
@@ -148,3 +182,17 @@ module Make (Config : Config) = struct
     H.hierarchical ?instance ~scope ~name:"kria_regs" create i
   ;;
 end
+
+let verilog design =
+  let module T =
+    Make (struct
+      let design = design
+    end)
+  in
+  let module C = Circuit.With_interface (T.I) (T.O) in
+  let scope = Scope.create ~auto_label_hierarchical_ports:true () in
+  let circuit = C.create_exn ~name:"kria_regs" (T.create scope) in
+  Rtl.create ~database:(Scope.circuit_database scope) Verilog [ circuit ]
+  |> Rtl.full_hierarchy
+  |> Rope.to_string
+;;

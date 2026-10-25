@@ -299,48 +299,96 @@ let of_node (node : Design.Node.t) : (module Instance) =
 
 module type Fixed_instance = sig
   val latency : int
+  val words : int
+  val image : Bits.t list
 
   val connect
     :  Scope.t
     -> Signal.t Clocking.t
+    -> store:Signal.t Weight_banks.Write.t option
+    -> bank:Signal.t option
     -> Signal.t With_valid.t
-    -> Signal.t With_valid.t
+    -> Signal.t With_valid.t * Signal.t option
 
   val circuit : Scope.t -> name:string -> Circuit.t
 end
 
-let of_fixed_node (node : Design.Node.t) : (module Fixed_instance) =
+(* Frozen units hold no bank words and only delay the tag. *)
+module Frozen (M : sig
+    val latency : int
+  end) =
+struct
+  let words = 0
+  let image = []
+
+  let delay_bank clocking bank =
+    Option.map bank ~f:(Clocking.pipeline_no_clear clocking ~n:M.latency)
+  ;;
+end
+
+let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
   let param = Design.Node.param node in
   let words = Design.Node.words node in
   match node.kind with
   | "otf_dense" ->
-    (module struct
-      module M = Otf_dense.Make (struct
-          let mw = param "MW"
-          let mh = param "MH"
-          let act_bits = param "ACT_BITS"
-          let wgt_bits = param "WGT_BITS"
-          let acc_bits = param "ACC_BITS"
-          let out_bits = param "OUT_BITS"
-          let mult_bits = param "MULT_BITS"
-          let shift = param "SHIFT"
-          let out_min = param "OUT_MIN"
-          let out_max = param "OUT_MAX"
-          let out_zp = param "OUT_ZP"
-          let arithmetic = if param "CONSTANT" = 1 then `Constant else `Multiplier
-          let weights = words "weights"
-          let bias = words "bias"
-          let mult = words "mult"
-        end)
+    let module Config = struct
+      let mw = param "MW"
+      let mh = param "MH"
+      let act_bits = param "ACT_BITS"
+      let wgt_bits = param "WGT_BITS"
+      let acc_bits = param "ACC_BITS"
+      let out_bits = param "OUT_BITS"
+      let mult_bits = param "MULT_BITS"
+      let shift = param "SHIFT"
+      let out_min = param "OUT_MIN"
+      let out_max = param "OUT_MAX"
+      let out_zp = param "OUT_ZP"
+      let arithmetic = if param "CONSTANT" = 1 then `Constant else `Multiplier
+      let weights = words "weights"
+      let bias = words "bias"
+      let mult = words "mult"
+      let base = base
+    end
+    in
+    if param "RELOADABLE" = 1
+    then
+      (module struct
+        module M = Otf_dense.Make_reloadable (Config)
 
-      let latency = M.latency
+        let latency = M.latency
+        let words = M.words
+        let image = M.image
 
-      include Circuit_of (M)
+        include Circuit_of (M)
 
-      let connect scope clocking x =
-        (M.hierarchical ~instance:node.instance scope { clocking; x }).y
-      ;;
-    end)
+        let connect scope clocking ~store ~bank x =
+          let o =
+            M.hierarchical
+              ~instance:node.instance
+              scope
+              { clocking
+              ; x
+              ; x_bank = Option.value_exn bank
+              ; store = Option.value_exn store
+              }
+          in
+          o.y, Some o.y_bank
+        ;;
+      end)
+    else
+      (module struct
+        module M = Otf_dense.Make (Config)
+
+        let latency = M.latency
+
+        include Frozen (M)
+        include Circuit_of (M)
+
+        let connect scope clocking ~store:_ ~bank x =
+          ( (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+          , delay_bank clocking bank )
+        ;;
+      end)
   | "otf_trees" ->
     let ints name ~f = Array.of_list (List.map (words name) ~f) in
     let kind = ints "kind" ~f:Bits.to_unsigned_int in
@@ -380,10 +428,12 @@ let of_fixed_node (node : Design.Node.t) : (module Fixed_instance) =
 
       let latency = M.latency
 
+      include Frozen (M)
       include Circuit_of (M)
 
-      let connect scope clocking x =
-        (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+      let connect scope clocking ~store:_ ~bank x =
+        ( (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+        , delay_bank clocking bank )
       ;;
     end)
   | kind ->

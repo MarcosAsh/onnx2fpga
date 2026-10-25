@@ -33,16 +33,24 @@ module type Fixed_instance = sig
   (** Cycles from a valid input to its valid output. *)
   val latency : int
 
-  (** Instantiates the unit on the vector [x], returning its output vector. *)
+  (** Words the unit keeps in each weight bank, 0 when its weights are frozen. *)
+  val words : int
+
+  (** Its compiled bank words, empty when frozen. *)
+  val image : Bits.t list
+
+  (** Instantiates the unit on [x] and its bank tag, which frozen units only delay. *)
   val connect
     :  Scope.t
     -> Signal.t Clocking.t
+    -> store:Signal.t Weight_banks.Write.t option
+    -> bank:Signal.t option
     -> Signal.t With_valid.t
-    -> Signal.t With_valid.t
+    -> Signal.t With_valid.t * Signal.t option
 
   (** The unit alone as a circuit called [name], ports as its own interface names them. *)
   val circuit : Scope.t -> name:string -> Circuit.t
 end
 
-(** Raises on a kind with no fixed latency version or a parameter the unit rejects. *)
-val of_fixed_node : Design.Node.t -> (module Fixed_instance)
+(** Raises on a kind with no fixed version; [base] is a reloadable unit's first bank word. *)
+val of_fixed_node : ?base:int -> Design.Node.t -> (module Fixed_instance)

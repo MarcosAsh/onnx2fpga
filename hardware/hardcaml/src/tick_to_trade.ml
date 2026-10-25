@@ -190,6 +190,10 @@ module Make (Config : Config) = struct
         ; clear = i.clear
         ; features = features.features.value
         ; features_valid = features.features.valid
+        ; weights_write = None
+        ; weights_address = None
+        ; weights_data = None
+        ; weights_commit = None
         }
     in
     let decision =

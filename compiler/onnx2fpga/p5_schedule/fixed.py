@@ -1,7 +1,7 @@
 """Fixed latency mode: every dense layer unrolled to one vector per cycle, with the latency summed along the chain."""
 
 from ..errors import BudgetError, ConfigError
-from ..p3_ops.hardware_ops import DenseUnit, TreeEnsembleUnit
+from ..p3_ops.hardware_ops import DenseUnit, MatVecUnit, TreeEnsembleUnit
 from ..p3_ops.onnx_ops import FlattenOp, GemmOp
 from ..p3_ops.trees import TreeEnsembleOp
 from ..pipeline import Pass
@@ -18,9 +18,13 @@ def check_fixed_ops(graph):
 class UnrollForFixedLatency(Pass):
     name = "unroll"
 
-    def __init__(self, utilisation_limit=0.80, arithmetic=None):
+    # The words the 0x8000 register window holds, one per value.
+    BANK_WORDS = 8192
+
+    def __init__(self, utilisation_limit=0.80, arithmetic=None, reloadable=False):
         self.utilisation_limit = utilisation_limit
         self.arithmetic = dict(arithmetic or {})
+        self.reloadable = reloadable
 
     def run(self, graph, context):
         for node in list(graph.topological_order()):
@@ -36,15 +40,30 @@ class UnrollForFixedLatency(Pass):
         units = graph.topological_order()
         graph.tensor(graph.inputs[0]).elems_per_beat = graph.tensor(graph.inputs[0]).numel
         for unit in units:
-            if isinstance(unit, DenseUnit):
+            if isinstance(unit, DenseUnit) and self.reloadable:
+                self._make_reloadable(unit, context.artifacts["plan"].mult_bits)
+            elif isinstance(unit, DenseUnit):
                 unit.arithmetic = self._arithmetic(unit, context.device)
         self._check_budget(units, context.device)
+        words = sum(getattr(unit, "words", 0) for unit in units)
+        if words > self.BANK_WORDS:
+            raise BudgetError("the reloadable weights need %d words a bank, past the %d of "
+                              "the register window" % (words, self.BANK_WORDS))
 
         latency = sum(unit.latency for unit in units)
         context.artifacts["latency"] = latency
         context.artifacts["folding"] = FoldingReport(context.device).record(graph)
         context.note("unroll: %d layers, latency %d cycles" % (len(units), latency))
         return graph
+
+    @staticmethod
+    def _make_reloadable(unit, mult_bits):
+        unit.make_reloadable(mult_bits)
+        needed = MatVecUnit.accumulator_dtype.fget(unit).bits
+        if needed > unit.accumulator_dtype.bits:
+            raise ConfigError("%s has a bias too large for reloadable weights, which need a "
+                              "%d bit accumulator against the %d the grid gives"
+                              % (unit.name, needed, unit.accumulator_dtype.bits))
 
     def _arithmetic(self, unit, device):
         """Auto takes constant arithmetic unless it leaves the layer's busiest resource busier."""

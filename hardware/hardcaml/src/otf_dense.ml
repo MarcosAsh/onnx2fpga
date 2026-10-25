@@ -198,3 +198,123 @@ module Make (Config : Config) = struct
     H.hierarchical ?instance ~scope ~name:"otf_dense" create i
   ;;
 end
+
+module type Reloadable_config = sig
+  include Config
+
+  val base : int
+end
+
+module Make_reloadable (Config : Reloadable_config) = struct
+  open Config
+  module Frozen = Make (Config)
+
+  let latency = Frozen.latency
+  let words = (mh * mw) + mh + mh
+
+  let () =
+    match arithmetic with
+    | `Constant ->
+      raise_s [%message "BUG: otf_dense reloadable weights need general multipliers"]
+    | `Multiplier ->
+      if Int.max acc_bits mult_bits > 32
+      then
+        raise_s
+          [%message
+            "BUG: otf_dense bank fields must fit a 32 bit word"
+              (acc_bits : int)
+              (mult_bits : int)]
+  ;;
+
+  (* The bank order: weights channel by channel, then the biases, then the multipliers. *)
+  let fields =
+    List.concat_map Frozen.weight_values ~f:(fun row ->
+      List.map row ~f:(Bits.of_signed_int ~width:wgt_bits))
+    @ bias
+    @ mult
+  ;;
+
+  let image = List.map fields ~f:(Bits.uresize ~width:32)
+
+  module I = struct
+    type 'a t =
+      { clocking : 'a Clocking.t
+      ; x : 'a With_valid.t [@bits mw * act_bits]
+      ; x_bank : 'a
+      ; store : 'a Weight_banks.Write.t [@rtlprefix "store_"]
+      }
+    [@@deriving hardcaml]
+  end
+
+  module O = struct
+    type 'a t =
+      { y : 'a With_valid.t [@bits mh * out_bits]
+      ; y_bank : 'a
+      }
+    [@@deriving hardcaml]
+  end
+
+  let create (scope : Scope.t) (i : Signal.t I.t) =
+    let spec = Clocking.to_spec_no_clear i.clocking in
+    let reg = Clocking.reg_no_clear i.clocking in
+    let banks =
+      Array.of_list_mapi fields ~f:(fun index initial ->
+        let bank number =
+          let enable =
+            i.store.write
+            &: (i.store.bank ==:. number)
+            &: (i.store.address ==:. base + index)
+          in
+          Scope.naming
+            scope
+            (Signal.reg
+               spec
+               ~initialize_to:initial
+               ~enable
+               (sel_bottom i.store.data ~width:(Bits.width initial)))
+            (sprintf "word%d_bank%d" index number)
+        in
+        bank 0, bank 1)
+    in
+    let pick index tag =
+      let zero, one = banks.(index) in
+      mux2 tag one zero
+    in
+    let%hw sum_bank = reg i.x_bank in
+    let%hw rescale_bank = reg sum_bank in
+    let%hw y_bank = reg rescale_bank in
+    let acts = split_lsb ~part_width:act_bits i.x.value in
+    let channel c =
+      let scope = Scope.sub_scope scope ("channel" ^ Int.to_string c) in
+      let products =
+        List.mapi acts ~f:(fun k a ->
+          Scope.naming
+            scope
+            (reg (a *+ pick ((c * mw) + k) i.x_bank))
+            (sprintf "x%d_product" k))
+      in
+      let%hw sum =
+        reg
+          (tree
+             ~arity:2
+             ~f:(reduce ~f:( +: ))
+             (pick ((mh * mw) + c) sum_bank
+              :: List.map products ~f:(sresize ~width:acc_bits)))
+      in
+      let rescaled =
+        Frozen.Requant.hierarchical
+          scope
+          { acc = sum; mult = pick ((mh * mw) + mh + c) rescale_bank }
+      in
+      let%hw out = reg rescaled.out in
+      out
+    in
+    let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
+    { O.y = { valid; value = concat_lsb (List.init mh ~f:channel) }; y_bank }
+  ;;
+
+  let hierarchical ?instance scope i =
+    let module H = Hierarchy.In_scope (I) (O) in
+    H.hierarchical ?instance ~scope ~name:"otf_dense" create i
+  ;;
+end

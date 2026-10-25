@@ -12,12 +12,21 @@ module Make (_ : Config) : sig
   (** Cycles from [features_valid] to [prediction_valid], the sum over the layers. *)
   val latency : int
 
+  (** Words in one weight bank; the reload ports exist only when this is not 0. *)
+  val words : int
+
+  val reloadable : bool
+
   module I : sig
     type 'a t =
       { clock : 'a
       ; clear : 'a
       ; features : 'a
       ; features_valid : 'a
+      ; weights_write : 'a option
+      ; weights_address : 'a option
+      ; weights_data : 'a option
+      ; weights_commit : 'a option
       }
     [@@deriving hardcaml]
   end
@@ -26,11 +35,16 @@ module Make (_ : Config) : sig
     type 'a t =
       { prediction : 'a
       ; prediction_valid : 'a
+      ; prediction_bank : 'a option
+      ; weights_bank : 'a option
+      ; weights_version : 'a option
+      ; weights_crc : 'a option
+      ; weights_idle_crc : 'a option
       }
     [@@deriving hardcaml]
   end
 
-  (** [clear] is synchronous and active high; it clears the valid bits and nothing else. *)
+  (** [clear] clears the valid bits only; [weights_commit] makes the idle bank active. *)
   val hierarchical : ?instance:string -> Scope.t -> Signal.t I.t -> Signal.t O.t
 end
 

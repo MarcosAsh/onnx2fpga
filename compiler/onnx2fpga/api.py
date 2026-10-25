@@ -13,8 +13,9 @@ import warnings
 
 import numpy as np
 
+from . import reload
 from .board import BOARDS, Kria
-from .compile import Compiler
+from .compile import CompilationResult, Compiler
 from .doctor import TOOLS
 from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
                      NotDeployedError, SimulationError, ToolchainError,
@@ -158,6 +159,7 @@ class Accelerator:
         self.session = None
         self._revision = 0
         self._compiled_revision = None
+        self._compiled_graph = None
 
     @property
     def input_name(self):
@@ -207,12 +209,18 @@ class Accelerator:
 
     def compile(self, device=None, target=None, target_fps=None, target_cycles=None,
                 hdl=None, calibration=None, utilisation=None, out_dir=None,
-                strict=True, verbose=False, mult_bits=None, top=None, mode=None):
+                strict=True, verbose=False, mult_bits=None, top=None, mode=None,
+                weights=None):
         """Quantizes, folds and emits the design for `device`; arguments left out keep the previous compile value."""
         previous = self._requested
         mode = mode or previous.get("mode", "stream")
         if mode not in ("stream", "fixed"):
             raise ConfigError("mode is 'stream' or 'fixed', not %r" % (mode,))
+        weights = weights or previous.get("weights", "frozen")
+        if weights not in ("frozen", "reloadable"):
+            raise ConfigError("weights is 'frozen' or 'reloadable', not %r" % (weights,))
+        if weights == "reloadable":
+            self._check_reloadable(mode)
         device = self._device(device if device is not None
                               else previous.get("device", DEFAULT_DEVICE))
         if mode == "fixed":
@@ -250,7 +258,7 @@ class Accelerator:
         settings = {"device": device.name, "target": goal[:2], "hdl": hdl,
                     "utilisation": utilisation, "samples": samples,
                     "out_dir": pathlib.Path(out_dir), "mult_bits": mult_bits, "top": top,
-                    "mode": mode}
+                    "mode": mode, "weights": weights}
         self._requested = settings
 
         compiler = Compiler(device=device, target_cycles=cycles,
@@ -259,7 +267,7 @@ class Accelerator:
                             folding=self.layers.pins(),
                             weight_dtypes=self.layers.weight_dtypes(),
                             arithmetic=self.layers.arithmetic(),
-                            custom_objects=self.custom_objects, mode=mode)
+                            custom_objects=self.custom_objects, mode=mode, weights=weights)
         with _translated():
             result = compiler.compile(self.model, samples, out_dir)
         if strict and cycles is not None:
@@ -268,9 +276,21 @@ class Accelerator:
         self.disconnect()
         self.board = None
         self.result = result
+        self._compiled_graph = result.hardware_graph
         self.settings = settings
         self._compiled_revision = self._revision
         return self
+
+    def _check_reloadable(self, mode):
+        if mode != "fixed":
+            raise ConfigError("weights='reloadable' needs mode='fixed'")
+        if tree_op(self._float_view):
+            raise ConfigError("weights='reloadable' does not support tree ensembles yet")
+        constant = [name for name, kind in self.layers.arithmetic().items()
+                    if kind == "constant"]
+        if constant:
+            raise ConfigError("%s is set to arithmetic('constant'), which needs "
+                              "weights='frozen'" % constant[0])
 
     def _check_fixed(self, target, target_fps, target_cycles):
         given = [key for key, value in (("target", target), ("target_fps", target_fps),
@@ -492,6 +512,10 @@ class Accelerator:
                   % (latency, latency * 1e3 / device.fmax_mhz, device.fmax_mhz)]
         if saved:
             lines.append(" Constant arithmetic: %d multipliers saved" % saved)
+        words = reload.image(graph)
+        if words:
+            lines.append(" Weights: reloadable, two banks of %d words, CRC 0x%08x loaded"
+                         % (len(words), reload.crc(words)))
         lines += self._measured_clock()
         lines += [" Quantization: %s" % self._describe_quantization(),
                   " Build: %s" % self.out_dir, "_" * rule]
@@ -590,7 +614,7 @@ class Accelerator:
     def _float_reference(self, feed):
         graph = self.result.float_graph
         name = graph.inputs[0]
-        raw = np.asarray(feed[name], dtype=np.float64)
+        raw = np.asarray(next(iter(feed.values())), dtype=np.float64)
         if name in graph.layouts:
             raw = graph.layouts[name].to_internal(raw)
         return GraphRunner(graph).run({name: raw})[graph.outputs[0]]
@@ -608,14 +632,16 @@ class Accelerator:
         return np.concatenate([sink.from_words(words)
                                for words in self.session.run(frames)])
 
-    def simulate(self, x=None, sweep=False):
-        """Builds the design with Verilator and checks every output beat against the integer reference."""
+    def simulate(self, x=None, sweep=False, reload=None, commits=None):
+        """Builds the design with Verilator and checks every output against the integer reference; in fixed mode `reload` fills the idle bank and `commits` flips it."""
         self._require_compiled("simulate")
         _require_tools(("verilator", "g++", "make"), "simulate")
         out, top = self.out_dir, self.settings["top"]
         if self.mode == "fixed":
             inputs = self._fixed_inputs(x)
-            runner = FixedSimulationRunner(out, self.latency, top, self._write_vectors(inputs))
+            flags = [] if reload is None else self._reload_flags(reload, commits, inputs)
+            runner = FixedSimulationRunner(out, self.latency, top,
+                                           self._write_vectors(inputs), flags)
             frames = len(inputs)
         else:
             vectors = SimulationRunner.GOLDEN
@@ -643,8 +669,27 @@ class Accelerator:
         return list(rng.integers(dtype.min, dtype.max + 1,
                                  (FIXED_VECTORS,) + tuple(tensor.shape)))
 
-    def _write_vectors(self, inputs):
-        graph = self.result.hardware_graph
+    def _reload_flags(self, model, commits, inputs):
+        """Harness flags for a second bank holding `model`, committed on each of `commits`."""
+        _, graph = self._retarget(model)
+        words = reload.image(graph)
+        if commits is None:
+            commits = [max(len(words), len(inputs) // 2)]
+        early = [cycle for cycle in commits if cycle < len(words)]
+        if early:
+            raise ConfigError("a commit at cycle %d comes before the %d cycles that write the "
+                              "idle bank" % (early[0], len(words)))
+        (self.out_dir / "golden" / "x_weights.hex").write_text(
+            "".join("%08x\n" % word for word in words))
+        _, expected = self._write_vectors(inputs, graph, "x_expected_new.hex")
+        compiled = reload.crc(reload.image(self._compiled_graph))
+        return ["--weights", "golden/x_weights.hex", "--expected-new", expected,
+                "--commits", ",".join(str(cycle) for cycle in sorted(set(commits))),
+                "--crc", "%x,%x" % (compiled, reload.crc(words))]
+
+    def _write_vectors(self, inputs, graph=None, expected_name="x_expected.hex"):
+        """Stimulus and expected answers for the harness, from `graph` or the compiled design."""
+        graph = graph or self._compiled_graph
         source = StreamCodec(graph.tensor(graph.inputs[0]))
         sink = StreamCodec(graph.tensor(graph.outputs[0]))
         runner = GraphRunner(graph)
@@ -655,8 +700,8 @@ class Accelerator:
                 runner.run({graph.inputs[0]: quantized})[graph.outputs[0]]).render())
         golden = self.out_dir / "golden"
         (golden / "x_input.hex").write_text("".join(sent))
-        (golden / "x_expected.hex").write_text("".join(expected))
-        return ("golden/x_input.hex", "golden/x_expected.hex")
+        (golden / expected_name).write_text("".join(expected))
+        return ("golden/x_input.hex", "golden/" + expected_name)
 
     def build(self, board="icepi_zero", verbose=False, **options):
         """A bitstream for `board`, an Icepi Zero with the open flow or a Kria with Vivado; compiles first if nothing is compiled yet."""
@@ -707,8 +752,8 @@ class Accelerator:
     def deploy(self, port=None, program=True, timeout=2.0, host=None):
         """Loads the bitstream into the board SRAM with openFPGALoader and opens its serial port."""
         if host is not None or isinstance(self.board, Kria):
-            raise NotImplementedError("deploying to a Kria board over the network arrives "
-                                      "with spec 003, reloadable weights")
+            raise NotImplementedError("deploying to a Kria board needs the Kria runtime, "
+                                      "which is not written yet")
         if self.board is None:
             raise NotCompiledError("deploy needs acc.build(board='icepi_zero') first")
         self._require_compiled("deploy")
@@ -733,9 +778,26 @@ class Accelerator:
         self.session = Session(link, port, timeout).open()
         return self
 
-    def load_weights(self, model):
-        """Swaps new weights into a running board without a rebuild; planned in spec 003."""
-        raise NotImplementedError("load_weights arrives with spec 003, reloadable weights")
+    def load_weights(self, model, registers=None):
+        """Checks `model` against the compiled architecture and grid, writes it through `registers` into the idle bank, commits and confirms; predict then uses it."""
+        self._require_compiled("load_weights")
+        float_graph, graph = self._retarget(model)
+        if registers is None:
+            raise NotDeployedError("load_weights needs registers=, such as "
+                                   "SimulatedRegisters, until the Kria runtime can deploy "
+                                   "a board")
+        reload.write_bank(registers, reload.image(graph))
+        self.result = CompilationResult(float_graph, graph, self.result.context,
+                                        self.result.build)
+        return self
+
+    def _retarget(self, model):
+        if self.settings.get("weights") != "reloadable":
+            raise ConfigError("%s has frozen weights; compile it with weights='reloadable' "
+                              "to load new ones" % self.name)
+        onnx = model if isinstance(model, OnnxModel) else load(model).model
+        with _translated():
+            return reload.retarget(onnx, self.result, self.settings["samples"])
 
     def disconnect(self):
         """Closes the serial port; predict goes back to the reference model."""

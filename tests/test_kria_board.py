@@ -14,7 +14,7 @@ from support import Fixtures, Hdl, ROOT
 
 import onnx2fpga as otf
 from onnx2fpga.board import KV260, Kria
-from onnx2fpga.errors import ToolchainError
+from onnx2fpga.errors import ConfigError, ToolchainError
 from onnx2fpga.measure import TimingReport
 from onnx2fpga.targets.device import Device
 
@@ -184,10 +184,10 @@ class Flow(unittest.TestCase):
         memory.unlink()
 
     def test_deploy(self):
-        with self.assertRaisesRegex(NotImplementedError, "spec 003"):
+        with self.assertRaisesRegex(NotImplementedError, "needs the Kria runtime"):
             self.acc.deploy(host="kria.local")
-        with self.assertRaisesRegex(NotImplementedError, "spec 003"):
-            self.acc.load_weights("new.onnx")
+        with self.assertRaisesRegex(ConfigError, "has frozen weights"):
+            self.acc.load_weights(Fixtures.factory(8).mlp((16, 32, 8)))
 
 
 if __name__ == "__main__":

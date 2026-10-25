@@ -65,8 +65,18 @@ with Vivado and run the same command in. The run leaves `kr260.bit`, `kr260.bin`
 
 The register map is in `manifest.json` and in the spec. On the board,
 `runtime/host/kria_run.cpp` runs the golden vectors through it as root and
-prints the cycles the hardware counted between start and answer. `deploy` and
-`load_weights` arrive with [003](../specs/003-reloadable-weights.md).
+prints the cycles the hardware counted between start and answer.
+
+A design compiled with `weights="reloadable"` puts its weight banks behind the
+same registers, at 0x8000, with a commit register, a version counter and a
+CRC of each bank at 0x0020 to 0x0034 (see
+[003](../specs/003-reloadable-weights.md)). `load_weights` speaks that
+protocol to anything with `read` and `write`, and the tests drive it against
+the generated `kria_regs` under Verilator. `deploy(host=...)` still waits for a
+Kria runtime that can hand it the board's registers. The example MLP does not
+fit reloadable on the K26, since every weight then needs a multiplier and the
+estimate is 1706 DSPs; the 16-32-8 MLP of the tests needs 424 DSPs and 24096
+LUTs, 34 and 21 percent.
 
 On the KR260 the project also carries `sfp.xdc`, disabled, with the SFP+ pins
 and the 156.25 MHz reference clock reserved for the 10G MAC.

@@ -7,6 +7,7 @@ import shutil
 from ..assets import AssetLocator
 from ..errors import ConfigError
 from ..p3_ops.hardware_ops import DenseUnit
+from ..reload import layout, reloadable_units
 from .hardcaml import HardcamlGenerator, design
 from .memories import HexImage
 from .systemverilog import identifier, render_top
@@ -115,6 +116,8 @@ class ProjectWriter:
                 row["latency"] = node.latency
                 if isinstance(node, DenseUnit):
                     row["arithmetic"] = node.arithmetic
+            manifest["weights"] = (layout(self.graph) if reloadable_units(self.graph)
+                                   else {"mode": "frozen"})
         if folding:
             manifest["cycles_per_frame"] = folding.bottleneck_cycles
             manifest["estimated_fps"] = round(folding.frames_per_second, 2)
@@ -149,6 +152,7 @@ class ProjectWriter:
         """Hardcaml output trips -Wall on unread bits and case multiplexers, so those are waived."""
         hardcaml = self.hdl == "hardcaml"
         fixed = self.latency is not None
+        reload = " -DOTF_RELOAD" if reloadable_units(self.graph) else ""
         return MAKEFILE_TEMPLATE % {
             "top": self.name,
             "root": self.assets.root,
@@ -156,6 +160,7 @@ class ProjectWriter:
             "run_flags": " --latency %d" % self.latency if fixed else "",
             "sources": "rtl/top.v" if hardcaml else "$(wildcard rtl/*.sv)",
             "waivers": " -Wno-COMBDLY -Wno-UNUSEDSIGNAL" if hardcaml else "",
+            "defines": reload,
         }
 
 
@@ -178,7 +183,7 @@ TOP       := %(top)s
 SOURCES   := %(sources)s
 HARNESS   := $(OTF_ROOT)/runtime/sim/%(harness)s
 WARNINGS  := -Wall -Wno-DECLFILENAME -Wno-UNUSEDPARAM%(waivers)s
-CXXFLAGS  := -O2 -std=c++17 -I$(OTF_ROOT)/runtime/include
+CXXFLAGS  := -O2 -std=c++17 -I$(OTF_ROOT)/runtime/include%(defines)s
 
 .PHONY: all run lint clean
 

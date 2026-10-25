@@ -113,6 +113,41 @@ and Reshape as wiring. Anything else, a `Conv` for instance, raises
 for the Icepi Zero does not take it yet. See
 [001](../specs/001-fixed-latency.md) for the design.
 
+## Reloading weights
+
+A retrained model should not need a Vivado rebuild. With
+`weights="reloadable"` every dense layer keeps its weights, biases and rescale
+multipliers in two banks of registers. A host writes the idle bank while the
+design keeps answering, then commits, and every inference whose features
+arrive after the commit uses the new bank from start to finish:
+
+```python
+acc.compile(device="vu9p", mode="fixed", weights="reloadable",
+            calibration=x_train[:64])
+acc.simulate(reload="retrained.onnx", commits=[5000])
+
+from onnx2fpga.simulate import SimulatedRegisters
+with SimulatedRegisters(acc.out_dir) as registers:
+    acc.load_weights("retrained.onnx", registers=registers)
+acc.predict(x)       # now the retrained model
+```
+
+The latency stays 9 cycles. The price is that every weight gets a general
+multiplier, zeros included, since a reload can change any of them, so constant
+arithmetic does not apply: the example MLP needs 3322 DSP48E2 in yosys against
+90 with frozen constant arithmetic. `simulate` writes the new model into the
+idle bank while 10000 inputs stream past and checks that every answer carries
+the bank that was active when its features arrived and matches that bank's
+integer model.
+
+`load_weights` refuses a model with another architecture or one that does not
+fit the compiled grid, naming the first difference. It writes the bank through
+the AXI4-Lite registers of the Kria shell, checks a CRC-32 before and after the
+commit, and checks the version counter. `SimulatedRegisters` is that register
+file under Verilator; on a board it waits for the Kria runtime. See
+[003](../specs/003-reloadable-weights.md) for the register map and what stays
+fixed between reloads.
+
 ## Tree ensembles
 
 Gradient boosted trees exported by onnxmltools or skl2onnx compile the same
