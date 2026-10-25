@@ -7,6 +7,23 @@ from ..p3_ops.trees import TreeEnsembleOp
 from ..pipeline import Pass
 from .folding import FoldingReport
 
+# What each stage knob of a unit governs, for the summary and the errors.
+PATHS = {"product": "multiplies", "sum": "adder tree", "rescale": "rescale",
+         "compare": "comparators", "select": "leaf select"}
+
+
+def slowest(unit, delays):
+    """(ns, path name) of the unit's longest path at the stages it has."""
+    return max((options[unit.stages.get(knob, 0)], PATHS[knob])
+               for knob, options in unit.paths(delays).items())
+
+
+def predicted_fmax(units, delays):
+    """The clock the delay model expects the whole design to reach, or None without a model."""
+    if delays is None:
+        return None
+    return 1000.0 / max(slowest(unit, delays)[0] for unit in units)
+
 
 def check_fixed_ops(graph):
     for node in graph.topological_order():
@@ -21,10 +38,12 @@ class UnrollForFixedLatency(Pass):
     # The words the 0x8000 register window holds, one per value.
     BANK_WORDS = 8192
 
-    def __init__(self, utilisation_limit=0.80, arithmetic=None, reloadable=False):
+    def __init__(self, utilisation_limit=0.80, arithmetic=None, reloadable=False,
+                 clock_mhz=None):
         self.utilisation_limit = utilisation_limit
         self.arithmetic = dict(arithmetic or {})
         self.reloadable = reloadable
+        self.clock_mhz = clock_mhz
 
     def run(self, graph, context):
         for node in list(graph.topological_order()):
@@ -44,6 +63,8 @@ class UnrollForFixedLatency(Pass):
                 self._make_reloadable(unit, context.artifacts["plan"].mult_bits)
             elif isinstance(unit, DenseUnit):
                 unit.arithmetic = self._arithmetic(unit, context.device)
+        if self.clock_mhz is not None:
+            self._pipeline(units, context.device)
         self._check_budget(units, context.device)
         words = sum(getattr(unit, "words", 0) for unit in units)
         if words > self.BANK_WORDS:
@@ -52,9 +73,34 @@ class UnrollForFixedLatency(Pass):
 
         latency = sum(unit.latency for unit in units)
         context.artifacts["latency"] = latency
+        context.artifacts["clock_mhz"] = self.clock_mhz or context.device.fmax_mhz
+        context.artifacts["fmax_mhz"] = predicted_fmax(units, context.device.delays)
         context.artifacts["folding"] = FoldingReport(context.device).record(graph)
         context.note("unroll: %d layers, latency %d cycles" % (len(units), latency))
         return graph
+
+    def _pipeline(self, units, device):
+        """Each stage knob takes the fewest registers whose path fits the clock period."""
+        if device.delays is None:
+            raise ConfigError("%s has no delay model, so clock_mhz needs one of %s"
+                              % (device.name, ", ".join(
+                                  name for name in device.names()
+                                  if device.get(name).delays is not None)))
+        period = 1000.0 / self.clock_mhz / (1 + device.delays.margin)
+        floors = []
+        for unit in units:
+            for knob, options in unit.paths(device.delays).items():
+                floors.append((min(options), unit.name, PATHS[knob]))
+                fits = [stages for stages, delay in enumerate(options) if delay <= period]
+                if fits and knob in unit.stages:
+                    unit.stages[knob] = fits[0]
+        delay, name, path = max(floors)
+        if delay > period:
+            raise BudgetError("%g MHz is out of reach on %s: the slowest path, through the %s "
+                              "of %s, takes %.2f ns however it is pipelined, so the fastest "
+                              "clock is %.1f MHz"
+                              % (self.clock_mhz, device.name, path, name, delay,
+                                 1000.0 / delay / (1 + device.delays.margin)))
 
     @staticmethod
     def _make_reloadable(unit, mult_bits):

@@ -4,8 +4,10 @@ Status: partial. Frozen TreeEnsembleRegressor and binary TreeEnsembleClassifier
 models from ai.onnx.ml opsets 1 and 3 build in fixed latency mode and are
 verified. Missing: the TreeEnsemble operator of opset 5, multiclass and
 multi target ensembles, reloadable trees ([003](003-reloadable-weights.md)
-made dense layers reloadable and says what trees still need), a resource comparison with conifer, which
-needs Vivado, and `clock_mhz=` from [002](002-pipelined-matvec.md). The 100
+made dense layers reloadable and says what trees still need), and a resource
+comparison with conifer, which needs Vivado. `clock_mhz=` from
+[002](002-pipelined-matvec.md) adds register stages to the leaf select and the
+adder tree. The 100
 tree regressor compiles for the `k26` device from [006](006-kv260.md) in 7580
 LUTs, 6.5 percent of the part.
 
@@ -28,8 +30,8 @@ evaluated in parallel, and the pipeline has three parts:
    the example regressor need 871.
 2. Each tree picks its leaf with a mux tree that follows the tree's own shape,
    driven by those registered bits, and the leaf is registered.
-3. An adder tree of fan in 4 sums the leaves and a constant bias, with a
-   register after each level.
+3. An adder tree sums the leaves and a constant bias in binary levels, with a
+   register after every second level, which is fan in 4 a stage.
 
 The latency is 2 plus the levels of that adder tree for the trees and the bias,
 so it depends only on the tree count: 3 cycles for up to 3 trees, 6 for 64 to

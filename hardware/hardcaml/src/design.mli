@@ -28,7 +28,9 @@ module Node : sig
     }
   [@@deriving sexp_of]
 
-  val param : t -> string -> int
+  (** Raises when the node has no such parameter and there is no [default]. *)
+  val param : ?default:int -> t -> string -> int
+
   val words : t -> string -> Bits.t list
 end
 

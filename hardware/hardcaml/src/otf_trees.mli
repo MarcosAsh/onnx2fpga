@@ -24,8 +24,23 @@ module Tree : sig
         }
   [@@deriving sexp_of]
 
+  (** Splits on the longest path from the root to a leaf. *)
+  val depth : t -> int
+
   (** The leaf code that [x] reaches. *)
   val eval : t -> int array -> int
+end
+
+(** Register stages added to the ensemble's own, each one a cycle of latency. *)
+module Stages : sig
+  (** Select: cuts in the leaf select, under the depth; sum: more adder levels registered. *)
+  type t =
+    { select : int
+    ; sum : int
+    }
+  [@@deriving sexp_of]
+
+  val none : t
 end
 
 module type Config = sig
@@ -44,13 +59,15 @@ module type Config = sig
 
   (** Output one bit, set when the sum is not negative, instead of the sum. *)
   val decision : bool
+
+  val stages : Stages.t
 end
 
 (** Register stages an adder tree of fan in 4 needs for this many operands. *)
 val adder_stages : int -> int
 
 module Make (_ : Config) : sig
-  (** Compare, select, then [adder_stages (trees + 1)] stages for leaves and bias. *)
+  (** Compare, select, [adder_stages (trees + 1)] adder stages, and [stages]. *)
   val latency : int
 
   module I : sig

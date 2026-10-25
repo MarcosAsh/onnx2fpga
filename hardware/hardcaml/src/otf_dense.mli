@@ -3,6 +3,19 @@
 open! Core
 open! Hardcaml
 
+(** Register stages added to the three every layer has, each one a cycle of latency. *)
+module Stages : sig
+  (** Product: MREG then AREG, or one between constant adders; sum: under its levels. *)
+  type t =
+    { product : int
+    ; sum : int
+    ; rescale : int
+    }
+  [@@deriving sexp_of]
+
+  val none : t
+end
+
 module type Config = sig
   (** Input elements. *)
   val mw : int
@@ -31,10 +44,12 @@ module type Config = sig
 
   (** One [mult_bits] word per output channel. *)
   val mult : Bits.t list
+
+  val stages : Stages.t
 end
 
 module Make (_ : Config) : sig
-  (** Cycles from [x.valid] to [y.valid]: products, then the sum, then the rescale. *)
+  (** Cycles from [x.valid] to [y.valid]: products, the sum, the rescale and [stages]. *)
   val latency : int
 
   module I : sig
@@ -62,7 +77,7 @@ end
 
 (** The same layer with its values in two banks a host rewrites; needs [`Multiplier]. *)
 module Make_reloadable (_ : Reloadable_config) : sig
-  (** Three cycles, the same as frozen. *)
+  (** The same as frozen. *)
   val latency : int
 
   (** Values in a bank: weights channel by channel, then the biases, then the multipliers. *)

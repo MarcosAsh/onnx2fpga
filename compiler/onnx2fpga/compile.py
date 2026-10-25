@@ -40,6 +40,16 @@ class CompilationResult:
         """Cycles from input to output in fixed latency mode, None for a streaming design."""
         return self.context.artifacts.get("latency")
 
+    @property
+    def clock_mhz(self):
+        """The clock a fixed latency design was pipelined for, else the device's."""
+        return self.context.artifacts.get("clock_mhz")
+
+    @property
+    def fmax_mhz(self):
+        """The delay model's fmax for a fixed latency design, None without a model."""
+        return self.context.artifacts.get("fmax_mhz")
+
 
 class Compiler:
     """`folding`, `weight_dtypes`, `arithmetic`, `memory` and `custom_objects` are the per-layer settings built by onnx2fpga.api; `weights` is "frozen" or "reloadable"."""
@@ -47,7 +57,8 @@ class Compiler:
     def __init__(self, device="vu9p", target_cycles=None, utilisation_limit=0.80,
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
                  hdl="sv", folding=None, weight_dtypes=None, custom_objects=None,
-                 mode="stream", arithmetic=None, memory=None, weights="frozen"):
+                 mode="stream", arithmetic=None, memory=None, weights="frozen",
+                 clock_mhz=None):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
@@ -63,6 +74,7 @@ class Compiler:
         self.arithmetic = dict(arithmetic or {})
         self.memory = dict(memory or {})
         self.weights = weights
+        self.clock_mhz = clock_mhz
 
     def compile(self, model, samples=None, out_dir="build/out"):
         context = CompilerContext(self.device)
@@ -83,7 +95,7 @@ class Compiler:
         if self.mode == "fixed":
             passes = [LowerToHardware(plan, self.custom_lowerings),
                       UnrollForFixedLatency(self.utilisation_limit, self.arithmetic,
-                                            self.weights == "reloadable")]
+                                            self.weights == "reloadable", self.clock_mhz)]
         else:
             passes = [
                 LowerToHardware(plan, self.custom_lowerings),

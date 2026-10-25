@@ -83,14 +83,32 @@ the integer model. The summary lists each layer's arithmetic, multipliers and
 latency:
 
 ```
- Layer (kind)                    In -> out  Arithmetic Multipliers  Latency      LUT    DSP
-===========================================================================================
- fc0 (Gemm+Relu)                  32 -> 64    constant           0        3    59364     64
- fc1 (Gemm+Relu)                  64 -> 16    constant           0        3    37190     16
- fc2 (Gemm)                       16 -> 10    constant           0        3     6064     10
-===========================================================================================
- Total                                                           0        9   102618     90
+ Layer (kind)                    In -> out  Arithmetic Multipliers  Latency   Stages   Fmax      LUT    DSP
+===========================================================================================================
+ fc0 (Gemm+Relu)                  32 -> 64    constant           0        3    0/0/0    180    59364     64
+ fc1 (Gemm+Relu)                  64 -> 16    constant           0        3    0/0/0    162    37190     16
+ fc2 (Gemm)                       16 -> 10    constant           0        3    0/0/0    205     6064     10
+===========================================================================================================
+ Total                                                           0        9             162   102618     90
 ```
+
+The Fmax column is what the device's delay model expects each layer to reach.
+Three stages a layer put a multiply, an adder tree or a whole rescale in one
+cycle, which the vu9p model puts at 162 MHz. To run faster, ask for a clock:
+
+```python
+acc.compile(device="k26", mode="fixed", clock_mhz=322.265625, utilisation=0.9)
+acc.latency          # 22
+```
+
+The compiler adds the fewest register stages each layer needs: after the
+multiplies, inside the adder tree and inside the rescale, shown as the Stages
+column in that order. On the `k26` the example MLP takes 22 cycles, 68.3 ns at
+322.265625 MHz, and the model predicts 343 MHz. The `k26` model takes its DSP
+figures from AMD's datasheet and assumes the fabric ones, so it waits for a
+Vivado run; the `icepi25` model is fitted to nextpnr. A clock no pipelining
+reaches raises `BudgetError` naming the slowest path. See
+[002](../specs/002-pipelined-matvec.md).
 
 The weights are fixed when the hardware is generated, so by default each
 product becomes logic for its own weight instead of a multiplier: a zero weight

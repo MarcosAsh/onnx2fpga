@@ -63,10 +63,10 @@ acc.summary()          # per layer multipliers and latency, then the total in cy
 acc.simulate()         # 10000 random vectors, one per cycle
 ```
 
-`clock_mhz=` arrives with [002](002-pipelined-matvec.md). Until then the
-nanosecond figure uses the device model's clock, 300 MHz for `vu9p`, which puts
-the example MLP at 30.0 ns. At the 322.265625 MHz trading clock it would be
-27.9 ns, if the design closes timing there.
+Without `clock_mhz=` the nanosecond figure uses the device model's clock, 300
+MHz for `vu9p`, which puts the example MLP at 30.0 ns. With it,
+[002](002-pipelined-matvec.md) adds the register stages that clock needs and
+quotes the latency at it.
 
 `target`, `target_fps`, `target_cycles` and `Layer.fold` pins have no meaning
 when every layer is unrolled, and passing any of them raises `ConfigError`.
@@ -209,6 +209,6 @@ Three of the four are met.
 - How does Vivado map the adder trees? yosys builds them from LUTs and wide
   muxes for UltraScale+ instead of carry chains. If Vivado does the same, the
   trees need restructuring before 002.
-- Three stages per layer is a fixed choice. Should a layer small enough to close
-  timing in one or two stages take fewer, leaving it to [002](002-pipelined-matvec.md)
-  to add registers only where the clock needs them?
+- Three stages per layer is the floor. [002](002-pipelined-matvec.md) adds
+  registers only where a clock needs them; should a layer small enough to close
+  timing in one or two stages take fewer than three?

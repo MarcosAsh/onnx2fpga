@@ -2,6 +2,8 @@
 
 import unittest
 
+import numpy as np
+
 from support import Fixtures, Hdl
 
 from onnx2fpga.compile import Compiler
@@ -9,6 +11,7 @@ from onnx2fpga.measure import YosysRunner
 from onnx2fpga.targets.device import Device
 from onnx2fpga.targets.ecp5 import ebr_blocks, memory, multipliers, worth_a_block
 from onnx2fpga.targets.resources import Resources
+from onnx2fpga.trading.replay import tiny_mlp
 
 
 def compile_mlp(target, device="icepi25", hdl="sv", out="ecp5_mlp"):
@@ -110,6 +113,17 @@ class Ecp5SynthesisTest(unittest.TestCase):
         self.assertEqual(predicted.ebr, measured.ebr)
         self.assertLess(abs(predicted.lut / measured.lut - 1), 0.25)
         self.assertLess(abs(predicted.ff / measured.ff - 1), 0.25)
+
+    def test_clock(self):
+        """Pipelined for 120 MHz, the 4-8-1 MLP meets it after place and route, near the model's fmax."""
+        result = Compiler(device="icepi25", mode="fixed", hdl="hardcaml",
+                          clock_mhz=120).compile(
+            tiny_mlp(), [{"x": x} for x in np.random.default_rng(0).normal(0, 1, (64, 1, 4))],
+            Fixtures.build_dir("ecp5_clock"))
+        _, fmax = YosysRunner(result.context.device, implement=True,
+                              freq_mhz=120).run(result.build.root)
+        self.assertGreaterEqual(fmax, 120)
+        self.assertLess(abs(result.fmax_mhz / fmax - 1), 0.1)
 
 
 if __name__ == "__main__":

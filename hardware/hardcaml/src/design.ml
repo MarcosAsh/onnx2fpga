@@ -96,10 +96,10 @@ module Node = struct
     }
   ;;
 
-  let param t name =
-    match List.Assoc.find t.params name ~equal:String.equal with
-    | Some value -> value
-    | None -> raise_s [%message "design.json: node has no parameter" t.name name]
+  let param ?default t name =
+    match List.Assoc.find t.params name ~equal:String.equal, default with
+    | Some value, _ | None, Some value -> value
+    | None, None -> raise_s [%message "design.json: node has no parameter" t.name name]
   ;;
 
   let words t name =

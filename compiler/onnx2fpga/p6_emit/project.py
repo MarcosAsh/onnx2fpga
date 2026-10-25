@@ -112,8 +112,11 @@ class ProjectWriter:
         if self.latency is not None:
             manifest["mode"] = "fixed"
             manifest["latency"] = self.latency
+            manifest["clock_mhz"] = self.context.artifacts["clock_mhz"]
+            manifest["predicted_fmax_mhz"] = self.context.artifacts["fmax_mhz"]
             for row, node in zip(manifest["nodes"], self.graph.topological_order()):
                 row["latency"] = node.latency
+                row["stages"] = dict(node.stages)
                 if isinstance(node, DenseUnit):
                     row["arithmetic"] = node.arithmetic
             manifest["weights"] = (layout(self.graph) if reloadable_units(self.graph)

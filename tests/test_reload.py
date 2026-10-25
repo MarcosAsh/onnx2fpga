@@ -241,23 +241,53 @@ class Reloadable(unittest.TestCase):
 
     @unittest.skipIf(SBY is None, "sby not found")
     def test_proof(self):
-        def prove(latency):
-            folder = self.acc.out_dir / ("formal_bank_%d" % latency)
-            shutil.rmtree(folder, ignore_errors=True)
-            folder.mkdir()
-            shutil.copyfile(self.acc.out_dir / "rtl" / "top.v", folder / "top.v")
-            (folder / "check.sv").write_text(CHECK % {"latency": latency})
-            (folder / "bank.sby").write_text(SBY_FILE % {"depth": latency + 2})
-            path = os.path.dirname(SBY) + os.pathsep + os.environ.get("PATH", "")
-            completed = subprocess.run([SBY, "-f", "bank.sby"], cwd=folder,
-                                       capture_output=True, text=True, timeout=900,
-                                       env=dict(os.environ, PATH=path))
-            return completed.returncode == 0, completed.stdout
-
-        ok, log = prove(9)
+        ok, log = prove_bank(self.acc.out_dir, 9)
         self.assertTrue(ok, log[-3000:])
         self.assertIn("successful proof by k-induction", log)
-        self.assertFalse(prove(8)[0], "a latency of 8 must not prove")
+        self.assertFalse(prove_bank(self.acc.out_dir, 8)[0], "a latency of 8 must not prove")
+
+
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Pipelined(unittest.TestCase):
+    """Reloadable at the trading clock: every stage the tag must follow."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.acc = otf.load(mlp(), name="mlp")
+        cls.acc.compile(device="vu9p", mode="fixed", weights="reloadable", calibration=X,
+                        clock_mhz=322.265625, out_dir=Fixtures.build_dir("reload_mlp_322"))
+
+    def test_stages(self):
+        units = self.acc.result.hardware_graph.topological_order()
+        self.assertTrue(any(unit.stages["product"] > 0 for unit in units))
+        self.assertEqual(self.acc.latency, sum(unit.latency for unit in units))
+
+    @unittest.skipIf(VERILATOR, VERILATOR)
+    def test_swap(self):
+        report = self.acc.simulate(reload=mlp(seed=8), commits=[5000])
+        self.assertTrue(report.ok, report.first.output)
+        self.assertIn("answers by bank  5001 4999", report.first.output)
+
+    @unittest.skipIf(SBY is None, "sby not found")
+    def test_proof(self):
+        latency = self.acc.latency
+        ok, log = prove_bank(self.acc.out_dir, latency)
+        self.assertTrue(ok, log[-3000:])
+        self.assertFalse(prove_bank(self.acc.out_dir, latency - 1)[0])
+
+
+def prove_bank(out_dir, latency):
+    """Runs sby on the bank tag; True only if the property holds and the tag can change."""
+    folder = out_dir / ("formal_bank_%d" % latency)
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir()
+    shutil.copyfile(out_dir / "rtl" / "top.v", folder / "top.v")
+    (folder / "check.sv").write_text(CHECK % {"latency": latency})
+    (folder / "bank.sby").write_text(SBY_FILE % {"depth": latency + 2})
+    path = os.path.dirname(SBY) + os.pathsep + os.environ.get("PATH", "")
+    completed = subprocess.run([SBY, "-f", "bank.sby"], cwd=folder, capture_output=True,
+                               text=True, timeout=1800, env=dict(os.environ, PATH=path))
+    return completed.returncode == 0, completed.stdout
 
 
 if __name__ == "__main__":

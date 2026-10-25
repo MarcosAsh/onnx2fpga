@@ -32,6 +32,7 @@ from .p3_ops.onnx_ops import ConvOp, FlattenOp, GemmOp
 from .p3_ops.trees import TreeEnsembleOp
 from .p4_quantize.lower import FuseRelu
 from .p4_quantize.trees import tree_op
+from .p5_schedule.fixed import slowest
 from .p6_emit.hardcaml import HardcamlError, HardcamlGenerator
 from .p6_emit.project import ProjectWriter
 from .p6_emit.stream_io import StreamCodec
@@ -210,7 +211,7 @@ class Accelerator:
     def compile(self, device=None, target=None, target_fps=None, target_cycles=None,
                 hdl=None, calibration=None, utilisation=None, out_dir=None,
                 strict=True, verbose=False, mult_bits=None, top=None, mode=None,
-                weights=None):
+                weights=None, clock_mhz=None):
         """Quantizes, folds and emits the design for `device`; arguments left out keep the previous compile value."""
         previous = self._requested
         mode = mode or previous.get("mode", "stream")
@@ -223,6 +224,13 @@ class Accelerator:
             self._check_reloadable(mode)
         device = self._device(device if device is not None
                               else previous.get("device", DEFAULT_DEVICE))
+        if clock_mhz is None and mode == "fixed":
+            clock_mhz = previous.get("clock_mhz")
+        if clock_mhz is not None and mode != "fixed":
+            raise ConfigError("clock_mhz needs mode='fixed'")
+        if clock_mhz is not None and (isinstance(clock_mhz, bool) or not isinstance(
+                clock_mhz, numbers.Real) or clock_mhz <= 0):
+            raise ConfigError("clock_mhz must be a positive number, not %r" % (clock_mhz,))
         if mode == "fixed":
             self._check_fixed(target, target_fps, target_cycles)
             goal = ("fit", None, None)
@@ -258,7 +266,7 @@ class Accelerator:
         settings = {"device": device.name, "target": goal[:2], "hdl": hdl,
                     "utilisation": utilisation, "samples": samples,
                     "out_dir": pathlib.Path(out_dir), "mult_bits": mult_bits, "top": top,
-                    "mode": mode, "weights": weights}
+                    "mode": mode, "weights": weights, "clock_mhz": clock_mhz}
         self._requested = settings
 
         compiler = Compiler(device=device, target_cycles=cycles,
@@ -268,7 +276,8 @@ class Accelerator:
                             weight_dtypes=self.layers.weight_dtypes(),
                             arithmetic=self.layers.arithmetic(),
                              memory=self.layers.memory(),
-                             custom_objects=self.custom_objects, mode=mode, weights=weights)
+                             custom_objects=self.custom_objects, mode=mode, weights=weights,
+                             clock_mhz=clock_mhz)
         with _translated():
             result = compiler.compile(self.model, samples, out_dir)
         if strict and cycles is not None:
@@ -485,36 +494,48 @@ class Accelerator:
 
     def _fixed_summary(self):
         graph, device = self.result.hardware_graph, self.device
-        widths = (30, 12, 12, 12, 9, 9, 7)
-        right = (False, True, True, True, True, True, True)
+        widths = (30, 12, 12, 12, 9, 9, 7, 9, 7)
+        right = (False,) + (True,) * 8
         rule = sum(widths)
         units = graph.topological_order()
         trees = isinstance(units[0], TreeEnsembleUnit)
+        delays = device.delays
         lines = ['Accelerator: "%s" on %s (%s), hdl %s, fixed latency'
                  % (self.name, device.name, device.part, self.hdl), "_" * rule,
                  _row(("Layer (kind)", "Trees/depth" if trees else "In -> out",
                        "" if trees else "Arithmetic", "Comparators" if trees else "Multipliers",
-                       "Latency", "LUT", "DSP"), widths, right), "=" * rule]
+                       "Latency", "Stages", "Fmax", "LUT", "DSP"), widths, right), "=" * rule]
         costs = [unit.resources(device) for unit in units]
         parts = [unit.comparators if trees else unit.multipliers for unit in units]
         for unit, cost, count in zip(units, costs, parts):
             shape = ("%d/%d" % (unit.ensemble.trees, unit.ensemble.depth) if trees
                      else "%d -> %d" % (unit.mw, unit.mh))
+            fmax = "%.0f" % (1000.0 / slowest(unit, delays)[0]) if delays else ""
             lines.append(_row(("%s (%s)" % (unit.name, self.layers[unit.name].kind), shape,
                                "" if trees else unit.arithmetic, count, unit.latency,
+                               "/".join(str(n) for n in unit.stages.values()), fmax,
                                int(cost.lut), _number(cost.dsp)), widths, right))
         total, budget = _sum(costs), device.budget
-        latency = self.latency
+        latency, clock = self.latency, self.result.clock_mhz
         saved = 0 if trees else sum(unit.weights.size - unit.multipliers for unit in units)
+        fmax = self.result.fmax_mhz
         lines += ["=" * rule,
-                  _row(("Total", "", "", sum(parts), latency, int(total.lut),
-                        _number(total.dsp)), widths, right),
-                  _row(("Budget on %s" % device.name, "", "", "", "", budget.lut,
+                  _row(("Total", "", "", sum(parts), latency, "",
+                        "%.0f" % fmax if fmax else "", int(total.lut), _number(total.dsp)),
+                       widths, right),
+                  _row(("Budget on %s" % device.name, "", "", "", "", "", "", budget.lut,
                         budget.dsp), widths, right),
-                  _row(("Used", "", "", "", "", _percent(total.lut, budget.lut),
+                  _row(("Used", "", "", "", "", "", "", _percent(total.lut, budget.lut),
                         _percent(total.dsp, budget.dsp)), widths, right),
+                  " Stages: registers added %s" % ("in the leaf select/adder tree" if trees
+                                                   else "at the multiplies/adder tree/rescale"),
                   " Latency: %d cycles, %.1f ns at %.0f MHz, with a new input every cycle"
-                  % (latency, latency * 1e3 / device.fmax_mhz, device.fmax_mhz)]
+                  % (latency, latency * 1e3 / clock, clock)]
+        if fmax:
+            lines.append(" Clock: %s, %.1f MHz predicted by the %s delay model (%s)"
+                         % ("%s MHz asked" % self.settings["clock_mhz"]
+                            if self.settings.get("clock_mhz") else "no clock_mhz asked",
+                            fmax, device.name, delays.provenance))
         if saved:
             lines.append(" Constant arithmetic: %d multipliers saved" % saved)
         words = reload.image(graph)
@@ -534,7 +555,7 @@ class Accelerator:
             except ValueError:
                 continue
             return [" Clock: %.1f MHz estimated, %.1f MHz measured by Vivado (WNS %.3f ns, %s)"
-                    % (self.device.fmax_mhz, report.fmax_mhz, report.wns_ns,
+                    % (self.result.clock_mhz or self.device.fmax_mhz, report.fmax_mhz, report.wns_ns,
                        path.relative_to(self.out_dir))]
         return []
 

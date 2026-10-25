@@ -2,6 +2,17 @@ open! Core
 open! Hardcaml
 open! Signal
 
+module Stages = struct
+  type t =
+    { product : int
+    ; sum : int
+    ; rescale : int
+    }
+  [@@deriving sexp_of]
+
+  let none = { product = 0; sum = 0; rescale = 0 }
+end
+
 module type Config = sig
   val mw : int
   val mh : int
@@ -18,12 +29,19 @@ module type Config = sig
   val weights : Bits.t list
   val bias : Bits.t list
   val mult : Bits.t list
+  val stages : Stages.t
 end
 
 module Make (Config : Config) = struct
   open Config
 
-  let latency = 3
+  let latency = 3 + stages.product + stages.sum + stages.rescale
+
+  (* Binary levels of the widest adder tree, the bias and every weight. *)
+  let levels = Int.ceil_log2 (mw + 1)
+
+  (* The tree registers after these levels, so no stretch is longer than it must be. *)
+  let cuts = List.init stages.sum ~f:(fun i -> (i + 1) * levels / (stages.sum + 1))
 
   let () =
     let check name words ~width =
@@ -45,6 +63,18 @@ module Make (Config : Config) = struct
             (acc_bits : int)
             (act_bits : int)
             (wgt_bits : int)];
+    let most_products =
+      match arithmetic with
+      | `Multiplier -> 2
+      | `Constant -> 1
+    in
+    if stages.product < 0
+       || stages.product > most_products
+       || stages.sum < 0
+       || stages.sum >= levels
+    then
+      raise_s
+        [%message "BUG: otf_dense stages out of range" (stages : Stages.t) (levels : int)];
     check "weights" weights ~width:(mw * wgt_bits);
     check "bias" bias ~width:acc_bits;
     check "mult" mult ~width:mult_bits
@@ -62,7 +92,8 @@ module Make (Config : Config) = struct
     type 'a t = { y : 'a With_valid.t [@bits mh * out_bits] } [@@deriving hardcaml]
   end
 
-  module Requant = Otf_requant.Make (struct
+  module Requant = Otf_requant.Make_pipelined (struct
+      let stages = stages.rescale
       let acc_bits = acc_bits
       let mult_bits = mult_bits
       let shift = shift
@@ -98,6 +129,22 @@ module Make (Config : Config) = struct
            positive, if Bool.equal positive same then a +: b else a -: b))
   ;;
 
+  (* [signed_sum]'s pairing, registering every operand after the levels in [cuts]. *)
+  let staged_sum reg terms =
+    let combine (positive, a) (same, b) =
+      positive, if Bool.equal positive same then a +: b else a -: b
+    in
+    List.fold
+      (List.range 1 (levels + 1))
+      ~init:terms
+      ~f:(fun terms level ->
+        let terms = List.map (List.chunks_of terms ~length:2) ~f:(reduce ~f:combine) in
+        if List.mem cuts level ~equal:Int.equal
+        then List.map terms ~f:(fun (positive, value) -> positive, reg value)
+        else terms)
+    |> List.hd_exn
+  ;;
+
   let rec odd_part magnitude shift =
     if magnitude land 1 = 0
     then odd_part (magnitude asr 1) (shift + 1)
@@ -110,18 +157,25 @@ module Make (Config : Config) = struct
   ;;
 
   (* Input [k] times each odd magnitude its column needs, from shared 2^j +- 1 pairs. *)
+  (* With a product stage the pairs are registered, and lone digits read [a] a cycle late. *)
   let products scope clocking k a =
+    let late signal =
+      if stages.product > 0 then Clocking.reg_no_clear clocking signal else signal
+    in
     let a = sresize a ~width:(act_bits + wgt_bits) in
     let shifted = Hashtbl.create (module Int) in
     let times c =
       Hashtbl.find_or_add shifted c ~default:(fun () ->
-        snd (signed_sum (List.map (csd c) ~f:(fun (positive, by) -> positive, sll a ~by))))
+        late
+          (snd
+             (signed_sum
+                (List.map (csd c) ~f:(fun (positive, by) -> positive, sll a ~by)))))
     in
     let rec pairs = function
       | (positive, high) :: (same, low) :: digits ->
         let c = (1 lsl (high - low)) + if Bool.equal positive same then 1 else -1 in
         (positive, sll (times c) ~by:low) :: pairs digits
-      | [ (positive, by) ] -> [ positive, sll a ~by ]
+      | [ (positive, by) ] -> [ positive, sll (late a) ~by ]
       | [] -> []
     in
     List.filter_map weight_values ~f:(fun row ->
@@ -149,6 +203,9 @@ module Make (Config : Config) = struct
       | `Multiplier ->
         let product = a *+ of_signed_int ~width:(wgt_bits + 1) (abs w) in
         let product =
+          if stages.product > 0 then Clocking.reg_no_clear clocking product else product
+        in
+        let product =
           Scope.naming
             scope
             (Clocking.reg_no_clear
@@ -164,19 +221,31 @@ module Make (Config : Config) = struct
   ;;
 
   let channel scope clocking ~acts ~shared ~row ~bias ~mult =
+    let reg = Clocking.reg_no_clear clocking in
     let%hw sum =
-      Clocking.reg_no_clear
-        clocking
+      reg
         (snd
-           (signed_sum ((true, constant bias) :: terms scope clocking ~acts ~shared row)))
+           (staged_sum
+              reg
+              ((true, constant bias) :: terms scope clocking ~acts ~shared row)))
     in
-    let rescaled = Requant.hierarchical scope { acc = sum; mult = constant mult } in
+    let rescaled =
+      Requant.hierarchical scope { clocking; acc = sum; mult = constant mult }
+    in
     let%hw out = Clocking.reg_no_clear clocking rescaled.out in
     out
   ;;
 
   let create (scope : Scope.t) (i : Signal.t I.t) =
     let acts = split_lsb ~part_width:act_bits i.x.value in
+    (* The second product stage registers the inputs, which a DSP slice takes as AREG. *)
+    let acts =
+      if stages.product > 1
+      then
+        List.mapi acts ~f:(fun k a ->
+          Scope.naming scope (Clocking.reg_no_clear i.clocking a) (sprintf "x%d_areg" k))
+      else acts
+    in
     let shared =
       match arithmetic with
       | `Multiplier -> []
@@ -280,37 +349,54 @@ module Make_reloadable (Config : Reloadable_config) = struct
       let zero, one = banks.(index) in
       mux2 tag one zero
     in
-    let%hw sum_bank = reg i.x_bank in
-    let%hw rescale_bank = reg sum_bank in
-    let%hw y_bank = reg rescale_bank in
-    let acts = split_lsb ~part_width:act_bits i.x.value in
+    (* The tag the data holds after [n] registers. *)
+    let tags =
+      Array.of_list
+        (List.folding_map
+           (List.range 0 (latency + 1))
+           ~init:i.x_bank
+           ~f:(fun tag n ->
+             let tag = if n = 0 then tag else reg tag in
+             tag, Scope.naming scope tag (sprintf "bank%d" n)))
+    in
+    let product_stages = stages.product in
+    let sum_bank = tags.(1 + product_stages) in
+    let rescale_bank = tags.(2 + product_stages + stages.sum) in
+    let late signal = if product_stages > 1 then reg signal else signal in
+    let acts = List.map (split_lsb ~part_width:act_bits i.x.value) ~f:late in
     let channel c =
       let scope = Scope.sub_scope scope ("channel" ^ Int.to_string c) in
       let products =
         List.mapi acts ~f:(fun k a ->
-          Scope.naming
-            scope
-            (reg (a *+ pick ((c * mw) + k) i.x_bank))
-            (sprintf "x%d_product" k))
+          let product = a *+ late (pick ((c * mw) + k) i.x_bank) in
+          let product = if product_stages > 0 then reg product else product in
+          Scope.naming scope (reg product) (sprintf "x%d_product" k))
       in
       let%hw sum =
         reg
-          (tree
-             ~arity:2
-             ~f:(reduce ~f:( +: ))
-             (pick ((mh * mw) + c) sum_bank
-              :: List.map products ~f:(sresize ~width:acc_bits)))
+          (snd
+             (Frozen.staged_sum
+                reg
+                (List.map
+                   (pick ((mh * mw) + c) sum_bank
+                    :: List.map products ~f:(sresize ~width:acc_bits))
+                   ~f:(fun term -> true, term))))
       in
       let rescaled =
         Frozen.Requant.hierarchical
           scope
-          { acc = sum; mult = pick ((mh * mw) + mh + c) rescale_bank }
+          { clocking = i.clocking
+          ; acc = sum
+          ; mult = pick ((mh * mw) + mh + c) rescale_bank
+          }
       in
       let%hw out = reg rescaled.out in
       out
     in
     let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
-    { O.y = { valid; value = concat_lsb (List.init mh ~f:channel) }; y_bank }
+    { O.y = { valid; value = concat_lsb (List.init mh ~f:channel) }
+    ; y_bank = tags.(latency)
+    }
   ;;
 
   let hierarchical ?instance scope i =

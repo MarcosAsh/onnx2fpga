@@ -269,3 +269,16 @@ this demo is aimed at.
   four and 4096 cost 14 block RAMs and about 5000 flip flops; the table is the
   first thing to grow, into UltraRAM.
 - Whether the framer should take 32 bit beats to match taxi's MAC directly.
+- How to pipeline the framer and the book side for 322.265625 MHz. Compiled
+  with `clock_mhz=322.265625` for the `k26` ([002](002-pipelined-matvec.md)),
+  the 4-8-1 MLP takes 12 cycles instead of 6 and the delay model predicts 402
+  MHz for it, which would make the path 20 cycles, 62.1 ns. The framer step and
+  the book side update are another matter. At the `k26` model's 0.62 ns for a
+  net and a LUT, their 19 and 26 cells come to about 12 and 16 ns, 83 and 61
+  MHz. Both are recurrences: the framer's next state and the book's next levels
+  depend on the current ones within the cycle, so a register cannot go in
+  without changing how often they take a beat or an event. The book has room,
+  since events arrive at least two cycles apart and it could spread its update
+  over both; the framer would need to work on 32 bit beats or split its lane
+  logic. The replay keeps the unpipelined model and its 14 cycles until both
+  are done.

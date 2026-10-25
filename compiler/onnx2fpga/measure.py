@@ -234,9 +234,11 @@ class YosysRunner:
     CELLS = {"TRELLIS_COMB": "lut", "TRELLIS_FF": "ff", "MULT18X18D": "dsp",
              "DP16KD": "ebr"}
 
-    def __init__(self, device, implement=False, yosys="yosys", nextpnr="nextpnr-ecp5"):
+    def __init__(self, device, implement=False, yosys="yosys", nextpnr="nextpnr-ecp5",
+                 freq_mhz=None):
         self.device = device
         self.implement = implement
+        self.freq_mhz = freq_mhz or device.fmax_mhz
         self.yosys = yosys
         self.nextpnr = nextpnr
 
@@ -249,7 +251,7 @@ class YosysRunner:
                  "read_verilog rtl/top.v; synth_ecp5 -top %s -json synth/top.json" % top]
         place = [self.nextpnr] + list(self.device.nextpnr_args) + [
             "--json", "synth/top.json", "--lpf-allow-unconstrained",
-            "--freq", "%g" % self.device.fmax_mhz, "--timing-allow-fail"]
+            "--freq", "%g" % self.freq_mhz, "--timing-allow-fail"]
         if not self.implement:
             place.append("--pack-only")
         return [synth, place]

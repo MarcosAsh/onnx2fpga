@@ -1,5 +1,6 @@
 """Streaming hardware nodes, each one SystemVerilog module."""
 
+import math
 from abc import abstractmethod
 
 import numpy as np
@@ -309,11 +310,80 @@ class DenseUnit(MatVecUnit):
 
     module = "otf_dense"
     hardcaml_only = True
-    latency = 3
     arithmetic = "multiplier"
     reloadable = False
     # Rescale bits a reloadable layer keeps free for a retrained model's larger scales.
     HEADROOM = 4
+
+    def __init__(self, *args, **kwargs):
+        MatVecUnit.__init__(self, *args, **kwargs)
+        self.stages = {"product": 0, "sum": 0, "rescale": 0}
+
+    @property
+    def latency(self):
+        """Products, sum and rescale, plus the stages added to meet a clock."""
+        return 3 + sum(self.stages.values())
+
+    @property
+    def levels(self):
+        """Binary levels of the widest adder tree, over the bias and every weight."""
+        return self.mw.bit_length()
+
+    def paths(self, delays):
+        """The longest path each stage governs, in ns, with 0, 1, 2 ... registers added."""
+        act, wgt, acc = self.act_dtype.bits, self.weight_dtype.bits, self.accumulator_dtype.bits
+        wide = acc + self.mult_bits + 1
+        path, adder = delays.path, delays.adder
+        if self.arithmetic == "constant":
+            pair, combine = self._adder_depth()
+            bits = act + wgt
+            product = [path(delays.adder_tree(pair + combine, bits), fanout=self.mh),
+                       max(path(delays.adder_tree(pair, bits), fanout=self.mh),
+                           path(delays.adder_tree(combine, bits)))]
+        else:
+            pick = [delays.logic()] if self.reloadable else []
+            product = [path(*pick, delays.product(act, wgt + 1), fanout=self.mh),
+                       path(*pick, delays.product(act, wgt + 1, mreg=True), fanout=self.mh),
+                       max(path(*pick), delays.registered_product(act, wgt + 1, self.mh))]
+        # A shared constant product feeds every channel that needs it.
+        shared = self.mh if self.arithmetic == "constant" else 1
+        tree = [path(delays.adder_tree(math.ceil(self.levels / (cuts + 1)), acc), fanout=shared)
+                for cuts in range(self.levels)]
+        pick = [delays.logic()] if self.reloadable else []
+        rounding = [adder(wide)] if 0 < self.requant.shift < wide - 1 else []
+        # Synthesis folds the zero point into the clamp's comparisons, leaving a mux level.
+        clamp = [delays.logic()]
+        multiply = (path(*pick, delays.product(acc, self.mult_bits, mreg=True))
+                    if self.reloadable or delays.internal is None
+                    else delays.registered_product(acc, self.mult_bits))
+        rescale = [
+            path(*pick, delays.product(acc, self.mult_bits), *rounding, adder(wide), *clamp),
+            max(multiply, path(*rounding, adder(wide), *clamp)),
+            max(multiply, path(*rounding), path(adder(wide), *clamp)),
+            max(multiply, path(*rounding), path(adder(wide)), path(*clamp)),
+        ]
+        return {"product": product, "sum": tree, "rescale": rescale}
+
+    def _adder_depth(self):
+        """Adder levels of the widest constant product: its digit pairs, then their sum."""
+        pair = combine = 0
+        for w in np.unique(np.abs(self.weights)):
+            digits = len(csd(odd_part(w)[0])) if w else 0
+            pair = max(pair, int(digits > 1))
+            combine = max(combine, max(0, math.ceil(digits / 2) - 1).bit_length())
+        return pair, combine
+
+    def stage_registers(self):
+        """Flip flops the added stages hold: products, partial sums and the rescale's words."""
+        act, acc = self.act_dtype.bits, self.accumulator_dtype.bits
+        product = self.stages["product"] * (
+            self.constant_cost().ff if self.arithmetic == "constant"
+            else self.multipliers * (act + self.weight_dtype.bits + 1))
+        cuts = [(i + 1) * self.levels // (self.stages["sum"] + 1)
+                for i in range(self.stages["sum"])]
+        tree = sum(self.mh * acc * -(-(self.mw + 1) // 2 ** level) for level in cuts)
+        rescale = self.stages["rescale"] * self.mh * (acc + self.mult_bits + 1)
+        return product + tree + rescale
 
     def make_reloadable(self, mult_bits):
         """Moves the values into two banks of registers, sized for any model on the same grid."""
@@ -385,6 +455,7 @@ class DenseUnit(MatVecUnit):
         if self.requant.shift < acc_bits + self.mult_bits:
             dsp += self.mh * (2 if acc_bits > 27 else 1)
         out = Resources(ff=self.mh * (acc_bits + self.out_dtype.bits), dsp=dsp)
+        out = out + Resources(ff=self.stage_registers())
         if self.arithmetic == "constant":
             return self.constant_cost() + out
         if self.reloadable:
@@ -412,6 +483,8 @@ class DenseUnit(MatVecUnit):
             "OUT_ZP": self.requant.zero_point,
             "CONSTANT": int(self.arithmetic == "constant"),
             "RELOADABLE": int(self.reloadable),
+            "PRODUCT_STAGES": self.stages["product"], "SUM_STAGES": self.stages["sum"],
+            "RESCALE_STAGES": self.stages["rescale"],
         }
 
 
@@ -420,7 +493,6 @@ class TreeEnsembleUnit(StreamingNode):
 
     module = "otf_trees"
     hardcaml_only = True
-    ARITY = 4
 
     def __init__(self, name, inputs, outputs, ensemble, bias, decision, features,
                  feature_dtype, leaf_dtype):
@@ -430,21 +502,43 @@ class TreeEnsembleUnit(StreamingNode):
         self.features = int(features)
         self.feature_dtype = feature_dtype
         self.leaf_dtype = leaf_dtype
+        self.stages = {"select": 0, "sum": 0}
         StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
+    def levels(self):
+        """Binary levels of the adder tree over the leaves and the bias."""
+        return self.ensemble.trees.bit_length()
+
+    @property
     def adder_stages(self):
-        """Operands left after each register stage of the adder tree, the leaves and the bias going in."""
-        counts, operands = [], self.ensemble.trees + 1
-        while operands > 1:
-            operands = -(-operands // self.ARITY)
-            counts.append(operands)
-        return counts
+        """Operands left after each register of the adder tree: fan in 4 a stage, then any added."""
+        registers = (self.levels + 1) // 2 + self.stages["sum"]
+        cuts = [(i + 1) * self.levels // registers for i in range(registers - 1)] + [self.levels]
+        return [-(-(self.ensemble.trees + 1) // 2 ** level) for level in cuts]
 
     @property
     def latency(self):
-        """One cycle of comparisons, one of leaf select, then one per adder stage."""
-        return 2 + len(self.adder_stages)
+        """One cycle of comparisons, one of leaf select, one per adder stage, and the select stages."""
+        return 2 + self.stages["select"] + len(self.adder_stages)
+
+    def paths(self, delays):
+        """The longest path each stage governs, in ns, with 0, 1, 2 ... registers added."""
+        split = self.ensemble.mode != LEAF
+        features = set(zip(self.ensemble.feature[split], self.ensemble.threshold[split],
+                           self.ensemble.mode[split]))
+        fanout = max([sum(1 for f, _, _ in features if f == k) for k in range(self.features)],
+                     default=1)
+        depth, path = self.ensemble.depth, delays.path
+        base = (self.levels + 1) // 2
+        return {
+            "compare": [path(delays.adder(self.feature_dtype.bits), fanout=fanout)],
+            "select": [path(delays.select(math.ceil(depth / (cuts + 1))))
+                       for cuts in range(max(1, depth))],
+            "sum": [path(delays.adder_tree(math.ceil(self.levels / registers),
+                                           self.sum_dtype.bits))
+                    for registers in range(base, self.levels + 1)],
+        }
 
     @property
     def cycles(self):
@@ -488,7 +582,8 @@ class TreeEnsembleUnit(StreamingNode):
 
     @property
     def registers(self):
-        return (self.comparators + self.ensemble.trees * self.leaf_dtype.bits
+        return (self.comparators * (1 + self.stages["select"])
+                + self.ensemble.trees * self.leaf_dtype.bits * (1 + self.stages["select"])
                 + sum(self.adder_stages) * self.sum_dtype.bits + self.latency)
 
     def memories(self, graph):
@@ -511,6 +606,7 @@ class TreeEnsembleUnit(StreamingNode):
             "FEATURES": self.features, "FEATURE_BITS": self.feature_dtype.bits,
             "LEAF_BITS": self.leaf_dtype.bits, "SUM_BITS": self.sum_dtype.bits,
             "TREES": self.ensemble.trees, "DECISION": int(self.decision),
+            "SELECT_STAGES": self.stages["select"], "SUM_STAGES": self.stages["sum"],
         }
 
 

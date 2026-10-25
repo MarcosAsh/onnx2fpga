@@ -4,6 +4,7 @@ import math
 
 from .device import Device
 from .resources import Resources
+from .timing import DelayModel
 
 
 def chunks(bits):
@@ -110,7 +111,8 @@ class Ecp5CostModel:
     def otf_dense(self, node):
         acc, act = node.accumulator_dtype.bits, node.act_dtype.bits
         dsp = node.mh * self._requant_multipliers(acc, node.mult_bits, node.requant.shift)
-        out = Resources(ff=node.mh * (acc + node.out_dtype.bits), dsp=dsp)
+        out = Resources(ff=node.mh * (acc + node.out_dtype.bits) + node.stage_registers(),
+                        dsp=dsp)
         if node.arithmetic == "constant":
             cost = node.constant_cost()
             return out + Resources(lut=2.25 * cost.lut, ff=cost.ff)
@@ -178,6 +180,12 @@ class Ecp5CostModel:
                          ff=node.registers)
 
 
+# Fitted to 54 nextpnr-ecp5 runs, with the carry and mux held fixed; see docs/specs/002.
+ECP5_6 = DelayModel(register=1.21, net=1.17, lut=0.39, carry=0.3, carry_bit=0.035, mux=1.2,
+                    tree=1.80, fanout=0.53, multiply=(4.31, 4.31), dsp=(18, 18), margin=0.10,
+                    provenance="fitted to nextpnr-ecp5 place and route")
+
+
 class Ecp5Device(Device):
     HARD_FIELDS = ("dsp", "ebr")
 
@@ -200,7 +208,7 @@ Device.register(Ecp5Device(
     budget=Resources(lut=24288, ff=24288, dsp=28, ebr=56),
     fmax_mhz=20.0, dsp_generation="sysDSP",
     nextpnr_args=("--25k", "--package", "CABGA256", "--speed", "6"),
-    provenance="mixed",
+    provenance="mixed", delays=ECP5_6,
     notes="Icepi Zero. 28 MULT18X18D (14 sysDSP), 56 EBR of 18 kbit and 194 kbit "
           "distributed RAM are Lattice's (FPGA-DS-02012 rev 3.4); 24288 LUT4 is "
           "nextpnr's count of what Lattice calls 24k. 20 MHz is the clock the board "

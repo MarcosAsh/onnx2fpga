@@ -37,9 +37,10 @@ def lowered(name):
     return op, plan, unit
 
 
-def compiled(name):
+def compiled(name, device="vu9p", clock_mhz=None):
     acc = otf.load(FIXTURES / ("%s.onnx" % name))
-    acc.compile(device="vu9p", mode="fixed", out_dir=Fixtures.build_dir("trees_" + name))
+    acc.compile(device=device, mode="fixed", clock_mhz=clock_mhz,
+                out_dir=Fixtures.build_dir("trees_%s_%s_%s" % (name, device, clock_mhz)))
     return acc
 
 
@@ -174,6 +175,32 @@ class Regressor(unittest.TestCase):
         ok, log = prove(build, 8 * 16, 6)
         self.assertTrue(ok, log[-3000:])
         self.assertFalse(prove(build, 8 * 16, 5)[0], "a latency of 5 must not prove")
+
+
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Pipelined(unittest.TestCase):
+    """At 500 MHz on k26 the adder tree takes every level registered, three more cycles."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.acc = compiled("xgb_regressor", "k26", 500)
+
+    def test_latency(self):
+        unit = self.acc.result.hardware_graph.nodes[0]
+        self.assertEqual((unit.stages, self.acc.latency), ({"select": 0, "sum": 3}, 9))
+        self.assertGreaterEqual(self.acc.result.fmax_mhz, 500)
+
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
+    def test_simulate(self):
+        report = self.acc.simulate()
+        self.assertTrue(report.ok, report.first.output)
+        self.assertEqual((report.frames, report.latency), (10000, 9))
+
+    @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
+    def test_proof(self):
+        build = pathlib.Path(self.acc.out_dir)
+        self.assertTrue(prove(build, 8 * 16, 9)[0])
+        self.assertFalse(prove(build, 8 * 16, 8)[0], "a latency of 8 must not prove")
 
 
 @unittest.skipIf(HARDCAML, HARDCAML)

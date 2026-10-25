@@ -53,9 +53,10 @@ multiplier too, since a reload can make them nonzero. The multiplexer sits in
 front of the multiplier in the same cycle, so the latency equals the frozen
 multiplier version's: 9 cycles for the example MLP, not the 6 cycles of a
 reloadable linear model against 4 frozen that the research notes budgeted.
-Whether that extra LUT level closes at 322.265625 MHz needs Vivado; if it does
-not, a register between the multiplexer and the multiplier costs one cycle per
-layer, the same in both banks.
+Whether that extra LUT level closes at 322.265625 MHz needs Vivado. With
+`clock_mhz=` ([002](002-pipelined-matvec.md)) the compiler puts a register
+between the multiplexer and the multiplier, one cycle per layer, wherever its
+delay model says the clock needs it, and the tag follows every added stage.
 
 The tag registers have no reset, like the rest of the datapath, and neither do
 the banks. A `clear` drops the inferences in flight and keeps the loaded model.

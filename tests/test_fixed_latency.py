@@ -81,8 +81,10 @@ def mlp(device="vu9p", arithmetic=None, **options):
     for name, kind in (arithmetic or {}).items():
         acc.layers[name].arithmetic(kind)
     x = np.random.default_rng(5).normal(0, 1, (8, 32)).astype(np.float32)
-    folder = "fixed_mlp_%s%s" % (device, "".join("_%s_%s" % item for item in
-                                                 sorted((arithmetic or {}).items())))
+    folder = "fixed_mlp_%s%s%s" % (device, "".join("_%s_%s" % item for item in
+                                                   sorted((arithmetic or {}).items())),
+                                   "_%g" % options["clock_mhz"] if "clock_mhz" in options
+                                   else "")
     acc.compile(device=device, mode="fixed", calibration=x,
                 out_dir=Fixtures.build_dir(folder), **options)
     return acc
@@ -164,6 +166,24 @@ class Errors(unittest.TestCase):
         acc.layers["fc1"].arithmetic("constant")
         with self.assertRaisesRegex(ConfigError, "fc1 is folded in mode='stream'"):
             acc.compile(mode="stream", calibration=np.zeros((1, 32)))
+
+    def test_clock_streaming(self):
+        acc = otf.load(Fixtures.factory().mlp())
+        with self.assertRaisesRegex(ConfigError, "clock_mhz needs mode='fixed'"):
+            acc.compile(clock_mhz=100, calibration=np.zeros((1, 32)))
+
+    @unittest.skipIf(HARDCAML, HARDCAML)
+    def test_clock_without_model(self):
+        with self.assertRaisesRegex(ConfigError, "z7020 has no delay model"):
+            mlp(device="z7020", clock_mhz=100, utilisation=1.0)
+
+    @unittest.skipIf(HARDCAML, HARDCAML)
+    def test_clock_out_of_reach(self):
+        with self.assertRaisesRegex(BudgetError, r"^2000 MHz is out of reach on vu9p: the "
+                                                 r"slowest path, through the [a-z ]+ of fc\d, takes "
+                                                 r"[\d.]+ ns however it is pipelined, so the "
+                                                 r"fastest clock is [\d.]+ MHz$"):
+            mlp(clock_mhz=2000)
 
     @unittest.skipIf(HARDCAML, HARDCAML)
     def test_fold_pin(self):
@@ -248,6 +268,49 @@ class Mlp(unittest.TestCase):
         (wrong / "design.json").write_text(json.dumps(design))
         (wrong / "top.v").write_text(HardcamlGenerator().verilog(wrong / "design.json"))
         self.assertFalse(equivalent(wrong / "top.v", built[1], "otf_dense_2"))
+
+
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Pipelined(unittest.TestCase):
+    """The example MLP pipelined for the trading clock, fc1 on multipliers and the rest constant."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.acc = mlp(arithmetic={"fc1": "multiplier"}, clock_mhz=322.265625)
+
+    def test_stages(self):
+        units = self.acc.result.hardware_graph.topological_order()
+        self.assertGreater(self.acc.latency, 9)
+        self.assertEqual(self.acc.latency, sum(3 + sum(u.stages.values()) for u in units))
+        self.assertGreaterEqual(self.acc.result.fmax_mhz, 322.265625)
+        design = json.loads((self.acc.out_dir / "design.json").read_text())
+        self.assertEqual([[node["params"][key] for key in
+                           ("PRODUCT_STAGES", "SUM_STAGES", "RESCALE_STAGES")]
+                          for node in design["nodes"]],
+                         [list(u.stages.values()) for u in units])
+        lines = []
+        self.acc.summary(print_fn=lines.append)
+        text = "\n".join(lines)
+        self.assertIn("Latency: %d cycles, %.1f ns at 322 MHz"
+                      % (self.acc.latency, self.acc.latency / 0.322265625), text)
+        self.assertRegex(text, r"Clock: 322.265625 MHz asked, [\d.]+ MHz predicted by the vu9p "
+                               r"delay model")
+        self.assertRegex(text, r"fc1 \(Gemm\+Relu\)\s+64 -> 16\s+multiplier\s+1024\s+%d\s+%s"
+                         % (units[1].latency, "/".join(map(str, units[1].stages.values()))))
+
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
+    def test_simulate(self):
+        report = self.acc.simulate()
+        self.assertTrue(report.ok, report.first.output)
+        self.assertEqual((report.frames, report.latency, report.cycles),
+                         (10000, self.acc.latency, 10000 + self.acc.latency))
+
+    @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
+    def test_proof(self):
+        build, latency = pathlib.Path(self.acc.out_dir), self.acc.latency
+        ok, log = prove(build, 32 * 8, latency)
+        self.assertTrue(ok, log[-3000:])
+        self.assertFalse(prove(build, 32 * 8, latency - 1)[0])
 
 
 if __name__ == "__main__":

@@ -328,7 +328,7 @@ struct
 end
 
 let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
-  let param = Design.Node.param node in
+  let param ?default name = Design.Node.param ?default node name in
   let words = Design.Node.words node in
   match node.kind with
   | "otf_dense" ->
@@ -348,6 +348,14 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
       let weights = words "weights"
       let bias = words "bias"
       let mult = words "mult"
+
+      let stages =
+        { Otf_dense.Stages.product = param ~default:0 "PRODUCT_STAGES"
+        ; sum = param ~default:0 "SUM_STAGES"
+        ; rescale = param ~default:0 "RESCALE_STAGES"
+        }
+      ;;
+
       let base = base
     end
     in
@@ -425,6 +433,12 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
 
           let bias = Bits.to_signed_int (List.hd_exn (words "bias"))
           let decision = param "DECISION" = 1
+
+          let stages =
+            { Otf_trees.Stages.select = param ~default:0 "SELECT_STAGES"
+            ; sum = param ~default:0 "SUM_STAGES"
+            }
+          ;;
         end)
 
       let latency = M.latency

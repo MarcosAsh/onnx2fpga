@@ -23,7 +23,7 @@ is called. Status: partial and no longer a priority; it exists but is untested.
 
 ## `Accelerator`
 
-### `compile(device=None, target=None, target_fps=None, target_cycles=None, hdl=None, calibration=None, utilisation=None, out_dir=None, strict=True, verbose=False, mult_bits=None, top=None, mode=None, weights=None)`
+### `compile(device=None, target=None, target_fps=None, target_cycles=None, hdl=None, calibration=None, utilisation=None, out_dir=None, strict=True, verbose=False, mult_bits=None, top=None, mode=None, weights=None, clock_mhz=None)`
 
 Quantizes, folds and emits the design.
 
@@ -32,6 +32,7 @@ Quantizes, folds and emits the design.
 | `device` | `vu9p` | Device model to budget against. `onnx2fpga devices` lists them. See Open questions. |
 | `mode` | `"stream"` | `"stream"` folds layers onto handshaked streams. `"fixed"` unrolls every layer so the design takes a vector every cycle and answers a fixed number of cycles later, see [001](../specs/001-fixed-latency.md). |
 | `weights` | `"frozen"` | `"frozen"` builds the weights into the bitstream. `"reloadable"` keeps them in two register banks a host rewrites while the design runs, see [003](../specs/003-reloadable-weights.md). Fixed mode only. |
+| `clock_mhz` | none | Fixed mode only. The clock to pipeline for: each layer takes the fewest extra register stages the device's delay model says reach it, see [002](../specs/002-pipelined-matvec.md). Without it no stages are added. |
 | `target` | `"fit"` | `"fit"` is the fastest design that fits. |
 | `target_fps`, `target_cycles` | none | A throughput to balance to and stop at. |
 | `hdl` | see [Backends](../guides/backends.md) | `"hardcaml"` or `"sv"`. |
@@ -62,14 +63,24 @@ layer set to `"constant"` raises `ConfigError`, as do `mode="stream"` and a
 tree ensemble. Reloadable weights that do not fit the device, or need more than
 the 8192 words of the register window, raise `BudgetError`.
 
+`clock_mhz` with `mode="stream"`, or on a device without a delay model
+(`z7020`, `sim`), raises `ConfigError`. A clock no amount of pipelining reaches
+raises `BudgetError` naming the slowest path and the fastest clock the model
+allows, for example `2000 MHz is out of reach on vu9p: the slowest path,
+through the adder tree of fc0, takes 1.55 ns however it is pipelined, so the
+fastest clock is 645.2 MHz` for the example MLP. `k26`, `vu9p`, `vu47p`, `zu7ev` and `icepi25` have
+delay models.
+
 ### `summary(print_fn=None)`
 
 Before compile: layers, output shapes, parameter counts and any pins. After:
 one row per unit with folding, cycles, LUT, DSP and block RAM, the bottleneck
 marked, totals against the budget, throughput, quantization and build path.
 Shapes are channel last. A fixed latency design prints one row per layer with
-its arithmetic, multipliers and latency in cycles instead, then the total
-latency in cycles and in nanoseconds at the device's clock, and how many
+its arithmetic, multipliers, latency in cycles, the register stages added for
+`clock_mhz` and the fmax the delay model predicts, then the total latency in
+cycles and in nanoseconds at `clock_mhz`, or at the device's clock without it, a
+`Clock:` line with the clock asked for and the predicted fmax, and how many
 multipliers constant arithmetic saved. A reloadable design adds a `Weights:`
 line with the bank size and the CRC of the weights loaded. For a tree ensemble the row gives the
 tree count and depth and the number of comparators, and leaves the arithmetic

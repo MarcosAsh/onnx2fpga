@@ -31,6 +31,7 @@ let config
   ?(leaf_bits = 8)
   ?(decision = false)
   ?(equal_one_in = 8)
+  ?(stages = Otf_trees.Stages.none)
   ~features
   ~trees
   ~depth
@@ -50,6 +51,7 @@ let config
     let trees = trees
     let bias = random_int rng ~bits:leaf_bits
     let decision = decision
+    let stages = stages
   end)
 ;;
 
@@ -148,6 +150,36 @@ let%expect_test "every answer comes out exactly latency cycles later" =
     |}]
 ;;
 
+let%expect_test "every added stage keeps the answers and adds one cycle" =
+  List.iter
+    [ { Otf_trees.Stages.select = 1; sum = 0 }
+    ; { select = 3; sum = 0 }
+    ; { select = 0; sum = 3 }
+    ; { select = 3; sum = 3 }
+    ]
+    ~f:(fun stages ->
+      let (module Config) =
+        config ~features:8 ~trees:100 ~depth:4 ~feature_bits:12 ~leaf_bits:10 ~stages 5
+      in
+      let module T = Make_test (Config) in
+      let checked =
+        List.map [ 100; 30 ] ~f:(fun duty ->
+          fst (T.run (T.random ~seed:7 ~cycles:200 ~duty)))
+      in
+      print_s
+        [%message
+          (stages : Otf_trees.Stages.t)
+            ~latency:(T.Dut.latency : int)
+            (checked : int list)]);
+  [%expect
+    {|
+    ((stages ((select 1) (sum 0))) (latency 7) (checked (200 54)))
+    ((stages ((select 3) (sum 0))) (latency 9) (checked (200 54)))
+    ((stages ((select 0) (sum 3))) (latency 9) (checked (200 54)))
+    ((stages ((select 3) (sum 3))) (latency 12) (checked (200 54)))
+    |}]
+;;
+
 let%expect_test "every input of a small ensemble, with equality splits" =
   List.iter [ false; true ] ~f:(fun decision ->
     let (module Config) =
@@ -198,6 +230,7 @@ let%expect_test "waveform of two stumps, back to back vectors and a gap" =
     ;;
 
     let decision = false
+    let stages = Otf_trees.Stages.none
   end
   in
   let module T = Make_test (Config) in
