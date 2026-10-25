@@ -234,7 +234,7 @@ class Refusals(unittest.TestCase):
             OnnxImporter(builder.build()).run()
 
     def test_messages(self):
-        self.refused("Normalizer", [], "needs a divider", norm="MAX")
+        self.refused("Normalizer", [], "only L1 is supported", norm="MAX")
         self.refused("DynamicQuantizeLinear", [], "at run time")
         self.refused("Cast", [], "would truncate", to=TensorProto.INT32)
         self.refused("Transpose", [], "reorders live data into a 4D", perm=[0, 1, 3, 2])

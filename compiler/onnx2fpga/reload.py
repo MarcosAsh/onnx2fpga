@@ -9,6 +9,7 @@ from .board import OFFSETS, BoardError
 from .errors import ConfigError
 from .p2_graph.onnx_importer import OnnxImporter
 from .p3_ops.elementwise import ElementwiseOp, EltwiseUnit, TableUnit
+from .p3_ops.reductions import ReduceOp, SoftmaxOp
 from .p3_ops.hardware_ops import MatVecUnit
 from .p3_ops.onnx_ops import AddOp, ReluOp
 from .p4_quantize.calibrate import Calibrator
@@ -122,7 +123,7 @@ def _plan(graph, result, samples):
             plan.specs[name] = compiled.spec(old_name)
         # Tables and elementwise units are frozen, so the grids around them must stay.
         for before, layer in zip(old.topological_order(), graph.topological_order()):
-            if isinstance(layer, (ElementwiseOp, ReluOp, AddOp)):
+            if isinstance(layer, (ElementwiseOp, ReluOp, AddOp, ReduceOp, SoftmaxOp)):
                 for old_name, name in zip(before.inputs + before.outputs,
                                           layer.inputs + layer.outputs):
                     if compiled.has(old_name):

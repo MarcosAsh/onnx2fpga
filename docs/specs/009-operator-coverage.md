@@ -2,12 +2,11 @@
 
 Status: partial. Constant folding, live layout ops as wiring or views,
 BatchNormalization, LinearRegressor, binary LinearClassifier, Scaler,
-Binarizer and the quantized MatMul, Conv and Add forms are built, and 12 of
-the 13 corpus models compile in fixed latency mode for `k26`, simulate bit
-exact and track ONNX Runtime. Missing: multiclass classifiers with a
-probability transform and the labels of any multiclass classifier, which
-need Softmax and ArgMax; Normalizer on live data; a `Concat` whose pieces
-are not one Gemm's worth of the same tensor; `QGemm` and the other contrib
+Binarizer and the quantized MatMul, Conv and Add forms are built, and all 13
+corpus models compile in fixed latency mode for `k26`, simulate bit exact and
+track ONNX Runtime; the multiclass classifier and the L1 Normalizer came with
+[011](011-reductions-and-softmax.md). Missing: a `Concat` whose pieces are
+not one Gemm's worth of the same tensor; `QGemm` and the other contrib
 quantized ops; and a float reference for ORT models whose Relu lives only in
 an output grid.
 
@@ -107,18 +106,16 @@ one bit, set when that difference is positive. The rescale of that layer is a
 multiplier of 1 and a clamp to 0 and 1, so the bit costs no comparator. The
 bit is the label's index in `classlabels`. The probabilities output is not
 built, and a `Normalizer` or `ZipMap` reading it is dropped with it. With more
-than two classes and post transform NONE the scores are the output and the
-label is dropped; the label needs an ArgMax and the probabilities need
-Softmax, which wait for later work, so a multiclass LOGISTIC or SOFTMAX
-classifier is refused. `ZipMap` on a kept tensor is an alias.
+than two classes the label is an ArgMax of the scores, from
+[011](011-reductions-and-softmax.md). `ZipMap` on a kept tensor is an alias.
 
 `Binarizer` on live data becomes a dense layer with identity weights, a bias
 of minus the floor of the threshold's code, and a clamp to 0 and 1, so on
 every input code it agrees with `x > threshold`; `tests/test_operators.py`
 checks all 256 codes on three feature grids. Its output grid is scale 1 and
 zero point 0, so a Gemm after it reads the bits as they are.
-`Normalizer` divides by a norm of its own input, which needs a divider, so on
-live data it is refused for every norm.
+`Normalizer` with an L1 norm is built by [011](011-reductions-and-softmax.md),
+and the MAX and L2 norms are refused.
 
 ### Quantized operators
 
@@ -169,9 +166,9 @@ several thousand codes: on the scaler pipeline below it put the mean error at
 
 An op with no handler raises `UnsupportedOpError` naming it, as before. An op
 we know whose case we cannot build raises it with one sentence naming the
-case, for example `Normalizer 'Normalizer' divides by the norm of live data,
-which needs a divider` or `LinearClassifier 'LinearClassifier' has 3 classes
-with post_transform SOFTMAX, which needs Softmax or ArgMax`.
+case, for example `Normalizer 'Normalizer' has norm MAX, and only L1 is
+supported` or `DynamicQuantizeLinear 'q' computes its scale from the data at
+run time, which a fixed point design cannot do`.
 
 ## Verification
 
@@ -207,7 +204,7 @@ and the repo does not depend on it.
 | `ort_qdq_mlp` | ORT static QDQ, int32 bias | yes | 6 | yes | 0.6 %, worst 2 output steps |
 | `xgb_small` | onnxmltools `TreeEnsembleRegressor`, 20 trees | yes | 5 | yes | 0.25 % |
 | `lgbm_small` | onnxmltools `TreeEnsembleRegressor`, `Identity` | yes | 5 | yes | under 0.001 % |
-| `logistic_multiclass` | skl2onnx `LinearClassifier` SOFTMAX, `Normalizer` | expected to fail: Softmax | | | |
+| `logistic_multiclass` | skl2onnx `LinearClassifier` SOFTMAX, `Normalizer`, with [011](011-reductions-and-softmax.md) | yes | 4 | yes | labels agree on 98.8 % |
 | `mlp_sigmoid` | skl2onnx `Sigmoid`, a table from [010](010-lookup-tables-and-elementwise.md) | yes | 7 | yes | 1.7 % |
 
 Latencies are at the device model's clock. At `clock_mhz=322.265625` the

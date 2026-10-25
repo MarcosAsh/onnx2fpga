@@ -15,8 +15,8 @@ from onnx2fpga.errors import UnsupportedOpError
 CORPUS = ROOT / "tests" / "fixtures" / "corpus"
 HARDCAML = Hdl.skip_reason("hardcaml")
 MODELS = sorted(path.stem for path in CORPUS.glob("*.onnx"))
-# Models that need an op from later work, and that op.
-EXPECTED_FAIL = {"logistic_multiclass": "Softmax"}
+# Models that need an op from later work, and that op; none today.
+EXPECTED_FAIL = {}
 # Mean absolute error against ONNX Runtime, as a share of the output's standard deviation.
 TOLERANCE = 0.025
 # Share of labels that must agree with ONNX Runtime's.

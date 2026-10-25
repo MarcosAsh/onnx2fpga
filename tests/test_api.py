@@ -419,12 +419,12 @@ class Memory(unittest.TestCase):
 class Errors(unittest.TestCase):
     def test_unsupported_op(self):
         with self.assertRaises(UnsupportedOpError) as caught:
-            otf.load(custom_model("Softmax", axis=1))
+            otf.load(custom_model("Hardmax", axis=1))
         error = caught.exception
-        self.assertEqual((error.op_type, error.node), ("Softmax", "custom"))
+        self.assertEqual((error.op_type, error.node), ("Hardmax", "custom"))
         message = str(error)
-        for part in ("'Softmax'", "'custom'", "Conv", "Gemm", "MaxPool",
-                     "custom_objects={'Softmax'"):
+        for part in ("'Hardmax'", "'custom'", "Conv", "Gemm", "MaxPool",
+                     "custom_objects={'Hardmax'"):
             self.assertIn(part, message)
         self.assertIsInstance(error, ValueError)
 

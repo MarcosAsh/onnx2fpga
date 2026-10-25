@@ -182,6 +182,8 @@ class Ecp5CostModel:
         """The AMD estimate with each DSP48E2 as MULT18X18D, unfitted."""
         return node.amd_resources(self.device)
 
+    otf_reduce = otf_softmax = otf_eltwise
+
     def otf_trees(self, node):
         """A comparison against a constant becomes a CCU2C carry chain, two LUT4 sites per two bits."""
         return Resources(lut=(0.85 * node.comparators * node.feature_dtype.bits

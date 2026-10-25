@@ -35,8 +35,9 @@ other implements `Neg` with its own small SystemVerilog module.
 A custom layer gets one stream in and one out, keeps the shape and the integer
 grid, and folds by `pe`. That covers elementwise operators and nothing bigger.
 Softmax, for example, reduces across channels and needs a new output scale,
-which means changes to the quantizer and the scheduler. It cannot be a plug in
-yet.
+which means changes to the quantizer and the scheduler, so it is built in
+instead, in fixed latency mode only
+([011](../specs/011-reductions-and-softmax.md)).
 
 On the Hardcaml backend the module also has to exist in
 `hardware/hardcaml/src/units.ml` already. Name one that does not and you get a

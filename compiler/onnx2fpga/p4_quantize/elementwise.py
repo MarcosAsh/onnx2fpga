@@ -5,6 +5,7 @@ import numpy as np
 from ..errors import ConfigError
 from ..p2_graph.datatype import QuantSpec
 from ..p3_ops.elementwise import BOOLEAN, ElementwiseOp, EltwiseUnit, TableUnit, evaluate
+from ..p3_ops.reductions import ReduceOp, SoftmaxOp
 from .requantize import Requantizer
 
 COMPARISONS = {"Less": ("less", False), "Greater": ("less", True),
@@ -24,7 +25,7 @@ def lookup_table(function, in_scale, in_zero_point, out_scale, out_zero_point, d
 
 def check_stream_ops(graph):
     for node in graph.topological_order():
-        if isinstance(node, ElementwiseOp):
+        if isinstance(node, (ElementwiseOp, ReduceOp, SoftmaxOp)):
             raise ConfigError("mode='stream' cannot build %s (%s); it needs mode='fixed'"
                               % (node.name, node.op_type))
 

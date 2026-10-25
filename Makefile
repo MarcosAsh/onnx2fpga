@@ -13,7 +13,7 @@ help:
 	@echo "make test       run everything (unit, C++ contract, Verilator)"
 	@echo "make test-unit  fast tests only, no simulation"
 	@echo "make test-sim   Verilator end to end, both example models and the tick to trade replay"
-	@echo "make test-api   the Python API, end to end, streaming, fixed latency, elementwise, trees, reloads, corpus"
+	@echo "make test-api   the Python API, end to end, streaming, fixed latency, elementwise, reductions, trees, reloads, corpus"
 	@echo "make test-cpp   C++ kernels against the Python model"
 	@echo "make test-hardcaml  the Hardcaml library's own tests (needs dune)"
 	@echo "make runtime    build the host tools in runtime/bin"
@@ -49,6 +49,7 @@ test-api: models
 	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_elementwise.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_reductions.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_board.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_trees.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_reload.py" -v

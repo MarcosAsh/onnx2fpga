@@ -83,6 +83,7 @@ specs/007-tick-to-trade
 specs/008-weights-in-block-ram
 specs/009-operator-coverage
 specs/010-lookup-tables-and-elementwise
+specs/011-reductions-and-softmax
 ```
 
 ```{toctree}

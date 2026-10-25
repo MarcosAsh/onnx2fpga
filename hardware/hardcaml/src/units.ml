@@ -561,6 +561,97 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
         | [] -> raise_s [%message "design.json: otf_eltwise has no inputs" node.name]
       ;;
     end)
+  | "otf_reduce" ->
+    (module struct
+      module M = Otf_reduce.Make (struct
+          let lanes = param "LANES"
+          let bits = param "BITS"
+          let op = List.nth_exn Otf_reduce.Op.all (param "OP")
+          let last = param "LAST" = 1
+          let zero_point = param "ZP"
+          let mult = param "MULT"
+          let mult_bits = param "MULT_BITS"
+          let acc_bits = param "ACC_BITS"
+          let shift = param "SHIFT"
+          let out_zp = param "OUT_ZP"
+          let out_min = param "OUT_MIN"
+          let out_max = param "OUT_MAX"
+
+          let stages =
+            { Otf_reduce.Stages.tree = param ~default:0 "TREE_STAGES"
+            ; rescale = param ~default:0 "RESCALE_STAGES"
+            }
+          ;;
+        end)
+
+      let latency = M.latency
+
+      include Frozen (M)
+      include Circuit_of (M)
+
+      let connect scope clocking ~store:_ ~bank inputs =
+        ( (M.hierarchical
+             ~instance:node.instance
+             scope
+             { clocking; x = single node inputs })
+            .y
+        , delay_bank clocking bank )
+      ;;
+    end)
+  | "otf_softmax" ->
+    let ints ?(signed = true) name =
+      if List.Assoc.mem node.memories name ~equal:String.equal
+      then
+        Array.of_list_map (words name) ~f:(fun word ->
+          if signed then Bits.to_signed_int word else Bits.to_unsigned_int word)
+      else [||]
+    in
+    (module struct
+      module M = Otf_softmax.Make (struct
+          let lanes = param "LANES"
+          let in_bits = param "IN_BITS"
+          let subtract_max = param "MAX" = 1
+          let mode = if param "LOG" = 1 then Otf_softmax.Mode.Log else Divide
+          let sum_table = ints ~signed:false "sum_table"
+          let sum_bits = param "SUM_BITS"
+          let numer_table = ints "numer_table"
+          let numer_bits = param "NUMER_BITS"
+          let total_bits = param "TOTAL_BITS"
+          let min_exp = param "MIN_EXP"
+          let mantissa_bits = param "MANTISSA_BITS"
+          let scale_table = ints "scale_table"
+          let exp_table = ints "exp_table"
+          let scale_bits = param "SCALE_BITS"
+          let shift = param "SHIFT"
+          let out_bits = param "OUT_BITS"
+          let out_zp = param "OUT_ZP"
+          let out_min = param "OUT_MIN"
+          let out_max = param "OUT_MAX"
+
+          let stages =
+            { Otf_softmax.Stages.max = param ~default:0 "MAX_STAGES"
+            ; table = param ~default:0 "TABLE_STAGES"
+            ; sum = param ~default:0 "SUM_STAGES"
+            ; normalize = param ~default:0 "NORMALIZE_STAGES"
+            ; rescale = param ~default:0 "RESCALE_STAGES"
+            }
+          ;;
+        end)
+
+      let latency = M.latency
+
+      include Frozen (M)
+      include Circuit_of (M)
+
+      let connect scope clocking ~store:_ ~bank inputs =
+        ( (M.hierarchical
+             ~instance:node.instance
+             scope
+             { clocking; x = single node inputs })
+            .y
+        , delay_bank clocking bank )
+      ;;
+    end)
   | kind ->
     raise_s [%message "design.json: no fixed latency Hardcaml unit for" kind node.name]
 ;;

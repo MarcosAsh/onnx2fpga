@@ -15,6 +15,8 @@ from ..p2_graph.tensor import Tensor
 from ..p3_ops.elementwise import FUNCTIONS, ElementwiseOp, import_elementwise
 from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp,
                                ReluOp)
+from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce,
+                                 import_softmax)
 from ..p3_ops.trees import LEAF, MODES, Ensemble, TreeEnsembleOp
 from .constants import FOLD, LAYOUT, evaluate
 
@@ -212,7 +214,7 @@ def import_gemm(node, importer):
 
 
 def import_linear(node, importer):
-    """LinearRegressor, and LinearClassifier decided on the margin when it has two classes."""
+    """LinearRegressor, and LinearClassifier decided on the margin for two classes or by ArgMax for more."""
     attrs = node.attributes()
     transform = attrs.get("post_transform", "NONE")
     coefficients = np.asarray(attrs["coefficients"], dtype=np.float64)
@@ -234,12 +236,13 @@ def import_linear(node, importer):
         importer.dense(name, node.input[0], margin[:, None], [offset], node.output[0],
                        label=True)
         importer.drop(node.output[1])
-    elif transform == "NONE":
-        importer.dense(name, node.input[0], rows.T, intercepts, node.output[1])
-        importer.drop(node.output[0])
     else:
-        refuse(node, "has %d classes with post_transform %s, which needs Softmax or ArgMax"
-               % (classes, transform))
+        # Every post transform is monotone, so the label is the ArgMax of the scores.
+        scores = importer.graph.fresh_name(name + "_scores")
+        importer.dense(name, node.input[0], rows.T, intercepts, scores)
+        importer.emit(ReduceOp(name + "_label", [scores], [importer.rename(node.output[0])],
+                               "ArgMax", keepdims=False, label=True))
+        importer.drop(node.output[1])
 
 
 def import_scaler(node, importer):
@@ -336,10 +339,6 @@ def import_binarizer(node, importer):
     importer.emit(BinarizerOp(node.name or "binarizer", [importer.rename(node.input[0])],
                               [importer.rename(node.output[0])],
                               threshold=float(node.attributes().get("threshold", 0.0))))
-
-
-def refuse_normalizer(node, importer):
-    refuse(node, "divides by the norm of live data, which needs a divider")
 
 
 def import_maxpool(node, importer):
@@ -447,10 +446,11 @@ BUILTIN = {
     "Identity": import_identity, "ZipMap": import_identity, "Cast": import_cast,
     "Concat": import_concat, "BatchNormalization": import_batchnorm,
     "LinearRegressor": import_linear, "LinearClassifier": import_linear,
-    "Scaler": import_scaler, "Binarizer": import_binarizer, "Normalizer": refuse_normalizer,
+    "Scaler": import_scaler, "Binarizer": import_binarizer, "Normalizer": import_normalizer,
     "TreeEnsembleRegressor": import_trees, "TreeEnsembleClassifier": import_trees,
     "TreeEnsemble": refuse_tree_ensemble,
     **{op: import_elementwise for op in FUNCTIONS if op not in ("Relu", "Add")},
+    **dict.fromkeys(REDUCE, import_reduce), **dict.fromkeys(SOFTMAX, import_softmax),
 }
 BUILTIN.update(dict.fromkeys(LAYOUT_OPS, import_layout))
 

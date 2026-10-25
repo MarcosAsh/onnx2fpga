@@ -1,8 +1,9 @@
 # 001 Fixed latency mode
 
 Status: partial. Dense models (Gemm and MatMul, a fused Relu, Flatten and
-Reshape) build and are verified, and so do Add, a Relu that cannot be fused
-and the other elementwise operators of [010](010-lookup-tables-and-elementwise.md).
+Reshape) build and are verified, and so do Add, a Relu that cannot be fused,
+the other elementwise operators of [010](010-lookup-tables-and-elementwise.md)
+and the reductions and softmax of [011](011-reductions-and-softmax.md).
 Conv and MaxPool raise `ConfigError` in this mode for now.
 
 ## Problem

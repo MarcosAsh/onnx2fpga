@@ -30,6 +30,7 @@ from .p3_ops.elementwise import EltwiseUnit, TableUnit
 from .p3_ops.hardware_ops import (DenseUnit, DuplicateUnit, StreamFifo, TreeEnsembleUnit,
                                   WidthConverter)
 from .p3_ops.onnx_ops import ConvOp, FlattenOp, GemmOp
+from .p3_ops.reductions import ReduceUnit, SoftmaxUnit
 from .p3_ops.trees import TreeEnsembleOp
 from .p4_quantize.lower import FuseRelu
 from .p4_quantize.trees import tree_op
@@ -521,6 +522,13 @@ class Accelerator:
         saved = sum(unit.weights.size - unit.multipliers for unit in units
                     if isinstance(unit, DenseUnit))
         fmax = self.result.fmax_mhz
+        stages = ["in the leaf select/adder tree" if trees
+                  else "at the multiplies/adder tree/rescale"]
+        stages += [text for kind, text in (
+            (EltwiseUnit, "the multiplies/rescale of an elementwise unit"),
+            (ReduceUnit, "the tree/rescale of a reduction"),
+            (SoftmaxUnit, "the max tree/table/sum/normalisation/rescale of a softmax"))
+            if any(isinstance(unit, kind) for unit in units)]
         lines += ["=" * rule,
                   _row(("Total", "", "", sum(parts), latency, "",
                         "%.0f" % fmax if fmax else "", int(total.lut), _number(total.dsp)),
@@ -529,11 +537,7 @@ class Accelerator:
                         budget.dsp), widths, right),
                   _row(("Used", "", "", "", "", "", "", _percent(total.lut, budget.lut),
                         _percent(total.dsp, budget.dsp)), widths, right),
-                  " Stages: registers added %s%s" % (
-                      "in the leaf select/adder tree" if trees
-                      else "at the multiplies/adder tree/rescale",
-                      ", or the multiplies/rescale of an elementwise unit"
-                      if any(isinstance(unit, EltwiseUnit) for unit in units) else ""),
+                  " Stages: registers added " + ", or ".join(stages),
                   " Latency: %d cycles, %.1f ns at %.0f MHz, with a new input every cycle"
                   % (latency, latency * 1e3 / clock, clock)]
         if fmax:
@@ -612,7 +616,7 @@ class Accelerator:
     @property
     def _labels(self):
         graph = self.result.hardware_graph
-        return graph.tensor(graph.outputs[0]).dtype.bits == 1
+        return not graph.tensor(graph.outputs[0]).dtype.signed
 
     def predict(self, x, on=None, quantized=False):
         """Outputs for a batch of inputs, from the reference model until deployed and from the board after."""
@@ -1076,8 +1080,8 @@ def _fixed_shape(unit):
         return "%d/%d" % (unit.ensemble.trees, unit.ensemble.depth), ""
     if isinstance(unit, DenseUnit):
         return "%d -> %d" % (unit.mw, unit.mh), unit.arithmetic
-    lanes = "%d -> %d" % (unit.lanes, unit.lanes)
-    return lanes, "table" if isinstance(unit, TableUnit) else unit.op
+    lanes = "%d -> %d" % (unit.lanes, 1 if isinstance(unit, ReduceUnit) else unit.lanes)
+    return lanes, "table" if isinstance(unit, TableUnit) else unit.op.lower()
 
 
 def _row(cells, widths, right):
