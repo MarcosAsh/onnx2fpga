@@ -14,7 +14,9 @@ class Calibrator:
         self.peaks = {}
 
     def observe(self, name, array):
-        peak = float(np.max(np.abs(np.asarray(array, dtype=np.float64))))
+        """Infinities and NaN, as from Log at 0, say nothing about the range and are skipped."""
+        array = np.asarray(array, dtype=np.float64)
+        peak = float(np.max(np.abs(array[np.isfinite(array)]), initial=0.0))
         self.peaks[name] = max(self.peaks.get(name, 0.0), peak)
 
     def plan(self, samples, mult_bits=18):

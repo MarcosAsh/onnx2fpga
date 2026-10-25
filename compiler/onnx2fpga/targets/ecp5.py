@@ -172,6 +172,16 @@ class Ecp5CostModel:
         wide = max(node.in_elems, node.out_elems) * node.elem_bits
         return Resources(lut=4 + 0.35 * wide, ff=wide + 4)
 
+    def otf_table(self, node):
+        """Each lane's table as yosys builds a combinational one, unfitted."""
+        bits = node.out_dtype.bits
+        return Resources(lut=node.lanes * bits * rom_luts(node.tables.shape[1]),
+                         ff=node.lanes * bits + 1)
+
+    def otf_eltwise(self, node):
+        """The AMD estimate with each DSP48E2 as MULT18X18D, unfitted."""
+        return node.amd_resources(self.device)
+
     def otf_trees(self, node):
         """A comparison against a constant becomes a CCU2C carry chain, two LUT4 sites per two bits."""
         return Resources(lut=(0.85 * node.comparators * node.feature_dtype.bits
@@ -183,7 +193,7 @@ class Ecp5CostModel:
 # Fitted to 54 nextpnr-ecp5 runs, with the carry and mux held fixed; see docs/specs/002.
 ECP5_6 = DelayModel(register=1.21, net=1.17, lut=0.39, carry=0.3, carry_bit=0.035, mux=1.2,
                     tree=1.80, fanout=0.53, multiply=(4.31, 4.31), dsp=(18, 18), margin=0.10,
-                    provenance="fitted to nextpnr-ecp5 place and route")
+                    provenance="fitted to nextpnr-ecp5 place and route", lut_inputs=4)
 
 
 class Ecp5Device(Device):

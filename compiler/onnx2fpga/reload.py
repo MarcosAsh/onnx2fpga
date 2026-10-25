@@ -8,11 +8,13 @@ import numpy as np
 from .board import OFFSETS, BoardError
 from .errors import ConfigError
 from .p2_graph.onnx_importer import OnnxImporter
+from .p3_ops.elementwise import ElementwiseOp, EltwiseUnit, TableUnit
 from .p3_ops.hardware_ops import MatVecUnit
+from .p3_ops.onnx_ops import AddOp, ReluOp
 from .p4_quantize.calibrate import Calibrator
 from .p4_quantize.lower import FuseRelu, LowerToHardware
 from .p4_quantize.plan import QuantizationPlan
-from .p5_schedule.fixed import check_fixed_ops
+from .p5_schedule.fixed import check_fixed_ops, compose_tables
 from .pipeline import CompilerContext
 
 
@@ -57,7 +59,10 @@ def retarget(model, result, samples):
     check_fixed_ops(graph)
     _same_architecture(result.float_graph, graph)
     plan = _plan(graph, result, samples)
-    lowered = LowerToHardware(plan).run(copy.deepcopy(graph), CompilerContext(device))
+    lowered = LowerToHardware(plan, fixed=True).run(copy.deepcopy(graph),
+                                                    CompilerContext(device))
+    compose_tables(lowered)
+    _same_frozen(result.hardware_graph, lowered)
     retrained = copy.deepcopy(result.hardware_graph)
     news = [node for node in lowered.topological_order() if isinstance(node, MatVecUnit)]
     for unit, new in zip(reloadable_units(retrained), news):
@@ -115,11 +120,36 @@ def _plan(graph, result, samples):
         plan = Calibrator(graph).plan(feeds, mult_bits=compiled.mult_bits)
         for _, old_name, name in ends:
             plan.specs[name] = compiled.spec(old_name)
+        # Tables and elementwise units are frozen, so the grids around them must stay.
+        for before, layer in zip(old.topological_order(), graph.topological_order()):
+            if isinstance(layer, (ElementwiseOp, ReluOp, AddOp)):
+                for old_name, name in zip(before.inputs + before.outputs,
+                                          layer.inputs + layer.outputs):
+                    if compiled.has(old_name):
+                        plan.specs[name] = compiled.spec(old_name)
     plan.layer_weight_dtypes = {
         layer.name: compiled.layer_weight_dtypes[before.name]
         for before, layer in zip(old.topological_order(), graph.topological_order())
         if before.name in compiled.layer_weight_dtypes}
     return plan
+
+
+def _same_frozen(compiled, lowered):
+    """Raises unless every table and elementwise unit comes out as it was compiled."""
+    def frozen(graph):
+        return [node for node in graph.topological_order()
+                if isinstance(node, (TableUnit, EltwiseUnit))]
+
+    def values(unit):
+        if isinstance(unit, TableUnit):
+            return unit.rows().tolist()
+        return (unit.op, [np.asarray(s).tolist() for s in unit.sources], unit.zero_points,
+                unit.mults, unit.mult, unit.shift, unit.out_zero_point,
+                [None if table is None else np.asarray(table).tolist() for table in unit.tables])
+
+    for old, new in zip(frozen(compiled), frozen(lowered)):
+        if values(old) != values(new):
+            raise ConfigError("%s is frozen, and the new model changes it" % old.name)
 
 
 def _fit(unit, new):

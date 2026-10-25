@@ -39,13 +39,14 @@ module type Fixed_instance = sig
   (** Its compiled bank words, empty when frozen. *)
   val image : Bits.t list
 
-  (** Instantiates the unit on [x] and its bank tag, which frozen units only delay. *)
+  (** Instantiates the unit on its inputs, in step, and the bank tag frozen units only
+      delay. *)
   val connect
     :  Scope.t
     -> Signal.t Clocking.t
     -> store:Signal.t Weight_banks.Write.t option
     -> bank:Signal.t option
-    -> Signal.t With_valid.t
+    -> Signal.t With_valid.t list
     -> Signal.t With_valid.t * Signal.t option
 
   (** The unit alone as a circuit called [name], ports as its own interface names them. *)

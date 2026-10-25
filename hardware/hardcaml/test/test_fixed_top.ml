@@ -35,6 +35,47 @@ let%expect_test "two layers answer exactly six cycles after the input" =
   [%expect {| (Mlp.latency 6) |}]
 ;;
 
+module Gated = Fixed_top.Make (struct
+    let design = Design.of_string Fixed_fixture.gated
+  end)
+
+module Gated_harness = Hardcaml_test_harness.Lws_harness.Make (Gated.I) (Gated.O)
+
+let%expect_test "a branch waits in registers for the longer one, with gaps in valid" =
+  let rng = Random.State.make [| 12 |] in
+  let checked =
+    Gated_harness.run
+      ~random_initial_state:`All
+      ~create:Gated.hierarchical
+      (fun (h @ local) ~inputs ~outputs ->
+         let o = Before_and_after_edge.before_edge outputs in
+         Stream_bench.clear h inputs.clear;
+         let sent = Queue.create () in
+         let checked = ref 0 in
+         List.iter (List.range 0 400) ~f:(fun _ ->
+           let valid = Random.State.int rng 100 < 70 in
+           let x = Model.random_ints rng ~bits:8 2 in
+           inputs.features := Stream_bench.of_signed_lanes ~lane_bits:8 x;
+           inputs.features_valid := Bits.of_bool valid;
+           Lws.cycle h;
+           Queue.enqueue sent (valid, x);
+           if Queue.length sent > Gated.latency
+           then (
+             let valid, x = Queue.dequeue_exn sent in
+             [%test_result: bool] (Bits.to_bool !(o.prediction_valid)) ~expect:valid;
+             if valid
+             then (
+               incr checked;
+               [%test_result: int list]
+                 (Stream_bench.signed_lanes ~lane_bits:8 !(o.prediction))
+                 ~expect:(Fixed_fixture.gated_model x)))
+           else assert (not (Bits.to_bool !(o.prediction_valid))));
+         !checked)
+  in
+  print_s [%message (Gated.latency : int) (checked : int)];
+  [%expect {| ((Gated.latency 8) (checked 278)) |}]
+;;
+
 let%expect_test "the ports are the ones the spec names" =
   Fixed_top.verilog (Design.of_string (Fixed_fixture.description ~latency:6))
   |> String.split_lines
@@ -62,7 +103,7 @@ let%expect_test "a stated latency the units do not have is refused" =
   [%expect
     {|
     (Error
-     ("design.json: the stated latency is not the sum over the units"
+     ("design.json: the stated latency is not the longest path through the units"
       (stated_latency 5) (latency 6)))
     |}]
 ;;

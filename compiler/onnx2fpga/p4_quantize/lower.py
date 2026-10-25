@@ -4,11 +4,13 @@ import numpy as np
 
 from ..p2_graph.datatype import INT32
 from ..p2_graph.tensor import Tensor
+from ..p3_ops.elementwise import ElementwiseOp
 from ..p3_ops.onnx_ops import AddOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
 from ..p3_ops.hardware_ops import (ActivationUnit, AddUnit, MatVecUnit, PoolUnit,
                                    SlidingWindowUnit)
 from ..pipeline import Pass
 from ..p3_ops.trees import TreeEnsembleOp
+from .elementwise import lower_elementwise
 from .requantize import Requantizer
 from .trees import lower_trees
 
@@ -42,9 +44,12 @@ class Lowering:
 
 
 class LoweringContext:
-    def __init__(self, graph, plan):
+    """`fixed` lowers for fixed latency mode, where Relu and Add become elementwise units."""
+
+    def __init__(self, graph, plan, fixed=False):
         self.graph = graph
         self.plan = plan
+        self.fixed = fixed
 
     def scale(self, name):
         return self.plan.scale(name)
@@ -129,6 +134,8 @@ def lower_maxpool(node, ctx):
 
 def lower_relu(node, ctx):
     """Only reached when the Relu could not be fused into its producer."""
+    if ctx.fixed:
+        return lower_elementwise(node, ctx)
     source = ctx.graph.tensor(node.inputs[0])
     channels = source.shape[-1]
     ratio = ctx.scale(node.inputs[0]) / ctx.scale(node.outputs[0])
@@ -142,6 +149,8 @@ def lower_relu(node, ctx):
 
 
 def lower_add(node, ctx):
+    if ctx.fixed:
+        return lower_elementwise(node, ctx)
     streams = [n for n in node.inputs if not ctx.graph.tensor(n).is_constant]
     if len(streams) != 2:
         raise NotImplementedError(
@@ -173,21 +182,22 @@ def lower_flatten(node, ctx):
 
 BUILTIN = {GemmOp: lower_gemm, ConvOp: lower_conv, MaxPoolOp: lower_maxpool,
            ReluOp: lower_relu, AddOp: lower_add, FlattenOp: lower_flatten,
-           TreeEnsembleOp: lower_trees}
+           TreeEnsembleOp: lower_trees, ElementwiseOp: lower_elementwise}
 
 
 class LowerToHardware(Pass):
     name = "lower-to-hardware"
 
-    def __init__(self, plan, lowerings=()):
+    def __init__(self, plan, lowerings=(), fixed=False):
         self.plan = plan
+        self.fixed = fixed
         self.rules = dict(BUILTIN)
         for lowering in lowerings:
             for op_class in lowering.handles:
                 self.rules[op_class] = lowering.apply
 
     def run(self, graph, context):
-        ctx = LoweringContext(graph, self.plan)
+        ctx = LoweringContext(graph, self.plan, self.fixed)
         for name in graph.inputs:
             graph.tensor(name).dtype = self.plan.act_dtype
         for node in list(graph.topological_order()):

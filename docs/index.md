@@ -81,6 +81,7 @@ specs/005-tree-ensembles
 specs/006-kv260
 specs/007-tick-to-trade
 specs/008-weights-in-block-ram
+specs/010-lookup-tables-and-elementwise
 ```
 
 ```{toctree}

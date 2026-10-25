@@ -13,6 +13,7 @@ _NUMPY_TO_ONNX = {
     np.dtype("uint8"): TensorProto.UINT8,
     np.dtype("int32"): TensorProto.INT32,
     np.dtype("int64"): TensorProto.INT64,
+    np.dtype("bool"): TensorProto.BOOL,
 }
 
 

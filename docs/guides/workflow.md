@@ -126,9 +126,11 @@ See [004](../specs/004-weight-specialised-arithmetic.md) for what this costs
 in LUTs and how it is checked.
 
 Fixed mode builds Gemm and MatMul layers with a fused Relu, and treats Flatten
-and Reshape as wiring. Anything else, a `Conv` for instance, raises
-`ConfigError` for now. It needs the Hardcaml backend, and the bitstream flow
-for the Icepi Zero does not take it yet. See
+and Reshape as wiring. Activations such as Sigmoid or Gelu become lookup
+tables, and Add, Mul, Max, the comparisons and Where work between two tensors
+([010](../specs/010-lookup-tables-and-elementwise.md)). Anything else, a
+`Conv` for instance, raises `ConfigError` for now. It needs the Hardcaml
+backend, and the bitstream flow for the Icepi Zero does not take it yet. See
 [001](../specs/001-fixed-latency.md) for the design.
 
 ## Reloading weights

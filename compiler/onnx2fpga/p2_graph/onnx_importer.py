@@ -9,6 +9,7 @@ from ..p2_graph.datatype import FLOAT32, IntType, QuantSpec, UINT8
 from ..p2_graph.graph import Graph
 from ..p2_graph.layout import LayoutAdapter
 from ..p2_graph.tensor import Tensor
+from ..p3_ops.elementwise import FUNCTIONS, import_elementwise
 from ..p3_ops.onnx_ops import AddOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
 from ..p3_ops.trees import LEAF, MODES, Ensemble, TreeEnsembleOp
 
@@ -229,6 +230,7 @@ BUILTIN = {
     "Identity": import_identity,
     "TreeEnsembleRegressor": import_trees, "TreeEnsembleClassifier": import_trees,
     "TreeEnsemble": refuse_tree_ensemble, "ZipMap": drop_zipmap,
+    **{op: import_elementwise for op in FUNCTIONS if op not in ("Relu", "Add")},
 }
 
 

@@ -308,7 +308,7 @@ module type Fixed_instance = sig
     -> Signal.t Clocking.t
     -> store:Signal.t Weight_banks.Write.t option
     -> bank:Signal.t option
-    -> Signal.t With_valid.t
+    -> Signal.t With_valid.t list
     -> Signal.t With_valid.t * Signal.t option
 
   val circuit : Scope.t -> name:string -> Circuit.t
@@ -326,6 +326,11 @@ struct
     Option.map bank ~f:(Clocking.pipeline_no_clear clocking ~n:M.latency)
   ;;
 end
+
+let single (node : Design.Node.t) = function
+  | [ x ] -> x
+  | _ -> raise_s [%message "design.json: unit needs exactly one input" node.name]
+;;
 
 let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
   let param ?default name = Design.Node.param ?default node name in
@@ -370,13 +375,13 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
 
         include Circuit_of (M)
 
-        let connect scope clocking ~store ~bank x =
+        let connect scope clocking ~store ~bank inputs =
           let o =
             M.hierarchical
               ~instance:node.instance
               scope
               { clocking
-              ; x
+              ; x = single node inputs
               ; x_bank = Option.value_exn bank
               ; store = Option.value_exn store
               }
@@ -393,8 +398,12 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
         include Frozen (M)
         include Circuit_of (M)
 
-        let connect scope clocking ~store:_ ~bank x =
-          ( (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+        let connect scope clocking ~store:_ ~bank inputs =
+          ( (M.hierarchical
+               ~instance:node.instance
+               scope
+               { clocking; x = single node inputs })
+              .y
           , delay_bank clocking bank )
         ;;
       end)
@@ -446,9 +455,110 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
       include Frozen (M)
       include Circuit_of (M)
 
-      let connect scope clocking ~store:_ ~bank x =
-        ( (M.hierarchical ~instance:node.instance scope { clocking; x }).y
+      let connect scope clocking ~store:_ ~bank inputs =
+        ( (M.hierarchical
+             ~instance:node.instance
+             scope
+             { clocking; x = single node inputs })
+            .y
         , delay_bank clocking bank )
+      ;;
+    end)
+  | "otf_table" ->
+    let size = 1 lsl param "IN_BITS" in
+    (module struct
+      module M = Otf_table.Make (struct
+          let lanes = param "LANES"
+          let in_bits = param "IN_BITS"
+          let out_bits = param "OUT_BITS"
+
+          let tables =
+            List.map (words "tables") ~f:Bits.to_signed_int
+            |> List.chunks_of ~length:size
+            |> List.map ~f:Array.of_list
+          ;;
+
+          let lane_table = List.map (words "lane_table") ~f:Bits.to_unsigned_int
+        end)
+
+      let latency = M.latency
+
+      include Frozen (M)
+      include Circuit_of (M)
+
+      let connect scope clocking ~store:_ ~bank inputs =
+        ( (M.hierarchical
+             ~instance:node.instance
+             scope
+             { clocking; x = single node inputs })
+            .y
+        , delay_bank clocking bank )
+      ;;
+    end)
+  | "otf_eltwise" ->
+    let count = param "OPERANDS" in
+    let each name = List.init count ~f:(fun k -> param (name ^ Int.to_string k)) in
+    (module struct
+      module M = Otf_eltwise.Make (struct
+          let lanes = param "LANES"
+          let bits = param "BITS"
+          let op = List.nth_exn Otf_eltwise.Op.all (param "OP")
+
+          (* A negative port is a constant operand, its codes in memory const<k>. *)
+          let operands =
+            List.mapi (each "PORT") ~f:(fun k port : Otf_eltwise.Operand.t ->
+              if port >= 0
+              then Port port
+              else
+                Constant
+                  (List.map (words ("const" ^ Int.to_string k)) ~f:Bits.to_signed_int))
+          ;;
+
+          let zero_points = each "ZP"
+          let mults = each "MULT"
+
+          (* Max, Min and Where keep a table per port operand in memory table<k>. *)
+          let tables =
+            List.init count ~f:(fun k ->
+              let name = "table" ^ Int.to_string k in
+              if List.Assoc.mem node.memories name ~equal:String.equal
+              then Array.of_list_map (words name) ~f:Bits.to_signed_int
+              else [||])
+          ;;
+
+          let mult = param "MULT"
+          let mult_bits = param "MULT_BITS"
+          let acc_bits = param "ACC_BITS"
+          let shift = param "SHIFT"
+          let out_zp = param "OUT_ZP"
+          let out_min = param "OUT_MIN"
+          let out_max = param "OUT_MAX"
+
+          let stages =
+            { Otf_eltwise.Stages.product = param ~default:0 "PRODUCT_STAGES"
+            ; rescale = param ~default:0 "RESCALE_STAGES"
+            }
+          ;;
+        end)
+
+      let latency = M.latency
+
+      include Frozen (M)
+      include Circuit_of (M)
+
+      let connect scope clocking ~store:_ ~bank (inputs : Signal.t With_valid.t list) =
+        match inputs with
+        | first :: _ ->
+          ( (M.hierarchical
+               ~instance:node.instance
+               scope
+               { clocking
+               ; valid = first.valid
+               ; x = List.map inputs ~f:(fun (x : Signal.t With_valid.t) -> x.value)
+               })
+              .y
+          , delay_bank clocking bank )
+        | [] -> raise_s [%message "design.json: otf_eltwise has no inputs" node.name]
       ;;
     end)
   | kind ->

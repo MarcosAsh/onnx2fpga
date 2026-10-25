@@ -6,6 +6,7 @@ from .errors import ConfigError, ModelError
 from .hardware_layer import custom_passes
 from .p2_graph.onnx_importer import OnnxImporter
 from .p4_quantize.calibrate import Calibrator
+from .p4_quantize.elementwise import check_stream_ops
 from .p4_quantize.plan import QuantizationPlan
 from .p4_quantize.lower import FuseRelu, LowerToHardware
 from .p4_quantize.trees import plan_trees, tree_op
@@ -87,13 +88,15 @@ class Compiler:
             check_fixed_ops(float_graph)
         elif tree_op(float_graph):
             raise ConfigError("a tree ensemble compiles only with mode='fixed'")
+        else:
+            check_stream_ops(float_graph)
 
         plan = self._plan(float_graph, samples, context)
         # Lowering rewrites in place, so copy first or the two graphs on the result would be one object.
         working = float_graph
         float_graph = copy.deepcopy(working)
         if self.mode == "fixed":
-            passes = [LowerToHardware(plan, self.custom_lowerings),
+            passes = [LowerToHardware(plan, self.custom_lowerings, fixed=True),
                       UnrollForFixedLatency(self.utilisation_limit, self.arithmetic,
                                             self.weights == "reloadable", self.clock_mhz)]
         else:

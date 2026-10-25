@@ -9,6 +9,11 @@ val description : latency:int -> string
 (** The answer for two int8 features. *)
 val model : int list -> int list
 
+(** The two layers' answer gated by a table of the features, latency 8. *)
+val gated : string
+
+val gated_model : int list -> int list
+
 (** The same design with both layers reloadable, its latency 6. *)
 val reloadable : string
 

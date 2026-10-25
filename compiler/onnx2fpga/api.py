@@ -26,7 +26,8 @@ from .p1_ingest import OnnxModel
 from .p1_ingest.protobuf_codec import WireError
 from .p2_graph.datatype import DataType, IntType
 from .p2_graph.onnx_importer import OnnxImporter
-from .p3_ops.hardware_ops import (DuplicateUnit, StreamFifo, TreeEnsembleUnit,
+from .p3_ops.elementwise import EltwiseUnit, TableUnit
+from .p3_ops.hardware_ops import (DenseUnit, DuplicateUnit, StreamFifo, TreeEnsembleUnit,
                                   WidthConverter)
 from .p3_ops.onnx_ops import ConvOp, FlattenOp, GemmOp
 from .p3_ops.trees import TreeEnsembleOp
@@ -506,18 +507,19 @@ class Accelerator:
                        "" if trees else "Arithmetic", "Comparators" if trees else "Multipliers",
                        "Latency", "Stages", "Fmax", "LUT", "DSP"), widths, right), "=" * rule]
         costs = [unit.resources(device) for unit in units]
-        parts = [unit.comparators if trees else unit.multipliers for unit in units]
+        parts = [unit.comparators if isinstance(unit, TreeEnsembleUnit) else unit.multipliers
+                 for unit in units]
         for unit, cost, count in zip(units, costs, parts):
-            shape = ("%d/%d" % (unit.ensemble.trees, unit.ensemble.depth) if trees
-                     else "%d -> %d" % (unit.mw, unit.mh))
             fmax = "%.0f" % (1000.0 / slowest(unit, delays)[0]) if delays else ""
-            lines.append(_row(("%s (%s)" % (unit.name, self.layers[unit.name].kind), shape,
-                               "" if trees else unit.arithmetic, count, unit.latency,
-                               "/".join(str(n) for n in unit.stages.values()), fmax,
-                               int(cost.lut), _number(cost.dsp)), widths, right))
+            kind = "+".join(self.layers[name].kind
+                            for name in unit.attrs.get("merged", []) + [unit.name])
+            lines.append(_row(("%s (%s)" % (unit.name, kind), *_fixed_shape(unit), count,
+                               unit.latency, "/".join(str(n) for n in unit.stages.values()),
+                               fmax, int(cost.lut), _number(cost.dsp)), widths, right))
         total, budget = _sum(costs), device.budget
         latency, clock = self.latency, self.result.clock_mhz
-        saved = 0 if trees else sum(unit.weights.size - unit.multipliers for unit in units)
+        saved = sum(unit.weights.size - unit.multipliers for unit in units
+                    if isinstance(unit, DenseUnit))
         fmax = self.result.fmax_mhz
         lines += ["=" * rule,
                   _row(("Total", "", "", sum(parts), latency, "",
@@ -527,8 +529,11 @@ class Accelerator:
                         budget.dsp), widths, right),
                   _row(("Used", "", "", "", "", "", "", _percent(total.lut, budget.lut),
                         _percent(total.dsp, budget.dsp)), widths, right),
-                  " Stages: registers added %s" % ("in the leaf select/adder tree" if trees
-                                                   else "at the multiplies/adder tree/rescale"),
+                  " Stages: registers added %s%s" % (
+                      "in the leaf select/adder tree" if trees
+                      else "at the multiplies/adder tree/rescale",
+                      ", or the multiplies/rescale of an elementwise unit"
+                      if any(isinstance(unit, EltwiseUnit) for unit in units) else ""),
                   " Latency: %d cycles, %.1f ns at %.0f MHz, with a new input every cycle"
                   % (latency, latency * 1e3 / clock, clock)]
         if fmax:
@@ -1062,6 +1067,16 @@ def _weight_dtype(text, layer):
         raise ConfigError("weights=%r for %s, expected 'int2' to 'int8'" % (text, layer))
     bits = int(found.group(1))
     return DataType._registry.get("INT%d" % bits) or IntType(bits, True)
+
+
+def _fixed_shape(unit):
+    """The shape and arithmetic columns of a fixed latency unit."""
+    if isinstance(unit, TreeEnsembleUnit):
+        return "%d/%d" % (unit.ensemble.trees, unit.ensemble.depth), ""
+    if isinstance(unit, DenseUnit):
+        return "%d -> %d" % (unit.mw, unit.mh), unit.arithmetic
+    lanes = "%d -> %d" % (unit.lanes, unit.lanes)
+    return lanes, "table" if isinstance(unit, TableUnit) else unit.op
 
 
 def _row(cells, widths, right):

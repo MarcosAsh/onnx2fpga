@@ -1,8 +1,9 @@
 # 001 Fixed latency mode
 
 Status: partial. Dense models (Gemm and MatMul, a fused Relu, Flatten and
-Reshape) build and are verified. Conv, MaxPool, Add and a Relu that cannot be
-fused raise `ConfigError` in this mode for now.
+Reshape) build and are verified, and so do Add, a Relu that cannot be fused
+and the other elementwise operators of [010](010-lookup-tables-and-elementwise.md).
+Conv and MaxPool raise `ConfigError` in this mode for now.
 
 ## Problem
 
@@ -87,7 +88,8 @@ for an input taken before it. Weight reload ports are added by
 [003](003-reloadable-weights.md).
 
 `design.json` carries `"mode": "fixed"` and `"latency"`, and the Hardcaml
-generator refuses a file whose stated latency is not the sum over its units.
+generator refuses a file whose stated latency is not the longest path through
+its units, which for a chain of layers is their sum.
 `manifest.json` records the total and each layer's latency.
 
 ## Backends
@@ -199,7 +201,8 @@ Three of the four are met.
   `latency` cycles, for all inputs.
 - [x] Lockstep keeps the SystemVerilog and Hardcaml versions identical, or the
   backend policy says why not. The policy above says why not.
-- [ ] Conv, MaxPool and Add in fixed mode.
+- [ ] Conv, MaxPool and Add in fixed mode. Add is built, by
+  [010](010-lookup-tables-and-elementwise.md); Conv and MaxPool are not.
 
 ## Open questions
 

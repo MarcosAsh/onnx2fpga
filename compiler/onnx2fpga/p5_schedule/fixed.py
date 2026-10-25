@@ -1,15 +1,19 @@
-"""Fixed latency mode: every dense layer unrolled to one vector per cycle, with the latency summed along the chain."""
+"""Fixed latency mode: every layer unrolled to one vector per cycle, the latency the longest path through them."""
+
+import numpy as np
 
 from ..errors import BudgetError, ConfigError
+from ..p3_ops.elementwise import ElementwiseOp, EltwiseUnit, TableUnit
 from ..p3_ops.hardware_ops import DenseUnit, MatVecUnit, TreeEnsembleUnit
-from ..p3_ops.onnx_ops import FlattenOp, GemmOp
+from ..p3_ops.onnx_ops import AddOp, FlattenOp, GemmOp, ReluOp
 from ..p3_ops.trees import TreeEnsembleOp
 from ..pipeline import Pass
 from .folding import FoldingReport
 
 # What each stage knob of a unit governs, for the summary and the errors.
 PATHS = {"product": "multiplies", "sum": "adder tree", "rescale": "rescale",
-         "compare": "comparators", "select": "leaf select"}
+         "compare": "comparators", "select": "leaf select", "table": "table",
+         "test": "comparison", "logic": "logic"}
 
 
 def slowest(unit, delays):
@@ -27,7 +31,8 @@ def predicted_fmax(units, delays):
 
 def check_fixed_ops(graph):
     for node in graph.topological_order():
-        if not isinstance(node, (GemmOp, FlattenOp, TreeEnsembleOp)):
+        if not isinstance(node, (GemmOp, FlattenOp, TreeEnsembleOp, ElementwiseOp, ReluOp,
+                                 AddOp)):
             kind = node.op_type + ("+Relu" if node.attrs.get("relu") else "")
             raise ConfigError("mode='fixed' cannot build %s (%s) yet" % (node.name, kind))
 
@@ -47,7 +52,7 @@ class UnrollForFixedLatency(Pass):
 
     def run(self, graph, context):
         for node in list(graph.topological_order()):
-            if isinstance(node, TreeEnsembleUnit):
+            if not isinstance(node, MatVecUnit):
                 continue
             if node.vectors != 1:
                 raise ConfigError("mode='fixed' cannot build %s, which takes %d vectors "
@@ -55,6 +60,7 @@ class UnrollForFixedLatency(Pass):
             graph.replace_node(node, [DenseUnit(
                 node.name, node.inputs, node.outputs, node.weights, node.bias,
                 node.requant, node.act_dtype, node.out_dtype, node.weight_dtype)])
+        compose_tables(graph)
         graph.infer()
         units = graph.topological_order()
         graph.tensor(graph.inputs[0]).elems_per_beat = graph.tensor(graph.inputs[0]).numel
@@ -65,13 +71,13 @@ class UnrollForFixedLatency(Pass):
                 unit.arithmetic = self._arithmetic(unit, context.device)
         if self.clock_mhz is not None:
             self._pipeline(units, context.device)
+        latency = longest_path(graph)
         self._check_budget(units, context.device)
         words = sum(getattr(unit, "words", 0) for unit in units)
         if words > self.BANK_WORDS:
             raise BudgetError("the reloadable weights need %d words a bank, past the %d of "
                               "the register window" % (words, self.BANK_WORDS))
 
-        latency = sum(unit.latency for unit in units)
         context.artifacts["latency"] = latency
         context.artifacts["clock_mhz"] = self.clock_mhz or context.device.fmax_mhz
         context.artifacts["fmax_mhz"] = predicted_fmax(units, context.device.delays)
@@ -136,9 +142,40 @@ class UnrollForFixedLatency(Pass):
                               "(%d trees of depth %d)" % (used, field.upper(), allowed,
                                                           device.name, ensemble.trees,
                                                           ensemble.depth))
-        largest = max(units, key=lambda unit: unit.weights.size)
+        dense = [unit for unit in units if isinstance(unit, MatVecUnit)]
+        if not dense:
+            raise BudgetError("the unrolled model needs %d %s, past the %d allowed on %s"
+                              % (used, field.upper(), allowed, device.name))
+        largest = max(dense, key=lambda unit: unit.weights.size)
         raise BudgetError("the unrolled model needs %d %s, past the %d allowed on %s "
                           "(largest layer %s has %d weights)"
                           % (used, field.upper(), allowed, device.name, largest.name,
                              largest.weights.size))
 
+
+def longest_path(graph):
+    """Cycles from the input to the output; a binary unit's earlier inputs wait, and their skew is recorded."""
+    arrival = {graph.inputs[0]: 0}
+    for unit in graph.topological_order():
+        times = [arrival[name] for name in unit.stream_inputs(graph)]
+        start = max(times)
+        if isinstance(unit, EltwiseUnit):
+            unit.skew = [start - time for time in times]
+        arrival[unit.outputs[0]] = start + unit.latency
+    return arrival[graph.outputs[0]]
+
+
+def compose_tables(graph):
+    """A table that feeds only another table is folded into it, keeping the later one's name."""
+    for unit in graph.topological_order():
+        source = graph.producer(unit.inputs[0])
+        if (not isinstance(unit, TableUnit) or not isinstance(source, TableUnit)
+                or len(graph.consumers(source.outputs[0])) != 1
+                or source.outputs[0] in graph.outputs):
+            continue
+        rows = np.take_along_axis(unit.rows(), source.rows() - unit.in_dtype.min, axis=1)
+        merged = TableUnit.per_lane(unit.name, source.inputs, unit.outputs, rows,
+                                    source.in_dtype, unit.out_dtype)
+        merged.attrs["merged"] = source.attrs.get("merged", []) + [source.name]
+        graph.remove_node(source)
+        graph.replace_node(unit, [merged])

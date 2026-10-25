@@ -29,9 +29,35 @@ module Make (Config : Config) = struct
   let words = List.length image
   let reloadable = words > 0
 
+  (* When each stream is ready: a unit starts once its latest input arrives. *)
+  let arrivals =
+    List.fold
+      (List.zip_exn design.nodes units)
+      ~init:(String.Map.singleton design.input 0)
+      ~f:(fun arrival ((node : Design.Node.t), (module Unit : Units.Fixed_instance)) ->
+        let start =
+          List.map node.inputs ~f:(fun input ->
+            match Map.find arrival input with
+            | Some time -> time
+            | None ->
+              raise_s
+                [%message
+                  "design.json: a node reads a stream no earlier node writes"
+                    node.name
+                    input])
+          |> List.max_elt ~compare:Int.compare
+          |> Option.value_exn ~message:("design.json: node has no inputs " ^ node.name)
+        in
+        match node.outputs with
+        | [ output ] -> Map.set arrival ~key:output ~data:(start + Unit.latency)
+        | _ ->
+          raise_s [%message "design.json: fixed latency nodes have one output" node.name])
+  ;;
+
   let latency =
-    List.sum (module Int) units ~f:(fun (module Unit : Units.Fixed_instance) ->
-      Unit.latency)
+    match Map.find arrivals design.output with
+    | Some time -> time
+    | None -> raise_s [%message "design.json: no node writes the output" design.output]
   ;;
 
   (* The compiler and the units must agree on the latency, or the manifest would lie. *)
@@ -40,19 +66,9 @@ module Make (Config : Config) = struct
     then
       raise_s
         [%message
-          "design.json: the stated latency is not the sum over the units"
+          "design.json: the stated latency is not the longest path through the units"
             (stated_latency : int)
-            (latency : int)];
-    let tail =
-      List.fold design.nodes ~init:design.input ~f:(fun source (node : Design.Node.t) ->
-        match node.inputs, node.outputs with
-        | [ input ], [ output ] when String.equal input source -> output
-        | _ ->
-          raise_s
-            [%message "design.json: fixed latency nodes must form a chain" node.name])
-    in
-    if not (String.equal tail design.output)
-    then raise_s [%message "design.json: the chain does not end at the output" tail]
+            (latency : int)]
   ;;
 
   module I = struct
@@ -99,15 +115,43 @@ module Make (Config : Config) = struct
         , Some { Weight_banks.Write.write; bank = ~:(banks.bank); address; data } )
       | _ -> None, None
     in
-    let result, bank =
+    (* Earlier inputs of a unit wait in plain registers until its latest one arrives. *)
+    let streams =
       List.fold
-        units
+        (List.zip_exn design.nodes units)
         ~init:
-          ( { With_valid.valid = i.features_valid; value = i.features }
-          , Option.map banks ~f:(fun banks -> banks.bank) )
-        ~f:(fun (x, bank) (module Unit : Units.Fixed_instance) ->
-          Unit.connect scope clocking ~store ~bank x)
+          (String.Map.singleton
+             design.input
+             ( { With_valid.valid = i.features_valid; value = i.features }
+             , 0
+             , Option.map banks ~f:(fun banks -> banks.bank) ))
+        ~f:(fun streams ((node : Design.Node.t), (module Unit : Units.Fixed_instance)) ->
+          let inputs = List.map node.inputs ~f:(Map.find_exn streams) in
+          let start =
+            List.fold inputs ~init:0 ~f:(fun latest (_, time, _) -> Int.max latest time)
+          in
+          let aligned =
+            List.map inputs ~f:(fun ((x : Signal.t With_valid.t), time, bank) ->
+              let n = start - time in
+              ( { With_valid.valid = Clocking.pipeline clocking ~n x.valid
+                ; value = Clocking.pipeline_no_clear clocking ~n x.value
+                }
+              , Option.map bank ~f:(Clocking.pipeline_no_clear clocking ~n) ))
+          in
+          let y, bank =
+            Unit.connect
+              scope
+              clocking
+              ~store
+              ~bank:(snd (List.hd_exn aligned))
+              (List.map aligned ~f:fst)
+          in
+          Map.set
+            streams
+            ~key:(List.hd_exn node.outputs)
+            ~data:(y, start + Unit.latency, bank))
     in
+    let result, _, bank = Map.find_exn streams design.output in
     let field f = Option.map banks ~f in
     { O.prediction = result.value
     ; prediction_valid = result.valid

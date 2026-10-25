@@ -7,7 +7,7 @@ class DelayModel:
     """A path is a flip flop's clock to out and setup, plus a net and a cell for each step."""
 
     def __init__(self, register, net, lut, carry, carry_bit, mux, tree, fanout, multiply, dsp,
-                 internal=None, margin=0.0, provenance=""):
+                 internal=None, margin=0.0, provenance="", lut_inputs=6):
         self.register = register
         self.net = net
         self.lut = lut
@@ -22,6 +22,7 @@ class DelayModel:
         # The share of the period the scheduler keeps free for the model's own error.
         self.margin = margin
         self.provenance = provenance
+        self.lut_inputs = lut_inputs
 
     def path(self, *steps, fanout=1):
         """One register to register path: the source's fanout costs routing per doubling."""
@@ -37,6 +38,10 @@ class DelayModel:
 
     def logic(self, levels=1):
         return levels * (self.net + self.lut)
+
+    def table(self, bits):
+        """A constant table on a `bits` wide code: a level of LUTs and wide muxes per LUT's worth of address."""
+        return self.logic(math.ceil(bits / self.lut_inputs))
 
     def select(self, levels):
         """A tree of 2:1 muxes with constant leaves, which LUTs absorb a level or two at a time."""

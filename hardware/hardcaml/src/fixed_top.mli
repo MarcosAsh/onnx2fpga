@@ -1,15 +1,15 @@
-(** A fixed latency design: its layers in a chain, one vector in and one out per cycle. *)
+(** A fixed latency design: its units in a graph, one vector in and one out per cycle. *)
 
 open! Core
 open! Hardcaml
 
 module type Config = sig
-  (** Must be a [Fixed] design whose nodes form a chain from its input to its output. *)
+  (** A [Fixed] design whose nodes each read only streams written before them. *)
   val design : Design.t
 end
 
 module Make (_ : Config) : sig
-  (** Cycles from [features_valid] to [prediction_valid], the sum over the layers. *)
+  (** Cycles from [features_valid] to [prediction_valid], the longest path. *)
   val latency : int
 
   (** Words in one weight bank; the reload ports exist only when this is not 0. *)
