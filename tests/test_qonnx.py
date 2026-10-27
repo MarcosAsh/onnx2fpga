@@ -89,6 +89,9 @@ class Mlp(unittest.TestCase):
         units = [unit for unit in self.acc.result.hardware_graph.topological_order()
                  if isinstance(unit, DenseUnit)]
         self.assertEqual([unit.weight_dtype.name for unit in units], ["INT4"] * 3)
+        # The hidden layers are 4 wires a value; the ports stay 8 bits.
+        self.assertEqual([(unit.act_dtype.bits, unit.out_dtype.bits) for unit in units],
+                         [(8, 4), (4, 4), (4, 8)])
         self.assertEqual([(unit.requant.lower_clamp, unit.requant.upper_clamp)
                           for unit in units], [(-8, 7), (-8, 7), (-128, 127)])
         lines = []

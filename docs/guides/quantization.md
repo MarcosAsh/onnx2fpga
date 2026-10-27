@@ -64,5 +64,6 @@ both sides that the compiler does not insert yet.
 
 A QONNX model, as Brevitas and the hls4ml tools export, states its own grids
 with `Quant` nodes, and they are read like QDQ ones: weights keep their 2 to 8
-bit width, and activations of 2 to 8 bits are clamped to their range on the
-8 bit streams, see [014](../specs/014-qonnx.md).
+bit width, and activations of 2 to 8 bits are clamped to their range. In fixed
+mode the wires between dense layers take that width, see
+[014](../specs/014-qonnx.md).

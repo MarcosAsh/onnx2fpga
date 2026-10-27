@@ -1,8 +1,9 @@
 # 014 QONNX Quant nodes
 
-Status: implemented for weights and activations of 2 to 8 bits. Activations
-still travel on 8 bit streams; `BipolarQuant`, `Trunc` and `FloatQuant` are
-refused.
+Status: implemented for weights and activations of 2 to 8 bits. In fixed mode
+the wires between dense layers take the activations' width; the ports and every
+stream mode connection stay 8 bits. `BipolarQuant`, `Trunc` and `FloatQuant`
+are refused.
 
 ## Problem
 
@@ -47,6 +48,13 @@ A Relu between a layer and its `Quant` still fuses, and clamps at the zero
 point inside that range. A unit with no requant, such as a max pool, may carry
 a narrow grid only if its input had it; anything else raises.
 
+In fixed mode the units are joined by plain wires, so a narrow grid between
+two dense layers is built as that many wires: the layer that makes it gives
+4 bit outputs and the one that reads it multiplies 4 bit inputs. The input and
+output ports keep 8 bits, so the host and the register shell see the same
+design either way, and in stream mode, where the frozen SystemVerilog library
+sets the stream width, the codes stay 4 bits wide on 8 bit streams.
+
 The summary names what was read, for example `weights int4, activations int8
 on 4 bit grids, from the model's Quant nodes`.
 
@@ -61,17 +69,25 @@ from qonnx 1.0's own executor, since ONNX Runtime cannot run `Quant`.
 
 `tests/test_qonnx.py` compiles it for `k26` in fixed mode. All 256 held out
 outputs equal qonnx's, not within a step but exactly, every dense unit has
-4 bit weights, the hidden layers clamp to -8 and 7, 10000 random vectors
+4 bit weights, the hidden layers clamp to -8 and 7 and are joined by 4 bit
+wires, 10000 random vectors
 simulate bit exact under Verilator, and the latency proof closes at 9 cycles
 and fails at 8. The corpus test compiles it with the other 20 models. The
 refusals below are each checked on a changed copy of the model.
 
-| Layer | Weights | Latency | LUT | DSP |
-|---|---|---|---|---|
-| 8 to 32, Relu | int4 | 3 | 3508 | 32 |
-| 32 to 16, Relu | int4 | 3 | 7833 | 16 |
-| 16 to 1 | int4 | 3 | 360 | 1 |
-| Total | | 9, 27.9 ns at 322 MHz | 11701 | 49 |
+| Layer | Weights | Inputs, outputs | Latency | LUT | DSP |
+|---|---|---|---|---|---|
+| 8 to 32, Relu | int4 | 8, 4 bits | 3 | 3508 | 32 |
+| 32 to 16, Relu | int4 | 4, 4 bits | 3 | 6148 | 16 |
+| 16 to 1 | int4 | 4, 8 bits | 3 | 256 | 1 |
+| Total | | | 9, 27.9 ns at 322 MHz | 9912 | 49 |
+
+With 8 bit wires the compiler's estimate was 11701 LUTs. yosys 0.52
+`synth_xilinx -family xcup` on the generated `rtl/top.v` gives 12680 LUTs,
+1082 CARRY4, 1815 flip flops and 49 DSP48E2 with 4 bit wires, against 20953,
+1176, 2547 and 49 with 8 bit ones, so the narrow wires save 40 percent of the
+LUTs where the estimate says 15. Stream mode on `vu9p` matches qonnx just as
+exactly and simulates bit exact.
 
 ## Errors
 
@@ -104,11 +120,10 @@ All three are met.
 
 ## Open questions
 
-- The activations are 4 bit codes on 8 bit streams. Giving each stream its own
-  width would make the second layer's multiplies 4 by 4 bits: the estimate
-  drops from 7833 to 6148 LUTs, and from 360 to 256 for the last. That needs
-  converters between units, which the fixed latency top could add as plain
-  wires.
+- Only wires between two dense layers are narrowed. A narrow grid read by a
+  table, an Add or a pool, or one on a port, still takes 8.
+- The estimate saw a third of the saving yosys found on the narrow wires, so
+  the dense cost model wants refitting against Vivado at 4 bits.
 - HGQ and QKeras networks usually quantize their input to 16 bits, past the
   8 that activations take.
 - A real Brevitas export, and the hls4ml jet tagger in QONNX, would test what

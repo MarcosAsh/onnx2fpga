@@ -83,17 +83,19 @@ against 19430 allowed. At 12 and 8 bits it needs 13293 and compiles.
 yosys 0.52 `synth_xilinx -family xcup` on the generated `rtl/top.v`, against
 the compiler's estimate, which was fitted at 16 bits only:
 
-| Model | Features, leaves | Compiler LUT | yosys LUT |
-|---|---|---|---|
-| `xgb_multiclass` | 16, 16 | 2788 | 2902 |
-| | 12, 8 | 1542 | 1364 |
-| | 8, 4 | 908 | 704 |
-| `forest_binary` | 16, 16 | 747 | 936 |
-| | 12, 8 | 397 | 392 |
-| | 8, 4 | 216 | 192 |
+| Model | Features, leaves | Compiler LUT | yosys LUT | CARRY4 | Flip flops |
+|---|---|---|---|---|---|
+| `xgb_multiclass` | 16, 16 | 2788 | 2929 | 562 | 1974 |
+| | 12, 8 | 1542 | 1589 | 155 | 1156 |
+| | 8, 4 | 908 | 847 | 104 | 725 |
+| `forest_binary` | 16, 16 | 747 | 1165 | 170 | 354 |
+| | 12, 8 | 397 | 598 | 14 | 250 |
+| | 8, 4 | 216 | 295 | 9 | 179 |
 
-The estimate follows the narrowing and stays within 30 percent, high at narrow
-widths and low at 16 bits on the forest, so it is not refitted here. Vivado
+yosys takes 46 percent of the LUTs off `xgb_multiclass` at 12 and 8 bits and
+49 percent off the forest, about what the compiler predicts. The estimate is
+within 7 percent of yosys on `xgb_multiclass` at every width and 27 to 36
+percent low on the forest at every width, so it is not refitted here. Vivado
 numbers come from `make measure-k26`, once it has a license.
 
 ## Verification

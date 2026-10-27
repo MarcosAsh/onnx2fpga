@@ -241,9 +241,27 @@ class LowerToHardware(Pass):
             for unit in units:
                 self.narrow(unit)
             graph.replace_node(node, units)
+        if self.fixed:
+            self.narrow_wires(graph)
         graph.infer()
         context.artifacts["plan"] = self.plan
         return graph
+
+    def narrow_wires(self, graph):
+        """In fixed mode a narrow grid between two dense layers is that many wires; the ports stay."""
+        for unit in graph.nodes:
+            if not isinstance(unit, MatVecUnit):
+                continue
+            name = unit.outputs[0]
+            low, high = self.plan.bounds(name)
+            consumers = graph.consumers(name)
+            if (low == self.plan.act_dtype.min or name in graph.outputs or not consumers
+                    or not all(isinstance(c, MatVecUnit) for c in consumers)):
+                continue
+            dtype = self.plan.spec(name).dtype
+            unit.out_dtype = dtype
+            for consumer in consumers:
+                consumer.act_dtype = dtype
 
     def narrow(self, unit):
         """A unit whose output grid is narrower than the stream clamps to it in its requant."""
