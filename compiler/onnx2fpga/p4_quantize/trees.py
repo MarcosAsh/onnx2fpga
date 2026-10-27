@@ -41,7 +41,7 @@ def plan_trees(graph, mult_bits=18):
     plan.source = "thresholds"
     plan.annotate(op.inputs[0], QuantSpec(scales, zeros, dtype))
     plan.annotate(op.outputs[0], QuantSpec(
-        1.0 if op.decision is not None else leaf_scale(ensemble, LEAF_BITS), 0))
+        1.0 if op.decision is not None or op.label else leaf_scale(ensemble, LEAF_BITS), 0))
     return plan
 
 
@@ -77,28 +77,35 @@ def lower_trees(node, ctx):
     scale_out = leaf_scale(source, ctx.plan.weight_dtype.bits)
     nodes = []
 
-    def build(k):
+    def build(k, value):
         if source.mode[k] == LEAF:
-            nodes.append([LEAF, 0, 0, 0, 0, int(np.rint(source.value[k] / scale_out))])
+            nodes.append([LEAF, 0, 0, 0, 0, int(np.rint(value[k] / scale_out))])
             return len(nodes) - 1
         taken, other = ((source.if_false[k], source.if_true[k]) if swapped[k]
                         else (source.if_true[k], source.if_false[k]))
         if never[k] or ever[k]:
-            return build(taken if ever[k] else other)
+            return build(taken if ever[k] else other, value)
         index = len(nodes)
         nodes.append([EQ if is_eq[k] else LEQ, source.feature[k], threshold[k], 0, 0, 0])
-        nodes[index][3] = build(taken)
-        nodes[index][4] = build(other)
+        nodes[index][3] = build(taken, value)
+        nodes[index][4] = build(other, value)
         return index
 
-    roots = [build(root) for root in source.roots]
+    # With a score per class, each class gets its own copy of every tree that scores it.
+    columns = source.value.T if node.label else [source.value]
+    roots, scores = [], []
+    for score, value in enumerate(columns):
+        for root, leaves in zip(source.roots, source.tree_leaves()):
+            if not node.label or np.any(value[leaves]):
+                roots.append(build(root, value))
+                scores.append(score)
     mode, feature, thresholds, if_true, if_false, value = (np.array(c) for c in zip(*nodes))
     leaf = mode == LEAF
     if_true[leaf] = if_false[leaf] = np.flatnonzero(leaf)
     ensemble = Ensemble(roots, feature, thresholds, mode, if_true, if_false, value)
-    bias = int(np.rint(node.base / scale_out))
+    bias = np.rint(np.broadcast_to(node.base, len(columns)) / scale_out).astype(np.int64)
     if node.decision is not None:
-        bias -= int(np.floor(node.decision / scale_out)) + 1
+        bias[0] -= int(np.floor(node.decision / scale_out)) + 1
     return [TreeEnsembleUnit(node.name, node.inputs, node.outputs, ensemble, bias,
                              node.decision is not None, len(spec.scale), dtype,
-                             ctx.plan.weight_dtype)]
+                             ctx.plan.weight_dtype, scores)]

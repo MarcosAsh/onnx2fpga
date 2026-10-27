@@ -94,6 +94,14 @@ def logistic_multiclass():
     sklearn("logistic_multiclass", LogisticRegression(), classify=True, classes=3)
 
 
+def normalizer_logistic():
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import Normalizer
+    sklearn("normalizer_logistic", make_pipeline(Normalizer("l2"), LogisticRegression()),
+            classify=True, classes=3)
+
+
 def mlp_regressor():
     from sklearn.neural_network import MLPRegressor
     sklearn("mlp_regressor", MLPRegressor(hidden_layer_sizes=(16,), max_iter=500, random_state=0))
@@ -128,6 +136,121 @@ def lgbm_small():
         ("x", FloatTensorType([None, FEATURES]))], zipmap=False), x)
 
 
+def classes(x, count=3):
+    """The target cut into equal thirds, or halves: down, flat and up."""
+    y = target(x)
+    return np.digitize(y, np.quantile(y, np.linspace(0, 1, count + 1)[1:-1]))
+
+
+def xgb_multiclass():
+    from onnxmltools import convert_xgboost
+    from onnxmltools.convert.common.data_types import FloatTensorType
+    from xgboost import XGBClassifier
+
+    x = market(False)
+    model = XGBClassifier(n_estimators=20, max_depth=3, random_state=0).fit(x, classes(x))
+    save("xgb_multiclass", convert_xgboost(model, initial_types=[
+        ("x", FloatTensorType([None, FEATURES]))]), x)
+
+
+def lgbm_multiclass():
+    from lightgbm import LGBMClassifier
+    from onnxmltools import convert_lightgbm
+    from onnxmltools.convert.common.data_types import FloatTensorType
+
+    x = market(False)
+    model = LGBMClassifier(n_estimators=20, num_leaves=8, random_state=0, verbose=-1)
+    save("lgbm_multiclass", convert_lightgbm(model.fit(x, classes(x)), initial_types=[
+        ("x", FloatTensorType([None, FEATURES]))], zipmap=False), x)
+
+
+def forest(name, count):
+    """A random forest, whose every leaf scores every class."""
+    from skl2onnx import to_onnx
+    from sklearn.ensemble import RandomForestClassifier
+
+    x = market(False)
+    model = RandomForestClassifier(n_estimators=10, max_depth=4, random_state=0)
+    save(name, to_onnx(model.fit(x, classes(x, count)), x[:1],
+                       options={"zipmap": False}), x)
+
+
+def forest_multiclass():
+    forest("forest_multiclass", 3)
+
+
+def forest_binary():
+    forest("forest_binary", 2)
+
+
+def ensemble_v5(model):
+    """A TreeEnsembleRegressor rewritten as ai.onnx.ml 5's TreeEnsemble, splits and leaves apart."""
+    from onnx import TensorProto, helper
+
+    old = model.graph.node[0]
+    attrs = {a.name: helper.get_attribute_value(a) for a in old.attribute}
+    trees, ids = attrs["nodes_treeids"], attrs["nodes_nodeids"]
+    leaf = [m == b"LEAF" for m in attrs["nodes_modes"]]
+    splits = {key: k for k, key in enumerate(
+        (t, n) for t, n, is_leaf in zip(trees, ids, leaf) if not is_leaf)}
+    leaves = {key: k for k, key in enumerate(
+        (t, n) for t, n, is_leaf in zip(trees, ids, leaf) if is_leaf)}
+    weights = [0.0] * len(leaves)
+    for t, n, w in zip(attrs["target_treeids"], attrs["target_nodeids"],
+                       attrs["target_weights"]):
+        weights[leaves[(t, n)]] += w
+    node = {key: [] for key in ("featureids", "splits", "modes", "truenodeids", "trueleafs",
+                                "falsenodeids", "falseleafs")}
+    for k in (k for k in range(len(trees)) if not leaf[k]):
+        node["featureids"].append(attrs["nodes_featureids"][k])
+        node["splits"].append(attrs["nodes_values"][k])
+        node["modes"].append(["BRANCH_LEQ", "BRANCH_LT", "BRANCH_GTE", "BRANCH_GT", "BRANCH_EQ",
+                              "BRANCH_NEQ"].index(attrs["nodes_modes"][k].decode()))
+        for side in ("true", "false"):
+            child = (trees[k], attrs["nodes_%snodeids" % side][k])
+            node["%sleafs" % side].append(int(child in leaves))
+            node["%snodeids" % side].append(leaves[child] if child in leaves else splits[child])
+    roots = sorted({t for t in trees})
+    new = helper.make_node(
+        "TreeEnsemble", list(old.input), list(old.output), domain="ai.onnx.ml",
+        n_targets=1, aggregate_function=1, post_transform=0,
+        tree_roots=[splits[(t, 0)] for t in roots],
+        nodes_featureids=node["featureids"], nodes_truenodeids=node["truenodeids"],
+        nodes_trueleafs=node["trueleafs"], nodes_falsenodeids=node["falsenodeids"],
+        nodes_falseleafs=node["falseleafs"], leaf_targetids=[0] * len(weights),
+        nodes_splits=helper.make_tensor("s", TensorProto.FLOAT, [len(node["splits"])],
+                                        node["splits"]),
+        nodes_modes=helper.make_tensor("m", TensorProto.UINT8, [len(node["modes"])],
+                                       node["modes"]),
+        leaf_weights=helper.make_tensor("w", TensorProto.FLOAT, [len(weights)], weights))
+    graph = helper.make_graph([new], model.graph.name, list(model.graph.input),
+                              list(model.graph.output))
+    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 18),
+                                                   helper.make_opsetid("ai.onnx.ml", 5)],
+                             ir_version=9)
+
+
+def xgb_small_v5():
+    """xgb_small, its base value folded into the leaves of the first tree."""
+    from onnxmltools import convert_xgboost
+    from onnxmltools.convert.common.data_types import FloatTensorType
+    from xgboost import XGBRegressor
+
+    x = market(False)
+    model = XGBRegressor(n_estimators=20, max_depth=3, random_state=0).fit(x, target(x))
+    onnx_model = convert_xgboost(model, initial_types=[("x", FloatTensorType([None, FEATURES]))])
+    node = onnx_model.graph.node[0]
+    base = next((a for a in node.attribute if a.name == "base_values"), None)
+    if base is not None:
+        first = [k for k, t in enumerate(next(a for a in node.attribute
+                                              if a.name == "target_treeids").ints) if t == 0]
+        weights = next(a for a in node.attribute if a.name == "target_weights")
+        for k in first:
+            weights.floats[k] += base.floats[0]
+        node.attribute.remove(base)
+    save("xgb_small_v5", ensemble_v5(onnx_model), x)
+
+
 def torch_bn_mlp():
     """BatchNorm on the raw inputs and after the first layer, exported without folding."""
     import torch
@@ -152,26 +275,31 @@ def torch_bn_mlp():
         save("torch_bn_mlp", onnx.load(path), x)
 
 
-def ort_static(name, quant_format):
+def ort_static(name, quant_format, source=None):
+    """ONNX Runtime's static quantizer on an MLP, by default skl2onnx's export of a regressor."""
     from onnxruntime.quantization import (CalibrationDataReader, QuantType,
                                           quantize_static)
-    from skl2onnx import to_onnx
-    from sklearn.neural_network import MLPRegressor
 
     x = market(False)
-    net = MLPRegressor(hidden_layer_sizes=(16,), max_iter=500, random_state=0).fit(x, target(x))
+    if source is None:
+        from skl2onnx import to_onnx
+        from sklearn.neural_network import MLPRegressor
+
+        net = MLPRegressor(hidden_layer_sizes=(16,), max_iter=500, random_state=0)
+        source = to_onnx(net.fit(x, target(x)), x[:1])
 
     class Reader(CalibrationDataReader):
         def __init__(self):
-            self.feeds = iter([{"X": x[k:k + 1]} for k in range(64)])
+            name = source.graph.input[0].name
+            self.feeds = iter([{name: x[k:k + 1]} for k in range(64)])
 
         def get_next(self):
             return next(self.feeds, None)
 
     with tempfile.TemporaryDirectory() as folder:
-        source, quantized = pathlib.Path(folder) / "f.onnx", pathlib.Path(folder) / "q.onnx"
-        onnx.save(to_onnx(net, x[:1]), source)
-        quantize_static(str(source), str(quantized), Reader(), quant_format=quant_format,
+        floating, quantized = pathlib.Path(folder) / "f.onnx", pathlib.Path(folder) / "q.onnx"
+        onnx.save(source, floating)
+        quantize_static(str(floating), str(quantized), Reader(), quant_format=quant_format,
                         activation_type=QuantType.QUInt8, weight_type=QuantType.QInt8)
         save(name, onnx.load(quantized), x)
 
@@ -186,9 +314,36 @@ def ort_qdq_mlp():
     ort_static("ort_qdq_mlp", QuantFormat.QDQ)
 
 
+
+def ort_qoperator_gemm():
+    """A three class sigmoid MLP as Gemms, which ORT quantizes to QGemm and QLinearSoftmax."""
+    from onnx import TensorProto, helper, numpy_helper
+    from onnxruntime.quantization import QuantFormat
+    from sklearn.neural_network import MLPClassifier
+
+    x = market(False)
+    y = target(x)
+    y = np.digitize(y, np.quantile(y, [1 / 3, 2 / 3]))
+    net = MLPClassifier(hidden_layer_sizes=(16,), activation="logistic", max_iter=500,
+                        random_state=0).fit(x, y)
+    weights = [numpy_helper.from_array(array.astype(np.float32), name)
+               for name, array in (("w1", net.coefs_[0].T), ("b1", net.intercepts_[0]),
+                                   ("w2", net.coefs_[1].T), ("b2", net.intercepts_[1]))]
+    graph = helper.make_graph(
+        [helper.make_node("Gemm", ["x", "w1", "b1"], ["h"], transB=1),
+         helper.make_node("Sigmoid", ["h"], ["s"]),
+         helper.make_node("Gemm", ["s", "w2", "b2"], ["z"], transB=1),
+         helper.make_node("Softmax", ["z"], ["p"], axis=-1)],
+        "gemm_mlp", [helper.make_tensor_value_info("x", TensorProto.FLOAT, [None, FEATURES])],
+        [helper.make_tensor_value_info("p", TensorProto.FLOAT, [None, 3])], weights)
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=9)
+    ort_static("ort_qoperator_gemm", QuantFormat.QOperator, model)
+
 MODELS = [linear_regression, ridge, logistic_binary, scaler_linear, scaler_logistic,
           logistic_multiclass, mlp_regressor, mlp_sigmoid, xgb_small, lgbm_small, torch_bn_mlp,
-          ort_qoperator_mlp, ort_qdq_mlp]
+          ort_qoperator_mlp, ort_qdq_mlp, ort_qoperator_gemm, xgb_multiclass,
+          lgbm_multiclass, forest_multiclass, forest_binary, xgb_small_v5,
+          normalizer_logistic]
 
 if __name__ == "__main__":
     chosen = sys.argv[1:] or [model.__name__ for model in MODELS]

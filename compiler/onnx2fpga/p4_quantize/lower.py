@@ -4,14 +4,14 @@ import numpy as np
 
 from ..p2_graph.datatype import INT32, IntType, QuantSpec
 from ..p2_graph.tensor import Tensor
-from ..p3_ops.elementwise import ElementwiseOp
+from ..p3_ops.elementwise import ConcatOp, ElementwiseOp
 from ..p3_ops.onnx_ops import AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp, ReluOp
 from ..p3_ops.hardware_ops import (ActivationUnit, AddUnit, MatVecUnit, PoolUnit,
                                    SlidingWindowUnit)
 from ..pipeline import Pass
 from ..p3_ops.reductions import ReduceOp, SoftmaxOp
 from ..p3_ops.trees import TreeEnsembleOp
-from .elementwise import lower_elementwise
+from .elementwise import lower_concat, lower_elementwise
 from .reductions import lower_reduce, lower_softmax
 from .requantize import Requantizer
 from .trees import lower_trees
@@ -209,7 +209,7 @@ def lower_flatten(node, ctx):
 BUILTIN = {GemmOp: lower_gemm, ConvOp: lower_conv, MaxPoolOp: lower_maxpool,
            ReluOp: lower_relu, AddOp: lower_add, FlattenOp: lower_flatten,
            BinarizerOp: lower_binarizer, TreeEnsembleOp: lower_trees,
-           ElementwiseOp: lower_elementwise, ReduceOp: lower_reduce,
+           ElementwiseOp: lower_elementwise, ConcatOp: lower_concat, ReduceOp: lower_reduce,
            SoftmaxOp: lower_softmax}
 
 

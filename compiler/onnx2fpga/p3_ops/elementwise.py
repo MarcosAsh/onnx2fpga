@@ -109,6 +109,22 @@ class ElementwiseOp(FrontendNode):
         return [evaluate(self.op_type, operands, self.attrs.get("function_attrs", {}))]
 
 
+class ConcatOp(FrontendNode):
+    """Feature vectors side by side, along the last axis."""
+
+    op_type = "Concat"
+
+    def infer(self, graph):
+        shapes = [graph.tensor(name).shape for name in self.inputs]
+        out = self._out(graph)
+        out.shape = (shapes[0][0], sum(int(np.prod(shape[1:])) for shape in shapes))
+        out.dtype = FLOAT32
+
+    def execute(self, graph, values):
+        pieces = [np.asarray(values[name]) for name in self.inputs]
+        return [np.concatenate([p.reshape(len(p), -1) for p in pieces], axis=1)]
+
+
 def import_elementwise(node, importer):
     """Constants are moved to the channel-last layout of a 4D live operand, and Clip's bounds become attributes."""
     op, name = node.op_type, node.name or importer.graph.fresh_name(node.op_type.lower())
@@ -222,6 +238,38 @@ class TableUnit(StreamingNode):
     def sv_params(self, graph):
         return {"LANES": self.lanes, "IN_BITS": self.in_dtype.bits,
                 "OUT_BITS": self.out_dtype.bits}
+
+
+class ConcatUnit(TableUnit):
+    """Its inputs side by side, each lane through a table onto the output grid; the earlier inputs wait."""
+
+    module = "otf_concat"
+
+    def __init__(self, name, inputs, outputs, tables, lane_table, in_dtype, out_dtype, widths):
+        self.widths = [int(w) for w in widths]
+        self.skew = []
+        TableUnit.__init__(self, name, inputs, outputs, tables, lane_table, in_dtype, out_dtype)
+
+    @classmethod
+    def per_lane(cls, name, inputs, outputs, rows, in_dtype, out_dtype, widths):
+        tables, lane_table = np.unique(np.asarray(rows, dtype=np.int64), axis=0,
+                                       return_inverse=True)
+        return cls(name, inputs, outputs, tables, lane_table.reshape(-1), in_dtype, out_dtype,
+                   widths)
+
+    def amd_resources(self, device):
+        waiting = sum(k * w for k, w in zip(self.skew, self.widths)) * self.in_dtype.bits
+        return TableUnit.amd_resources(self, device) + Resources(ff=waiting)
+
+    def infer(self, graph):
+        out = graph.ensure_tensor(self.outputs[0])
+        out.shape, out.dtype = (1, self.lanes), self.out_dtype
+        out.elems_per_beat = self.lanes
+
+    def execute(self, graph, values):
+        x = np.concatenate([np.asarray(values[name], dtype=np.int64).reshape(-1)
+                            for name in self.inputs]) - self.in_dtype.min
+        return [self.rows()[np.arange(self.lanes), x].reshape(1, -1)]
 
 
 class EltwiseUnit(StreamingNode):

@@ -1,19 +1,25 @@
-(** Softmax, LogSoftmax and L1 normalisation across the lanes of a vector. *)
+(** Softmax, LogSoftmax and L1, L2 and MAX normalisation across the lanes of a vector. *)
 
 open! Core
 open! Hardcaml
 
 module Mode : sig
-  (** Divide: numerator times the reciprocal of the sum. Log: numerator minus its log. *)
+  (** Divide: numerator times the reciprocal of the sum. Log: numerator minus its log.
+      Root: numerator times the reciprocal square root of the sum, the scale table read at
+      the leading one's parity above the mantissa. Max: numerator times the scale table at
+      the largest code, with no sum and no normalisation. *)
   type t =
     | Divide
     | Log
+    | Root
+    | Max
   [@@deriving sexp_of]
 end
 
 (** Register stages added to the unit's own, each one a cycle of latency. *)
 module Stages : sig
-  (** Max and sum: cuts in those trees; table and normalize: 0 or 1; rescale: 0 to 3. *)
+  (** Max and sum: cuts in those trees; table: 0 or 1; normalize: 0 to 2, the second
+      splitting the leading one search in halves; rescale: 0 to 3. *)
   type t =
     { max : int
     ; table : int
@@ -55,7 +61,8 @@ module type Config = sig
 
   val mantissa_bits : int
 
-  (** At the [mantissa_bits] bits below the sum's leading one: a reciprocal or a log. *)
+  (** At the [mantissa_bits] bits below the sum's leading one: a reciprocal or a log; for
+      Max, at the largest code counted from the most negative. *)
   val scale_table : int array
 
   (** Log only: added to the scale for each leading one position from [min_exp] up. *)
@@ -74,7 +81,7 @@ module type Config = sig
 end
 
 module Make (_ : Config) : sig
-  (** Four cycles, one more with the max tree, plus the stages. *)
+  (** Four cycles, one more with the max tree, plus the stages; three for Max. *)
   val latency : int
 
   module I : sig

@@ -178,6 +178,11 @@ class Ecp5CostModel:
         return Resources(lut=node.lanes * bits * rom_luts(node.tables.shape[1]),
                          ff=node.lanes * bits + 1)
 
+    def otf_concat(self, node):
+        """The tables, and the registers the earlier inputs wait in."""
+        waiting = sum(k * w for k, w in zip(node.skew, node.widths)) * node.in_dtype.bits
+        return self.otf_table(node) + Resources(ff=waiting)
+
     def otf_eltwise(self, node):
         """The AMD estimate with each DSP48E2 as MULT18X18D, unfitted."""
         return node.amd_resources(self.device)

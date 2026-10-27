@@ -1,8 +1,9 @@
 # 011 Reductions and softmax
 
-Status: implemented. AveragePool, GlobalAveragePool, the MAX and L2
-Normalizer and the multiclass tree classifier are left out on purpose, and
-the section on them says why.
+Status: implemented. AveragePool and GlobalAveragePool are left out on
+purpose, and the section on them says why; the multiclass tree classifier came
+with [012](012-multiclass-trees.md), and the MAX and L2 Normalizer were added
+after the rest.
 
 ## Problem
 
@@ -129,6 +130,34 @@ point, as scikit-learn leaves a zero vector alone. The output grid is `1/127`,
 since the result lies between -1 and 1. It is within one code of the rounded
 float answer and equal on 99.2 percent of outputs for 6 lanes.
 
+`norm="L2"` divides by the square root of the sum of squares. It is the same
+unit again, with `(x - z)^2` as the summed table and a new Root mode in place
+of the reciprocal. If the sum's leading one is at `k = 2q + r`, then
+`1 / sqrt(S)` is `2^-q` times `2^(-r/2) / sqrt(1 + f)`, where `f` is the
+mantissa, so one table read at the parity `r` above the mantissa gives the
+second factor and each numerator is shifted left by `qmax - q`. A square root
+halves the mantissa's error, so the mantissa takes 9 bits and the parity the
+tenth, and the table has the 1024 entries of the reciprocal's. A sum of
+squares runs to 255 squared times `N`, 18 bits for 8 lanes, and the search for
+its leading one alone is 3.20 ns on `k26`, past the 3.10 ns period of 322 MHz.
+So the normalize knob takes a second cut that searches each half of the sum
+apart and keeps the high half's answer when it has a one. Nothing that fit
+before takes it. The output grid is `1/127` as for L1, and a vector of zeros
+gives zeros.
+
+`norm="MAX"` divides by the largest value, as ONNX Runtime does: it takes the
+largest of the values, not of their magnitudes, so `[1, -4, 2]` gives
+`[0.5, -2, 1]`, and it leaves a vector alone when that value is 0.
+scikit-learn's `Normalizer("max")` divides by the largest magnitude, so the
+two disagree on vectors whose largest magnitude is negative; we follow the
+runtime. The unit is the max tree of Softmax and a table read at the largest
+code `c`, `2^P / (so * (c - z))` for an output scale `so`, which at `c = z` is
+`2^P * s / so` and gives the input back. Each lane multiplies `x - z` by it
+in the rescale, so there is no sum and no normalisation. The quotient has no
+bound, so the output keeps the grid calibration gives it. Both are
+within one code of the rounded float answer; L2 is equal on 98.7 to 100
+percent of outputs for 1 to 16 lanes, and MAX on 98.7 to 100.
+
 ### Classifiers
 
 A `LinearClassifier` with three or more classes now builds its label as the
@@ -152,11 +181,7 @@ AveragePool and GlobalAveragePool are not built. In fixed latency mode the
 only 4D tensor is the model's input, and pooling it is a constant linear map
 that a Gemm reading it would have to absorb, which the view machinery of 009
 cannot express since every output reads many inputs. In streaming mode
-neither maps onto a unit we have without writing a new one. A multiclass
-tree classifier needs one tree sum per class and `otf_trees` has one, so it
-is still refused; it is a new unit, not a small step. The MAX Normalizer
-needs a max tree in place of the sum, and L2 a square root, and both are
-refused.
+neither maps onto a unit we have without writing a new one.
 
 ## Pipelining
 
@@ -180,9 +205,12 @@ unit after a dense layer on 10 lanes, unverified until a Vivado run:
 | Softmax | `otf_softmax` | 5 | 10 | 1/0/1/1/2 | 2.96 ns, the max tree | 6.38 ns |
 | LogSoftmax | `otf_softmax` | 5 | 9 | 1/0/1/1/1 | 3.06 ns, the table | 5.74 ns |
 | Normalizer L1 | `otf_softmax` | 4 | 8 | 0/1/1/2 | 2.72 ns, the normalisation | 6.42 ns |
+| Normalizer L2 | `otf_softmax` | 4 | 9 | 0/1/2/2 | 2.81 ns, the normalisation | 6.34 ns |
+| Normalizer MAX | `otf_softmax` | 3 | 5 | 1/0/1 | 3.05 ns, the rescale | 6.05 ns |
 
 Stages are tree/rescale for `otf_reduce` and max/table/sum/normalize/rescale
-for `otf_softmax`, which has no max knob for the Normalizer. With 3 lanes the
+for `otf_softmax`, which has no max knob for the L1 and L2 Normalizer, and
+max/table/rescale for MAX. With 3 lanes the
 arg and extreme ops take 1 cycle at 322 MHz, the sum 4, Softmax 8, LogSoftmax
 7 and the Normalizer 7; with 16 lanes the numbers are those of 10. Without
 stages every unit is limited by its rescale's multiply, rounding and clamp, or
@@ -211,7 +239,7 @@ Each is one sentence and names the node.
 - An axis other than the feature axis: `ArgMax 'op' works on axis 0, and only
   the feature axis of a (1, N) vector is supported`, and a tensor that is not
   such a vector says so too.
-- `Normalizer 'op' has norm L2, and only L1 is supported`.
+- `Normalizer 'op' has norm L3, and only MAX, L1 and L2 are supported`.
 - `ReduceSum 'op' has noop_with_empty_axes, which is not supported`.
 - An index read by another unit raises `ConfigError`: `am (ArgMax) gives an
   index, which only a graph output can take`.
@@ -225,11 +253,14 @@ grid on 4000 vectors, and Softmax and LogSoftmax equal on at least 98 percent;
 the measured shares are above. ArgMax and ArgMin, with and without
 `select_last_index`, match numpy on codes squeezed to five values so that ties
 are common. ReduceMax and ReduceMin match exactly, and ReduceSum and ReduceMean
-within a code. The import tests cover the dropped Softmax, the Normalizer
+within a code. The L2 Normalizer on 1, 6 and 16 lanes and MAX on 2, 6 and 16
+must be within one code and equal on 98 percent, a zero vector must stay zero
+under L2, and a vector whose largest value is 0 must come back as it went in
+under MAX. The import tests cover the dropped Softmax, the Normalizer
 alias, axes from the attribute, from an input and from neither, the three
 class classifier and the refusals.
 
-Two designs compile for `k26` and simulate bit exact under Verilator, the
+Three designs compile for `k26` and simulate bit exact under Verilator, the
 first with and without a clock, each on 10000 random vectors, one per cycle,
 every answer exactly `latency` cycles later:
 
@@ -240,11 +271,17 @@ every answer exactly `latency` cycles later:
   ReduceMax, the L1 Normalizer and ReduceSum, ReduceMin and ReduceMean (axes
   as an opset 18 input), joined by Sub and Add into one number. 27 cycles,
   83.8 ns, 323.9 MHz predicted.
+- At 322.265625 MHz, a dense layer through an L2 and a MAX Normalizer, added
+  lane by lane. 20 cycles, 62.1 ns, 327.8 MHz predicted; the L2 unit takes
+  both normalize cuts.
 
 The latency proof from [001](001-fixed-latency.md) runs on the generated
 Verilog of the ensemble, where two softmax units meet at the Add, and closes
-at 11 cycles; the same check at 10 fails. The
-corpus test, `tests/test_corpus.py`, now compiles and simulates all 13 models.
+at 11 cycles, and on the third design at 20; the same checks at 10 and 19
+fail. `normalizer_logistic` in the corpus, scikit-learn's L2 `Normalizer`
+before a three class logistic regression, compiles in 8 cycles, 16 at
+322.265625 MHz, simulates bit exact and agrees with ONNX Runtime's labels on
+99.2 percent of the held out inputs. The corpus test, `tests/test_corpus.py`, now compiles and simulates all of them.
 
 The Hardcaml units have expect tests on the Lws harness, from a random
 initial state, on a shared bench that checks every answer arrives exactly
@@ -292,5 +329,3 @@ All five are met.
 - yosys put the reciprocal table in block RAM. Vivado may do the same, and a
   block RAM read is slower than the LUT table the delay model prices; the
   normalize knob may need another cut once a timing report exists.
-- A multiclass tree classifier would reuse the ArgMax as it is; it needs
-  `otf_trees` to sum each class's trees apart.

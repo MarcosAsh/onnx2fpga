@@ -11,7 +11,7 @@ LEQ, LT, GTE, GT, EQ, NEQ, LEAF = range(len(MODES))
 
 
 class Ensemble:
-    """Every node of every tree in one set of arrays; a leaf is its own child and holds a value."""
+    """Every node of every tree in one set of arrays; a leaf is its own child and holds a value, or one per class."""
 
     def __init__(self, roots, feature, threshold, mode, if_true, if_false, value):
         self.roots = np.asarray(roots, dtype=np.int64)
@@ -75,16 +75,21 @@ class Ensemble:
 
 
 class TreeEnsembleOp(FrontendNode):
-    """A sum of trees plus `base`; with a `decision` threshold the output is the label, margin > decision."""
+    """A sum of trees plus `base`; with `decision` the label margin > decision, with a score per class the largest one's index."""
 
     op_type = "TreeEnsemble"
 
     def __init__(self, name, inputs, outputs, ensemble, base, decision=None, op_type=None):
         FrontendNode.__init__(self, name, inputs, outputs)
         self.ensemble = ensemble
-        self.base = float(base)
+        self.base = np.asarray(base, dtype=np.float64) if np.ndim(base) else float(base)
         self.decision = decision
         self.op_type = op_type or self.op_type
+        self.attrs["label"] = decision is not None or self.label
+
+    @property
+    def label(self):
+        return self.ensemble.value.ndim == 2
 
     @property
     def params(self):
@@ -101,6 +106,8 @@ class TreeEnsembleOp(FrontendNode):
 
     def execute(self, graph, values):
         margin = self.margin(np.asarray(values[self.inputs[0]], dtype=np.float64))
-        if self.decision is not None:
+        if self.label:
+            margin = np.argmax(margin, axis=1).astype(np.float64)
+        elif self.decision is not None:
             margin = (margin > self.decision).astype(np.float64)
         return [margin.reshape(-1, 1)]

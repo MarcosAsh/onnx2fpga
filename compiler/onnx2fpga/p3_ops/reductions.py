@@ -49,7 +49,7 @@ class ReduceOp(FrontendNode):
 
 
 class SoftmaxOp(FrontendNode):
-    """Softmax, LogSoftmax or an L1 Normalizer over the last axis."""
+    """Softmax, LogSoftmax or a Normalizer on the last axis; MAX divides by the largest value, as ONNX Runtime does."""
 
     def __init__(self, name, inputs, outputs, op_type, **attrs):
         FrontendNode.__init__(self, name, inputs, outputs, **attrs)
@@ -63,7 +63,13 @@ class SoftmaxOp(FrontendNode):
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.float64)
         if self.op_type == "Normalizer":
-            total = np.sum(np.abs(x), axis=-1, keepdims=True)
+            norm = self.attrs.get("norm", "L1")
+            if norm == "L1":
+                total = np.sum(np.abs(x), axis=-1, keepdims=True)
+            elif norm == "L2":
+                total = np.sqrt(np.sum(x * x, axis=-1, keepdims=True))
+            else:
+                total = np.max(x, axis=-1, keepdims=True)
             return [x / np.where(total == 0, 1, total)]
         shifted = x - np.max(x, axis=-1, keepdims=True)
         total = np.sum(np.exp(shifted), axis=-1, keepdims=True)
@@ -126,19 +132,20 @@ def import_softmax(node, importer):
 
 
 def import_normalizer(node, importer):
-    """L1 of a softmax is the softmax itself; L1 of anything else is a softmax unit without the max."""
+    """L1 of a softmax is the softmax itself; any other Normalizer is a softmax unit."""
     name = node.name or importer.graph.fresh_name("normalizer")
     norm = node.attributes().get("norm", "MAX")
     norm = norm.decode() if isinstance(norm, bytes) else norm
-    if norm != "L1":
+    if norm not in ("L1", "L2", "MAX"):
         raise UnsupportedOpError(node.op_type, name, message="Normalizer %r has norm %s, and "
-                                 "only L1 is supported" % (name, norm))
+                                 "only MAX, L1 and L2 are supported" % (name, norm))
     source = feature_vector(node, importer, name)
     producer = importer.graph.producer(source)
-    if isinstance(producer, SoftmaxOp) and producer.op_type == "Softmax":
+    if norm == "L1" and isinstance(producer, SoftmaxOp) and producer.op_type == "Softmax":
         importer.alias(node.output[0], node.input[0])
         return
-    importer.emit(SoftmaxOp(name, [source], [importer.rename(node.output[0])], "Normalizer"))
+    importer.emit(SoftmaxOp(name, [source], [importer.rename(node.output[0])], "Normalizer",
+                            norm=norm))
 
 
 def compare_paths(delays, levels, bits):
@@ -268,14 +275,17 @@ class ReduceUnit(StreamingNode):
 
 
 class SoftmaxUnit(StreamingNode):
-    """Lane tables at max - x (or at x), their sum normalised to a mantissa, then a reciprocal (divide) or a log."""
+    """Lane tables, their sum normalised to a mantissa, then a reciprocal, its square root or a log; max reads one table at the largest code."""
+
+    MODES = ("divide", "log", "root", "max")
 
     module = "otf_softmax"
     hardcaml_only = True
 
     def __init__(self, name, inputs, outputs, lanes, op, in_dtype, out_dtype, sum_table,
                  numer_table, min_exp, mantissa_bits, scale_table, exp_table, scale_bits,
-                 shift, out_zero_point, subtract_max):
+                 shift, out_zero_point, subtract_max, mode=None):
+        self.mode = mode or ("divide" if exp_table is None else "log")
         self.lanes = int(lanes)
         self.op = op
         self.in_dtype = in_dtype
@@ -291,17 +301,22 @@ class SoftmaxUnit(StreamingNode):
         self.shift = int(shift)
         self.out_zero_point = int(out_zero_point)
         self.subtract_max = bool(subtract_max)
-        self.stages = {"max": 0, "table": 0, "sum": 0, "normalize": 0, "rescale": 0}
-        if not self.subtract_max:
-            del self.stages["max"]
+        if self.mode == "max":
+            self.stages = {"max": 0, "table": 0, "rescale": 0}
+        else:
+            self.stages = {"max": 0, "table": 0, "sum": 0, "normalize": 0, "rescale": 0}
+            if not self.subtract_max:
+                del self.stages["max"]
         StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
     def log(self):
-        return self.exp_table is not None
+        return self.mode == "log"
 
     @property
     def latency(self):
+        if self.mode == "max":
+            return 3 + sum(self.stages.values())
         return 4 + self.subtract_max + sum(self.stages.values())
 
     @property
@@ -318,7 +333,7 @@ class SoftmaxUnit(StreamingNode):
 
     @property
     def sum_bits(self):
-        return max(1, int(self.sum_table.max()).bit_length())
+        return max(1, int(self.sum_table.max(initial=0)).bit_length())
 
     @property
     def numer_bits(self):
@@ -328,16 +343,25 @@ class SoftmaxUnit(StreamingNode):
 
     @property
     def total_bits(self):
-        return max(1, int(self.lanes * self.sum_table.max()).bit_length())
+        return max(1, int(self.lanes * self.sum_table.max(initial=0)).bit_length())
 
     @property
     def exps(self):
         return self.total_bits - self.min_exp
 
     @property
+    def root_shifts(self):
+        """Root shifts by half the leading one's position; its parity picks the table half."""
+        return (self.exps - 1) // 2
+
+    @property
     def acc_bits(self):
         if self.log:
             return max(self.numer_bits, self.scale_bits) + 1
+        if self.mode == "max":
+            return self.numer_bits
+        if self.mode == "root":
+            return self.numer_bits + self.root_shifts
         return self.numer_bits + self.exps - 1
 
     def normalise(self, total):
@@ -350,15 +374,23 @@ class SoftmaxUnit(StreamingNode):
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64).reshape(-1)
         index = x.max() - x if self.subtract_max else x - self.in_dtype.min
-        a = self.sum_table[index]
-        b = a if self.numer_table is None else self.numer_table[index]
-        total = int(a.sum())
-        k, mantissa = self.normalise(total)
-        if self.log:
-            acc, mult = b - self.scale_table[mantissa] - self.exp_table[k - self.min_exp], 1
+        if self.mode == "max":
+            acc, mult = self.numer_table[index], int(self.scale_table[x.max() - self.in_dtype.min])
         else:
-            acc = b << (self.total_bits - 1 - k)
-            mult = int(self.scale_table[mantissa]) if total else 0
+            a = self.sum_table[index]
+            b = a if self.numer_table is None else self.numer_table[index]
+            total = int(a.sum())
+            k, mantissa = self.normalise(total)
+            if self.log:
+                acc, mult = b - self.scale_table[mantissa] - self.exp_table[k - self.min_exp], 1
+            elif self.mode == "root":
+                half, parity = divmod(k - self.min_exp, 2)
+                acc = b << (self.root_shifts - half)
+                mult = (int(self.scale_table[(parity << self.mantissa_bits) | mantissa])
+                        if total else 0)
+            else:
+                acc = b << (self.total_bits - 1 - k)
+                mult = int(self.scale_table[mantissa]) if total else 0
         scaled = acc * mult
         if self.shift > 0:
             scaled = (scaled + (1 << (self.shift - 1))) >> self.shift
@@ -379,6 +411,12 @@ class SoftmaxUnit(StreamingNode):
         fanout = luts * (self.sum_bits + (0 if self.numer_table is None else self.numer_bits))
         table = delays.table(bits)
         found = {}
+        if self.mode == "max":
+            fanout = luts * self.scale_bits
+            return {"max": compare_paths(delays, self.levels, bits),
+                    "table": [path(table, fanout=fanout)] * 2,
+                    "rescale": rescale_paths(delays, self.acc_bits, self.scale_bits, self.shift,
+                                             fanout=lanes)}
         if self.subtract_max:
             found["max"] = compare_paths(delays, self.levels, bits)
             sub = delays.adder(bits + 1)
@@ -388,12 +426,19 @@ class SoftmaxUnit(StreamingNode):
             found["table"] = [path(table, fanout=fanout)] * 2
         found["sum"] = sum_paths(delays, self.levels, self.total_bits)
         detect = [logic(), select(ceil_log2(self.exps))]
-        scale = [delays.table(self.mantissa_bits),
+        root = self.mode == "root"
+        scale = [delays.table(self.mantissa_bits + root),
                  delays.adder(self.scale_bits) if self.log else logic()]
-        shift = [] if self.log else [select(ceil_log2(self.exps))]
+        shifts = self.root_shifts + 1 if root else self.exps
+        shift = [] if self.log else [select(ceil_log2(shifts))]
         found["normalize"] = [
             max(path(*detect, *scale, fanout=self.exps), path(*detect, *shift)),
             max(path(*detect, fanout=self.exps), path(*scale), path(*shift, fanout=lanes))]
+        if self.exps >= 3:
+            # The second cut searches each half of the sum for its leading one apart.
+            half = [logic(), select(ceil_log2(-(-self.exps // 2)))]
+            found["normalize"].append(max(path(*half, fanout=self.exps), path(*scale),
+                                          path(*shift, fanout=lanes)))
         found["rescale"] = rescale_paths(delays, self.acc_bits, 2 if self.log else
                                          self.scale_bits, self.shift, fanout=lanes,
                                          multiply=not self.log)
@@ -405,8 +450,10 @@ class SoftmaxUnit(StreamingNode):
         luts = max(1, (1 << bits) // 64)
         table_bits = self.sum_bits + (0 if self.numer_table is None else self.numer_bits)
         scale = (len(self.scale_table) // 64 + 1) * self.scale_bits
-        trees = (lanes - 1) * (2 * bits * self.subtract_max + self.total_bits)
-        shift = 0 if self.log else lanes * self.acc_bits * max(1, ceil_log2(self.exps))
+        has_max = self.subtract_max or self.mode == "max"
+        trees = (lanes - 1) * (2 * bits * has_max + (self.mode != "max") * self.total_bits)
+        shifts = {"log": 1, "max": 1, "root": self.root_shifts + 1}.get(self.mode, self.exps)
+        shift = 0 if shifts == 1 else lanes * self.acc_bits * max(1, ceil_log2(shifts))
         rescale = lanes * 3 * (self.acc_bits + self.scale_bits)
         lut = lanes * table_bits * luts + scale + trees + shift + rescale
         wide = table_bits + self.acc_bits
@@ -415,8 +462,9 @@ class SoftmaxUnit(StreamingNode):
                          dsp=self.multipliers)
 
     def memories(self, graph):
-        found = {"sum_table": MemorySpec(self.sum_table, self.sum_bits),
-                 "scale_table": MemorySpec(self.scale_table, self.scale_bits)}
+        found = {"scale_table": MemorySpec(self.scale_table, self.scale_bits)}
+        if self.sum_table.size:
+            found["sum_table"] = MemorySpec(self.sum_table, self.sum_bits)
         if self.numer_table is not None:
             found["numer_table"] = MemorySpec(self.numer_table, self.numer_bits)
         if self.log:
@@ -426,6 +474,7 @@ class SoftmaxUnit(StreamingNode):
     def sv_params(self, graph):
         return {"LANES": self.lanes, "IN_BITS": self.in_dtype.bits,
                 "MAX": int(self.subtract_max), "LOG": int(self.log),
+                "MODE": self.MODES.index(self.mode),
                 "SUM_BITS": self.sum_bits, "NUMER_BITS": self.numer_bits,
                 "TOTAL_BITS": self.total_bits, "MIN_EXP": self.min_exp,
                 "MANTISSA_BITS": self.mantissa_bits, "SCALE_BITS": self.scale_bits,
@@ -433,6 +482,6 @@ class SoftmaxUnit(StreamingNode):
                 "OUT_ZP": self.out_zero_point, "OUT_MIN": self.out_dtype.min,
                 "OUT_MAX": self.out_dtype.max,
                 "MAX_STAGES": self.stages.get("max", 0),
-                "TABLE_STAGES": self.stages["table"], "SUM_STAGES": self.stages["sum"],
-                "NORMALIZE_STAGES": self.stages["normalize"],
+                "TABLE_STAGES": self.stages["table"], "SUM_STAGES": self.stages.get("sum", 0),
+                "NORMALIZE_STAGES": self.stages.get("normalize", 0),
                 "RESCALE_STAGES": self.stages["rescale"]}

@@ -32,6 +32,7 @@ let config
   ?(decision = false)
   ?(equal_one_in = 8)
   ?(stages = Otf_trees.Stages.none)
+  ?(scores = 1)
   ~features
   ~trees
   ~depth
@@ -39,17 +40,21 @@ let config
   : (module Otf_trees.Config)
   =
   let rng = Random.State.make [| seed |] in
-  let trees =
-    List.init trees ~f:(fun _ ->
-      random_tree rng ~depth ~features ~feature_bits ~leaf_bits ~equal_one_in)
+  let sum_bits = leaf_bits + Int.ceil_log2 (trees + 1) in
+  let scores =
+    List.init scores ~f:(fun _ ->
+      let trees =
+        List.init trees ~f:(fun _ ->
+          random_tree rng ~depth ~features ~feature_bits ~leaf_bits ~equal_one_in)
+      in
+      { Otf_trees.Score.trees; bias = random_int rng ~bits:leaf_bits })
   in
   (module struct
     let features = features
     let feature_bits = feature_bits
     let leaf_bits = leaf_bits
-    let sum_bits = leaf_bits + Int.ceil_log2 (List.length trees + 1)
-    let trees = trees
-    let bias = random_int rng ~bits:leaf_bits
+    let sum_bits = sum_bits
+    let scores = scores
     let decision = decision
     let stages = stages
   end)
@@ -62,12 +67,24 @@ module Make_test (Config : Otf_trees.Config) = struct
 
   let expected x =
     let x = Array.of_list x in
-    let total =
-      List.fold trees ~init:bias ~f:(fun sum tree -> sum + Otf_trees.Tree.eval tree x)
+    let totals =
+      List.map scores ~f:(fun { trees; bias } ->
+        List.fold trees ~init:bias ~f:(fun sum tree -> sum + Otf_trees.Tree.eval tree x))
     in
-    if decision
-    then Bits.of_bool (total >= 0)
-    else Bits.of_signed_int ~width:sum_bits total
+    match totals with
+    | [ total ] ->
+      if decision
+      then Bits.of_bool (total >= 0)
+      else Bits.of_signed_int ~width:sum_bits total
+    | _ ->
+      let best, _ =
+        List.foldi
+          totals
+          ~init:(0, List.hd_exn totals)
+          ~f:(fun index (best, top) total ->
+            if total > top then index, total else best, top)
+      in
+      Bits.of_unsigned_int ~width:(Int.max 1 (Int.ceil_log2 (List.length totals))) best
   ;;
 
   (* One stimulus per cycle; every answer must arrive exactly [latency] later. *)
@@ -131,6 +148,11 @@ let%expect_test "every answer comes out exactly latency cycles later" =
     ; ( "hundred trees of depth four"
       , config ~features:8 ~trees:100 ~depth:4 ~feature_bits:16 ~leaf_bits:16 5 )
     ; "depth six", config ~features:5 ~trees:64 ~depth:6 ~feature_bits:12 6
+    ; "two classes", config ~features:4 ~trees:10 ~depth:3 ~scores:2 7
+    ; "three classes", config ~features:8 ~trees:20 ~depth:4 ~scores:3 8
+    ; ( "ten classes"
+      , config ~features:8 ~trees:30 ~depth:3 ~scores:10 ~feature_bits:16 ~leaf_bits:16 9
+      )
     ]
     ~f:(fun (name, (module Config)) ->
       let module T = Make_test (Config) in
@@ -147,15 +169,18 @@ let%expect_test "every answer comes out exactly latency cycles later" =
     (decision (latency 5) (checked (300 187 13)))
     ("hundred trees of depth four" (latency 6) (checked (300 165 12)))
     ("depth six" (latency 6) (checked (300 178 18)))
+    ("two classes" (latency 5) (checked (300 190 14)))
+    ("three classes" (latency 6) (checked (300 165 12)))
+    ("ten classes" (latency 6) (checked (300 165 12)))
     |}]
 ;;
 
 let%expect_test "every added stage keeps the answers and adds one cycle" =
   List.iter
-    [ { Otf_trees.Stages.select = 1; sum = 0 }
-    ; { select = 3; sum = 0 }
-    ; { select = 0; sum = 3 }
-    ; { select = 3; sum = 3 }
+    [ { Otf_trees.Stages.select = 1; sum = 0; pick = 0 }
+    ; { select = 3; sum = 0; pick = 0 }
+    ; { select = 0; sum = 3; pick = 0 }
+    ; { select = 3; sum = 3; pick = 0 }
     ]
     ~f:(fun stages ->
       let (module Config) =
@@ -173,10 +198,31 @@ let%expect_test "every added stage keeps the answers and adds one cycle" =
             (checked : int list)]);
   [%expect
     {|
-    ((stages ((select 1) (sum 0))) (latency 7) (checked (200 54)))
-    ((stages ((select 3) (sum 0))) (latency 9) (checked (200 54)))
-    ((stages ((select 0) (sum 3))) (latency 9) (checked (200 54)))
-    ((stages ((select 3) (sum 3))) (latency 12) (checked (200 54)))
+    ((stages ((select 1) (sum 0) (pick 0))) (latency 7) (checked (200 54)))
+    ((stages ((select 3) (sum 0) (pick 0))) (latency 9) (checked (200 54)))
+    ((stages ((select 0) (sum 3) (pick 0))) (latency 9) (checked (200 54)))
+    ((stages ((select 3) (sum 3) (pick 0))) (latency 12) (checked (200 54)))
+    |}]
+;;
+
+let%expect_test "every added pick stage keeps the answers and adds one cycle" =
+  List.iter [ 0; 1; 2; 3 ] ~f:(fun pick ->
+    let stages = { Otf_trees.Stages.none with pick } in
+    let (module Config) =
+      config ~features:8 ~trees:12 ~depth:3 ~scores:10 ~leaf_bits:10 ~stages 5
+    in
+    let module T = Make_test (Config) in
+    let checked =
+      List.map [ 100; 30 ] ~f:(fun duty ->
+        fst (T.run (T.random ~seed:7 ~cycles:200 ~duty)))
+    in
+    print_s [%message (pick : int) ~latency:(T.Dut.latency : int) (checked : int list)]);
+  [%expect
+    {|
+    ((pick 0) (latency 5) (checked (200 54)))
+    ((pick 1) (latency 6) (checked (200 54)))
+    ((pick 2) (latency 7) (checked (200 54)))
+    ((pick 3) (latency 8) (checked (200 54)))
     |}]
 ;;
 
@@ -207,25 +253,68 @@ let%expect_test "every input of a small ensemble, with equality splits" =
     |}]
 ;;
 
+(* Two bit leaves make ties common, and a tie must go to the first score. *)
+let%expect_test "every input of a small classifier, with ties" =
+  List.iter [ 2; 3; 5 ] ~f:(fun scores ->
+    let (module Config) =
+      config
+        ~features:2
+        ~trees:2
+        ~depth:2
+        ~feature_bits:4
+        ~leaf_bits:2
+        ~equal_one_in:3
+        ~scores
+        11
+    in
+    let module T = Make_test (Config) in
+    let all =
+      List.init 256 ~f:(fun code ->
+        true, [ Model.wrap ~bits:4 code; Model.wrap ~bits:4 (code lsr 4) ])
+    in
+    let ties =
+      List.count all ~f:(fun (_, x) ->
+        let x = Array.of_list x in
+        let totals =
+          List.map Config.scores ~f:(fun { trees; bias } ->
+            List.fold trees ~init:bias ~f:(fun sum tree ->
+              sum + Otf_trees.Tree.eval tree x))
+        in
+        let top = List.reduce_exn totals ~f:Int.max in
+        List.count totals ~f:(Int.equal top) > 1)
+    in
+    let checked, _ = T.run all in
+    print_s [%message (scores : int) (checked : int) (ties : int)]);
+  [%expect
+    {|
+    ((scores 2) (checked 256) (ties 105))
+    ((scores 3) (checked 256) (ties 48))
+    ((scores 5) (checked 256) (ties 172))
+    |}]
+;;
+
 let%expect_test "waveform of two stumps, back to back vectors and a gap" =
   let module Config = struct
     let features = 2
     let feature_bits = 4
     let leaf_bits = 4
     let sum_bits = 6
-    let bias = 1
 
-    let trees : Otf_trees.Tree.t list =
-      [ Node
-          { split = { feature = 0; threshold = 2; equal = false }
-          ; if_true = Leaf 3
-          ; if_false = Leaf (-2)
-          }
-      ; Node
-          { split = { feature = 1; threshold = -1; equal = true }
-          ; if_true = Leaf 7
-          ; if_false = Leaf 0
-          }
+    let scores : Otf_trees.Score.t list =
+      [ { bias = 1
+        ; trees =
+            [ Node
+                { split = { feature = 0; threshold = 2; equal = false }
+                ; if_true = Leaf 3
+                ; if_false = Leaf (-2)
+                }
+            ; Node
+                { split = { feature = 1; threshold = -1; equal = true }
+                ; if_true = Leaf 7
+                ; if_false = Leaf 0
+                }
+            ]
+        }
       ]
     ;;
 

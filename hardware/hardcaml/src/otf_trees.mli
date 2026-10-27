@@ -31,12 +31,23 @@ module Tree : sig
   val eval : t -> int array -> int
 end
 
+(** One sum: its trees' leaves plus [bias]. *)
+module Score : sig
+  type t =
+    { trees : Tree.t list
+    ; bias : int
+    }
+  [@@deriving sexp_of]
+end
+
 (** Register stages added to the ensemble's own, each one a cycle of latency. *)
 module Stages : sig
-  (** Select: cuts in the leaf select, under the depth; sum: more adder levels registered. *)
+  (** Select: cuts in the leaf select, under the depth; sum: more adder levels registered;
+      pick: more levels of the compare tree over several scores registered. *)
   type t =
     { select : int
     ; sum : int
+    ; pick : int
     }
   [@@deriving sexp_of]
 
@@ -51,13 +62,14 @@ module type Config = sig
 
   val leaf_bits : int
 
-  (** Width of the sum; the leaves plus [bias] must not overflow it. *)
+  (** Width of every score; no score may overflow it. *)
   val sum_bits : int
 
-  val trees : Tree.t list
-  val bias : int
+  (** With one score the output is that score; with more it is the index of the largest,
+      the first of a tie, in [max 1 (ceil_log2 scores)] bits. *)
+  val scores : Score.t list
 
-  (** Output one bit, set when the sum is not negative, instead of the sum. *)
+  (** With one score, output one bit, set when the score is not negative, instead. *)
   val decision : bool
 
   val stages : Stages.t
@@ -67,7 +79,8 @@ end
 val adder_stages : int -> int
 
 module Make (_ : Config) : sig
-  (** Compare, select, [adder_stages (trees + 1)] adder stages, and [stages]. *)
+  (** Compare, select, [adder_stages (trees + 1)] adder stages for the score with the most
+      trees, one stage to pick among several scores, and [stages]. *)
   val latency : int
 
   module I : sig

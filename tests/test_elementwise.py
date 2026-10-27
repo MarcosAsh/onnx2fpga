@@ -302,6 +302,67 @@ class Designs(unittest.TestCase):
         self.assertFalse(prove(build, 16 * 8, latency - 1)[0])
 
 
+def wide_deep_model(seed=6):
+    """The raw features beside a table of them and a hidden layer, then one output."""
+    rng = np.random.default_rng(seed)
+    builder = ModelBuilder("wide_deep").add_input("x", (1, 16))
+    builder.add_initializer("w0", rng.normal(0, 0.4, (16, WIDTH)).astype(np.float32))
+    builder.add_initializer("b0", rng.normal(0, 0.1, WIDTH).astype(np.float32))
+    builder.add_initializer("w1", rng.normal(0, 0.3, (16 + 16 + WIDTH, 1)).astype(np.float32))
+    builder.add_node("Gemm", ["x", "w0", "b0"], ["h"], name="fc0")
+    builder.add_node("Relu", ["h"], ["r"], name="relu")
+    builder.add_node("Sigmoid", ["x"], ["s"], name="sig")
+    builder.add_node("Concat", ["x", "s", "r"], ["c"], name="join", axis=1)
+    builder.add_node("MatMul", ["c", "w1"], ["y"], name="fc1")
+    return builder.add_output("y", (1, 1)).build()
+
+
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Concat(unittest.TestCase):
+    """Pieces that arrive at different times wait in registers, and each moves onto the output grid."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.acc = compiled(wide_deep_model(), "wide_deep", device="k26", clock_mhz=322.265625)
+
+    def test_latency(self):
+        units = {unit.name: unit for unit in self.acc.result.hardware_graph.nodes}
+        self.assertEqual(units["join"].skew, [7, 6, 0])
+        self.assertEqual(self.acc.latency, units["fc0"].latency + 1 + units["fc1"].latency)
+        design = json.loads((self.acc.out_dir / "design.json").read_text())
+        self.assertIn("otf_concat", {node["kind"] for node in design["nodes"]})
+
+    def test_tracks_float(self):
+        x = np.random.default_rng(2).normal(0, 1, (256, 16)).astype(np.float32)
+        floating = np.concatenate([self.acc._float_reference({"x": v[None]}) for v in x])
+        error = self.acc.evaluate(x)["mean_abs_error"] / np.std(floating)
+        self.assertLess(error, 0.03)
+
+    @unittest.skipIf(VERILATOR, VERILATOR)
+    def test_simulate(self):
+        report = self.acc.simulate()
+        self.assertTrue(report.ok, report.first.output[-2000:])
+        self.assertEqual((report.frames, report.latency), (10000, self.acc.latency))
+
+    @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
+    def test_proof(self):
+        build, latency = pathlib.Path(self.acc.out_dir), self.acc.latency
+        ok, log = prove(build, 16 * 8, latency)
+        self.assertTrue(ok, log[-3000:])
+        self.assertFalse(prove(build, 16 * 8, latency - 1)[0])
+
+    def test_streaming(self):
+        builder = ModelBuilder("join").add_input("x", (1, WIDTH))
+        builder.add_initializer("w", np.ones((WIDTH, WIDTH), dtype=np.float32))
+        builder.add_node("Gemm", ["x", "w"], ["h"], name="fc")
+        builder.add_node("Relu", ["h"], ["r"], name="relu")
+        builder.add_node("Concat", ["x", "r"], ["y"], name="join", axis=1)
+        acc = otf.load(builder.add_output("y", (1, 2 * WIDTH)).build())
+        with self.assertRaisesRegex(ConfigError, r"cannot build join \(Concat\); it needs "
+                                                 r"mode='fixed'"):
+            acc.compile(calibration=np.zeros((1, WIDTH)))
+
+
 def prelu_model(seed, slope):
     rng = np.random.default_rng(seed)
     builder = ModelBuilder("prelu").add_input("x", (1, 16))

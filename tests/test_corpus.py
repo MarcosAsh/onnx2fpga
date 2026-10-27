@@ -15,6 +15,8 @@ from onnx2fpga.errors import UnsupportedOpError
 CORPUS = ROOT / "tests" / "fixtures" / "corpus"
 HARDCAML = Hdl.skip_reason("hardcaml")
 MODELS = sorted(path.stem for path in CORPUS.glob("*.onnx"))
+# Models ONNX Runtime quantized, whose grids the float reference must respect.
+QUANTIZED = [name for name in MODELS if name.startswith("ort_")]
 # Models that need an op from later work, and that op; none today.
 EXPECTED_FAIL = {}
 # Mean absolute error against ONNX Runtime, as a share of the output's standard deviation.
@@ -46,6 +48,18 @@ class Corpus(unittest.TestCase):
                 else:
                     error = np.mean(np.abs(got - data["y"])) / np.std(data["y"])
                     self.assertLess(error, TOLERANCE)
+
+    @unittest.skipIf(HARDCAML, HARDCAML)
+    def test_float_reference_takes_grids(self):
+        # ORT drops a Relu whose output grid already clamps at zero.
+        for name in QUANTIZED:
+            with self.subTest(name):
+                data = stored(name)
+                acc = compiled(name)
+                floating = np.concatenate([acc._float_reference({"x": x[None]})
+                                           for x in data["x"]]).reshape(data["y"].shape)
+                error = np.mean(np.abs(floating - data["y"])) / np.std(data["y"])
+                self.assertLess(error, TOLERANCE)
 
     @unittest.skipIf(HARDCAML, HARDCAML)
     @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")

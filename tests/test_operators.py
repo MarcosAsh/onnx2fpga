@@ -136,6 +136,20 @@ class Folding(unittest.TestCase):
         np.testing.assert_allclose(out, joined @ model.initializer("w2"), rtol=1e-5)
         self.assertEqual(kinds, ["Gemm", "Gemm"])
 
+    def test_concat_live(self):
+        """x beside relu(x @ w) is two tensors, so they join as they are."""
+        w = weights(4, 3)
+        model = (ModelBuilder("wide").add_input("x", (1, 4)).add_initializer("w", w)
+                 .add_initializer("w2", weights(7, 2))
+                 .add_node("MatMul", ["x", "w"], ["h"]).add_node("Relu", ["h"], ["r"])
+                 .add_node("Concat", ["x", "r"], ["c"], axis=1)
+                 .add_node("MatMul", ["c", "w2"], ["y"]).add_output("y", (1, 2)).build())
+        x = weights(1, 4)
+        joined = np.concatenate([x, np.maximum(x @ w, 0)], axis=1)
+        out, kinds = run(model, x)
+        np.testing.assert_allclose(out, joined @ model.initializer("w2"), rtol=1e-5)
+        self.assertEqual(kinds, ["Gemm", "Relu", "Concat", "Gemm"])
+
 
 class Quantized(unittest.TestCase):
     def test_qlinear(self):
@@ -209,6 +223,68 @@ class Quantized(unittest.TestCase):
             self.assertEqual([n.op_type for n in graph.nodes], ["Conv"])
 
 
+class Contrib(unittest.TestCase):
+    """ONNX Runtime's QOperator ops, each between a QuantizeLinear and a DequantizeLinear."""
+
+    b = RNG.integers(-127, 128, (3, 4)).astype(np.int8)
+    c = RNG.integers(-500, 500, 3).astype(np.int32)
+    k = RNG.integers(-127, 128, 4).astype(np.int8)
+
+    def run_op(self, op, inputs, width, **attrs):
+        builder = ModelBuilder("contrib").add_input("x", (1, 4))
+        for name, value in (("xs", 0.05), ("bs", 0.01), ("ys", 0.02)):
+            builder.add_initializer(name, np.array(value, np.float32))
+        for name in ("xz", "yz"):
+            builder.add_initializer(name, np.array(128, np.uint8))
+        for name, value in (("bz", np.array(0, np.int8)), ("b", self.b), ("c", self.c),
+                            ("k", self.k)):
+            builder.add_initializer(name, value)
+        model = (builder.add_node("QuantizeLinear", ["x", "xs", "xz"], ["xq"])
+                 .add_node(op, inputs, ["yq"], **attrs)
+                 .add_node("DequantizeLinear", ["yq", "ys", "yz"], ["y"])
+                 .add_output("y", (1, width)).build())
+        graph = OnnxImporter(model).run()
+        x = weights(1, 4)
+        out = GraphRunner(graph).run({"x": x})[graph.outputs[0]]
+        self.assertAlmostEqual(float(graph.annotations[graph.outputs[0]].scale[0]), 0.02)
+        return x, out.reshape(1, -1), [node.op_type for node in graph.nodes]
+
+    def test_qgemm(self):
+        """The int32 bias is on the grid alpha * a_scale * b_scale."""
+        x, out, kinds = self.run_op("QGemm", ["xq", "xs", "xz", "b", "bs", "bz", "c", "ys",
+                                              "yz"], 3, transB=1, alpha=0.5)
+        expected = 0.5 * (x @ (self.b.T * 0.01) + self.c * 0.05 * 0.01)
+        np.testing.assert_allclose(out, expected, rtol=1e-5)
+        self.assertEqual(kinds, ["Gemm"])
+
+    def test_lanewise(self):
+        cases = [("QLinearMul", ["xq", "xs", "xz", "k", "bs", "bz", "ys", "yz"], {},
+                  lambda x: x * self.k * 0.01),
+                 ("QLinearSigmoid", ["xq", "xs", "xz", "ys", "yz"], {},
+                  lambda x: 1 / (1 + np.exp(-x))),
+                 ("QLinearLeakyRelu", ["xq", "xs", "xz", "ys", "yz"], {"alpha": 0.1},
+                  lambda x: np.where(x > 0, x, 0.1 * x))]
+        for op, inputs, attrs, function in cases:
+            with self.subTest(op):
+                x, out, _ = self.run_op(op, inputs, 4, **attrs)
+                np.testing.assert_allclose(out, function(x), rtol=1e-5, atol=1e-6)
+
+    def test_across_lanes(self):
+        x, out, kinds = self.run_op("QLinearSoftmax", ["xq", "xs", "xz", "ys", "yz"], 4,
+                                    axis=-1, opset=13)
+        np.testing.assert_allclose(out, np.exp(x) / np.exp(x).sum(), rtol=1e-5)
+        self.assertEqual(kinds, ["Softmax"])
+        x, out, kinds = self.run_op("QLinearReduceMean", ["xq", "xs", "xz", "ys", "yz"], 1,
+                                    axes=[1], keepdims=1)
+        np.testing.assert_allclose(out, x.mean(keepdims=True), rtol=1e-5)
+        self.assertEqual(kinds, ["ReduceMean"])
+
+    def test_concat(self):
+        x, out, _ = self.run_op("QLinearConcat", ["ys", "yz", "xq", "xs", "xz", "xq", "xs",
+                                                  "xz"], 8, axis=1)
+        np.testing.assert_allclose(out, np.hstack([x, x]), rtol=1e-6)
+
+
 class Binarizer(unittest.TestCase):
     def test_every_code(self):
         """The integer unit agrees with x > threshold on every input code."""
@@ -234,10 +310,16 @@ class Refusals(unittest.TestCase):
             OnnxImporter(builder.build()).run()
 
     def test_messages(self):
-        self.refused("Normalizer", [], "only L1 is supported", norm="MAX")
+        self.refused("Normalizer", [], "only MAX, L1 and L2 are supported", norm="L3")
         self.refused("DynamicQuantizeLinear", [], "at run time")
         self.refused("Cast", [], "would truncate", to=TensorProto.INT32)
         self.refused("Transpose", [], "reorders live data into a 4D", perm=[0, 1, 3, 2])
+        builder = (ModelBuilder("no").add_input("x", (1, 4))
+                   .add_initializer("w", weights(4, 4)).add_initializer("k", weights(1, 2))
+                   .add_node("MatMul", ["x", "w"], ["h"]).add_node("Relu", ["h"], ["r"])
+                   .add_node("Concat", ["x", "r", "k"], ["y"], axis=1))
+        with self.assertRaisesRegex(UnsupportedOpError, "joins a constant to features of more"):
+            OnnxImporter(builder.add_output("y", (1, 10)).build()).run()
 
 
 if __name__ == "__main__":

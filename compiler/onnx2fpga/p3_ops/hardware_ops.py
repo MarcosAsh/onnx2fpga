@@ -491,38 +491,61 @@ class DenseUnit(MatVecUnit):
 
 
 class TreeEnsembleUnit(StreamingNode):
-    """Integer splits (x <= t or x == t) and leaf codes; outputs the leaf sum plus bias, or with decision its sign inverted."""
+    """Integer splits and leaf codes; outputs the sum plus bias, its sign with decision, or the index of the largest of several scores."""
 
     module = "otf_trees"
     hardcaml_only = True
 
     def __init__(self, name, inputs, outputs, ensemble, bias, decision, features,
-                 feature_dtype, leaf_dtype):
+                 feature_dtype, leaf_dtype, scores=None):
         self.ensemble = ensemble
-        self.bias = int(bias)
+        self.bias = np.atleast_1d(np.asarray(bias, dtype=np.int64))
+        # The score each root adds to.
+        self.scores = (np.zeros(ensemble.trees, dtype=np.int64) if scores is None
+                       else np.asarray(scores, dtype=np.int64))
         self.decision = bool(decision)
         self.features = int(features)
         self.feature_dtype = feature_dtype
         self.leaf_dtype = leaf_dtype
         self.stages = {"select": 0, "sum": 0}
+        if self.classes > 1:
+            self.stages["pick"] = 0
         StreamingNode.__init__(self, name, inputs, outputs)
+
+    @property
+    def classes(self):
+        return len(self.bias)
+
+    @property
+    def widest(self):
+        """Trees in the score with the most."""
+        return int(np.bincount(self.scores, minlength=self.classes).max())
 
     @property
     def levels(self):
         """Binary levels of the adder tree over the leaves and the bias."""
-        return self.ensemble.trees.bit_length()
+        return self.widest.bit_length()
+
+    @property
+    def pick_levels(self):
+        """Binary levels of the compare and select tree over the scores."""
+        return (self.classes - 1).bit_length()
 
     @property
     def adder_stages(self):
         """Operands left after each register of the adder tree: fan in 4 a stage, then any added."""
         registers = (self.levels + 1) // 2 + self.stages["sum"]
         cuts = [(i + 1) * self.levels // registers for i in range(registers - 1)] + [self.levels]
-        return [-(-(self.ensemble.trees + 1) // 2 ** level) for level in cuts]
+        return [-(-(self.widest + 1) // 2 ** level) for level in cuts]
+
+    @property
+    def pick_registers(self):
+        return 1 + self.stages.get("pick", 0) if self.pick_levels else 0
 
     @property
     def latency(self):
-        """One cycle of comparisons, one of leaf select, one per adder stage, and the select stages."""
-        return 2 + self.stages["select"] + len(self.adder_stages)
+        """One cycle of comparisons, one of leaf select, one per adder and pick stage, and the select stages."""
+        return 2 + self.stages["select"] + len(self.adder_stages) + self.pick_registers
 
     def paths(self, delays):
         """The longest path each stage governs, in ns, with 0, 1, 2 ... registers added."""
@@ -533,7 +556,7 @@ class TreeEnsembleUnit(StreamingNode):
                      default=1)
         depth, path = self.ensemble.depth, delays.path
         base = (self.levels + 1) // 2
-        return {
+        paths = {
             "compare": [path(delays.adder(self.feature_dtype.bits), fanout=fanout)],
             "select": [path(delays.select(math.ceil(depth / (cuts + 1))))
                        for cuts in range(max(1, depth))],
@@ -541,6 +564,11 @@ class TreeEnsembleUnit(StreamingNode):
                                            self.sum_dtype.bits))
                     for registers in range(base, self.levels + 1)],
         }
+        if self.pick_levels:
+            step = delays.adder(self.sum_dtype.bits) + delays.logic()
+            paths["pick"] = [path(math.ceil(self.pick_levels / (cuts + 1)) * step)
+                             for cuts in range(self.pick_levels)]
+        return paths
 
     @property
     def cycles(self):
@@ -556,12 +584,20 @@ class TreeEnsembleUnit(StreamingNode):
     def sum_dtype(self):
         ranges = [(self.ensemble.value[leaves].min(), self.ensemble.value[leaves].max())
                   for leaves in self.ensemble.tree_leaves()]
-        low = sum(int(r[0]) for r in ranges) + self.bias
-        high = sum(int(r[1]) for r in ranges) + self.bias
-        return IntType(max(self.leaf_dtype.bits, IntType.smallest_for(low, high).bits), True)
+        bits = self.leaf_dtype.bits
+        for score, bias in enumerate(self.bias):
+            mine = [r for r, owner in zip(ranges, self.scores) if owner == score]
+            low = sum(int(r[0]) for r in mine) + int(bias)
+            high = sum(int(r[1]) for r in mine) + int(bias)
+            # The sum is signed, so a range that never goes negative needs a sign bit too.
+            fits = IntType.smallest_for(low, high)
+            bits = max(bits, fits.bits + (not fits.signed))
+        return IntType(bits, True)
 
     @property
     def out_dtype(self):
+        if self.pick_levels:
+            return IntType(self.pick_levels, False)
         return IntType(1, False) if self.decision else self.sum_dtype
 
     def infer(self, graph):
@@ -572,21 +608,36 @@ class TreeEnsembleUnit(StreamingNode):
 
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64)
-        total = self.ensemble.leaf_values(x).sum(axis=1) + self.bias
-        return [(total >= 0 if self.decision else total).astype(np.int64).reshape(-1, 1)]
+        leaves = self.ensemble.leaf_values(x)
+        totals = np.stack([leaves[:, self.scores == score].sum(axis=1) + bias
+                           for score, bias in enumerate(self.bias)], axis=1)
+        if self.pick_levels:
+            out = np.argmax(totals, axis=1)
+        else:
+            out = totals[:, 0] >= 0 if self.decision else totals[:, 0]
+        return [out.astype(np.int64).reshape(-1, 1)]
+
+    @property
+    def pick_luts(self):
+        """A compare and two selects, one LUT a bit, at each of the classes - 1 nodes; unfitted."""
+        return (self.classes - 1) * (2 * self.sum_dtype.bits + self.pick_levels)
 
     def amd_resources(self, device):
         """Fitted to yosys synth_xilinx on the two 100 tree fixtures, within 3 percent of LUT1 to LUT6."""
         return Resources(lut=(self.comparators * self.feature_dtype.bits / 64
                               + 0.22 * self.ensemble.splits * self.leaf_dtype.bits
-                              + self.ensemble.trees * self.sum_dtype.bits),
+                              + self.ensemble.trees * self.sum_dtype.bits + self.pick_luts),
                          ff=self.registers)
 
     @property
     def registers(self):
+        levels, cuts = self.pick_levels, self.stages.get("pick", 0)
+        pick = [(i + 1) * levels // (cuts + 1) for i in range(cuts)] + [levels] if levels else []
+        picked = sum(-(-self.classes // 2 ** level) for level in pick)
         return (self.comparators * (1 + self.stages["select"])
                 + self.ensemble.trees * self.leaf_dtype.bits * (1 + self.stages["select"])
-                + sum(self.adder_stages) * self.sum_dtype.bits + self.latency)
+                + sum(self.adder_stages) * self.classes * self.sum_dtype.bits
+                + picked * (self.sum_dtype.bits + levels) + self.latency)
 
     def memories(self, graph):
         ensemble = self.ensemble
@@ -600,7 +651,8 @@ class TreeEnsembleUnit(StreamingNode):
             "if_true": MemorySpec(ensemble.if_true, index_bits),
             "if_false": MemorySpec(ensemble.if_false, index_bits),
             "roots": MemorySpec(ensemble.roots, index_bits),
-            "bias": MemorySpec(np.array([self.bias]), self.sum_dtype.bits),
+            "scores": MemorySpec(self.scores, max(1, self.pick_levels)),
+            "bias": MemorySpec(self.bias, self.sum_dtype.bits),
         }
 
     def sv_params(self, graph):
@@ -609,6 +661,7 @@ class TreeEnsembleUnit(StreamingNode):
             "LEAF_BITS": self.leaf_dtype.bits, "SUM_BITS": self.sum_dtype.bits,
             "TREES": self.ensemble.trees, "DECISION": int(self.decision),
             "SELECT_STAGES": self.stages["select"], "SUM_STAGES": self.stages["sum"],
+            "PICK_STAGES": self.stages.get("pick", 0),
         }
 
 

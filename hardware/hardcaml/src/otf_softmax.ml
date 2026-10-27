@@ -6,6 +6,8 @@ module Mode = struct
   type t =
     | Divide
     | Log
+    | Root
+    | Max
   [@@deriving sexp_of]
 end
 
@@ -54,22 +56,30 @@ module Make (Config : Config) = struct
   let shared_numer = Array.is_empty numer_table
 
   let latency =
-    (if subtract_max then 1 + stages.max else 0)
-    + 1
-    + stages.table
-    + 1
-    + stages.sum
-    + 1
-    + stages.normalize
-    + 1
-    + stages.rescale
+    match mode with
+    | Max -> 1 + stages.max + 1 + stages.table + 1 + stages.rescale
+    | Divide | Log | Root ->
+      (if subtract_max then 1 + stages.max else 0)
+      + 1
+      + stages.table
+      + 1
+      + stages.sum
+      + 1
+      + stages.normalize
+      + 1
+      + stages.rescale
   ;;
+
+  (* Root shifts by half of the leading one's position, the parity going to the table. *)
+  let root_shifts = (exps - 1) / 2
 
   (* Divide shifts each numerator left by up to [exps - 1]; Log subtracts the logarithm. *)
   let acc_bits =
     match mode with
     | Divide -> numer_bits + exps - 1
+    | Root -> numer_bits + root_shifts
     | Log -> Int.max numer_bits scale_bits + 1
+    | Max -> numer_bits
   ;;
 
   let () =
@@ -79,19 +89,27 @@ module Make (Config : Config) = struct
       else value >= 0 && value < 1 lsl bits
     in
     let size = 1 lsl in_bits in
+    let summed = not (Poly.equal mode Mode.Max) in
+    let scales =
+      match mode with
+      | Divide | Log -> 1 lsl mantissa_bits
+      | Root -> 1 lsl (mantissa_bits + 1)
+      | Max -> size
+    in
     if lanes < 1
        || in_bits < 1
        || exps < 1
        || min_exp < 0
        || mantissa_bits < 1
-       || Array.length sum_table <> size
+       || (summed && Array.length sum_table <> size)
        || (not (Array.for_all sum_table ~f:(fits ~bits:sum_bits ~signed:false)))
+       || (shared_numer && not summed)
        || (shared_numer && numer_bits <> sum_bits + 1)
        || ((not shared_numer)
            && (Array.length numer_table <> size
                || not (Array.for_all numer_table ~f:(fits ~bits:numer_bits ~signed:true))
               ))
-       || Array.length scale_table <> 1 lsl mantissa_bits
+       || Array.length scale_table <> scales
        || (not (Array.for_all scale_table ~f:(fits ~bits:scale_bits ~signed:true)))
        || lanes * Array.fold sum_table ~init:0 ~f:Int.max >= 1 lsl total_bits
     then
@@ -104,19 +122,27 @@ module Make (Config : Config) = struct
             (min_exp : int)];
     (match mode with
      | Divide -> ()
+     | Root ->
+       if subtract_max || min_exp % 2 <> 0
+       then raise_s [%message "BUG: otf_softmax root needs no max and an even min_exp"]
+     | Max ->
+       if subtract_max || stages.sum <> 0 || stages.normalize <> 0
+       then raise_s [%message "BUG: otf_softmax max has no sum and no normalisation"]
      | Log ->
        if (not subtract_max)
           || Array.length exp_table <> exps
           || not (Array.for_all exp_table ~f:(fits ~bits:scale_bits ~signed:true))
        then raise_s [%message "BUG: otf_softmax log needs the max and an exponent table"]);
     let tree_ok stages levels = stages >= 0 && (stages = 0 || stages < levels) in
+    let has_max = subtract_max || Poly.equal mode Mode.Max in
     if (not (tree_ok stages.max levels))
        || (not (tree_ok stages.sum levels))
-       || ((not subtract_max) && stages.max > 0)
+       || ((not has_max) && stages.max > 0)
        || stages.table < 0
        || stages.table > 1
        || stages.normalize < 0
-       || stages.normalize > 1
+       || stages.normalize > 2
+       || (stages.normalize = 2 && exps < 3)
        || stages.rescale < 0
        || stages.rescale > 3
     then raise_s [%message "BUG: otf_softmax stages out of range" (stages : Stages.t)]
@@ -140,7 +166,7 @@ module Make (Config : Config) = struct
 
       let mult_bits =
         match mode with
-        | Divide -> scale_bits
+        | Divide | Root | Max -> scale_bits
         | Log -> 2
       ;;
 
@@ -170,7 +196,39 @@ module Make (Config : Config) = struct
     else s.:[k - 1, 0] @: zero (mantissa_bits - k)
   ;;
 
-  let create scope (i : Signal.t I.t) =
+  let largest clocking codes =
+    Otf_reduce.tree
+      clocking
+      ~cuts:(Otf_reduce.cuts ~levels ~stages:stages.max)
+      ~f:(fun a b -> mux2 (a >+ b) a b)
+      codes
+  ;;
+
+  (* A table index: the code counted from the most negative. *)
+  let from_bottom code = code ^: of_unsigned_int ~width:in_bits (1 lsl (in_bits - 1))
+
+  (* Max: every numerator times the scale table at the largest code; nothing is summed. *)
+  let create_max scope (i : Signal.t I.t) =
+    let reg = Clocking.reg_no_clear i.clocking in
+    let delay n = Clocking.pipeline_no_clear i.clocking ~n in
+    let codes = split_lsb ~part_width:in_bits i.x.value in
+    let%hw top = reg (largest i.clocking codes) in
+    let index = if stages.table > 0 then reg (from_bottom top) else from_bottom top in
+    let%hw scale =
+      reg (mux index (constants scale_table ~width:scale_bits ~signed:true))
+    in
+    let numers = constants numer_table ~width:numer_bits ~signed:true in
+    let%hw_list y =
+      List.map codes ~f:(fun code ->
+        let code = delay (2 + stages.max + stages.table) code in
+        let acc = sresize (mux (from_bottom code) numers) ~width:acc_bits in
+        reg (Requant.hierarchical scope { clocking = i.clocking; acc; mult = scale }).out)
+    in
+    let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
+    { O.y = { valid; value = concat_lsb y } }
+  ;;
+
+  let create_summed scope (i : Signal.t I.t) =
     let reg = Clocking.reg_no_clear i.clocking in
     let delay n = Clocking.pipeline_no_clear i.clocking ~n in
     let cut n signal = if n > 0 then reg signal else signal in
@@ -179,22 +237,13 @@ module Make (Config : Config) = struct
     let indices =
       if subtract_max
       then (
-        let%hw top =
-          reg
-            (Otf_reduce.tree
-               i.clocking
-               ~cuts:(Otf_reduce.cuts ~levels ~stages:stages.max)
-               ~f:(fun a b -> mux2 (a >+ b) a b)
-               codes)
-        in
+        let%hw top = reg (largest i.clocking codes) in
         List.map codes ~f:(fun code ->
           let wide = in_bits + 1 in
           sel_bottom
             (sresize top ~width:wide -: sresize (delay (1 + stages.max) code) ~width:wide)
             ~width:in_bits))
-      else
-        List.map codes ~f:(fun code ->
-          code ^: of_unsigned_int ~width:in_bits (1 lsl (in_bits - 1)))
+      else List.map codes ~f:from_bottom
     in
     let sums = constants sum_table ~width:sum_bits ~signed:false in
     let numers = constants numer_table ~width:numer_bits ~signed:true in
@@ -225,25 +274,34 @@ module Make (Config : Config) = struct
           ; value = of_unsigned_int ~width:exp_bits (k - min_exp) @: mantissa total k
           })
     in
+    let default = zero exp_bits @: mantissa total min_exp in
+    (* A second cut splits the search: each half registered, then the high half if it has
+       a one. *)
     let%hw normalized =
-      cut
-        stages.normalize
-        (priority_select_with_default
-           found
-           ~default:(zero exp_bits @: mantissa total min_exp))
+      match stages.normalize with
+      | 2 ->
+        let #(high, low) = List.split_n found (List.length found / 2) in
+        let any_high = reg (reduce (List.map high ~f:(fun f -> f.valid)) ~f:( |: )) in
+        let high = reg (priority_select_with_default high ~default) in
+        let low = reg (priority_select_with_default low ~default) in
+        reg (mux2 any_high high low)
+      | n -> cut n (priority_select_with_default found ~default)
     in
-    let%hw is_zero = cut stages.normalize (total ==:. 0) in
-    let numers = List.map numers ~f:(cut stages.normalize) in
+    let%hw is_zero = delay stages.normalize (total ==:. 0) in
+    let numers = List.map numers ~f:(delay stages.normalize) in
     let exp = sel_top normalized ~width:exp_bits in
+    (* Root reads its table at the exponent's parity above the mantissa. *)
     let looked =
       mux
-        (sel_bottom normalized ~width:mantissa_bits)
+        (sel_bottom
+           normalized
+           ~width:(if Poly.equal mode Mode.Root then mantissa_bits + 1 else mantissa_bits))
         (constants scale_table ~width:scale_bits ~signed:true)
     in
     let%hw scale =
       reg
         (match mode with
-         | Divide -> mux2 is_zero (zero scale_bits) looked
+         | Divide | Root | Max -> mux2 is_zero (zero scale_bits) looked
          | Log -> looked +: pick exp (constants exp_table ~width:scale_bits ~signed:true))
     in
     let accs =
@@ -251,19 +309,31 @@ module Make (Config : Config) = struct
         let b = sresize b ~width:acc_bits in
         match mode with
         | Divide -> reg (pick exp (List.init exps ~f:(fun j -> sll b ~by:(exps - 1 - j))))
-        | Log -> reg b)
+        | Root when root_shifts = 0 -> reg b
+        | Root ->
+          reg
+            (pick
+               (drop_bottom exp ~width:1)
+               (List.init (root_shifts + 1) ~f:(fun j -> sll b ~by:(root_shifts - j))))
+        | Log | Max -> reg b)
     in
     let%hw_list y =
       List.map accs ~f:(fun acc ->
         let acc, mult =
           match mode with
-          | Divide -> acc, scale
+          | Divide | Root | Max -> acc, scale
           | Log -> acc -: sresize scale ~width:acc_bits, of_signed_int ~width:2 1
         in
         reg (Requant.hierarchical scope { clocking = i.clocking; acc; mult }).out)
     in
     let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
     { O.y = { valid; value = concat_lsb y } }
+  ;;
+
+  let create scope i =
+    match mode with
+    | Max -> create_max scope i
+    | Divide | Log | Root -> create_summed scope i
   ;;
 
   let hierarchical ?instance scope i =

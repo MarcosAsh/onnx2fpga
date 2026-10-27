@@ -91,6 +91,41 @@ class Units(unittest.TestCase):
         np.testing.assert_array_equal(unit.execute(None, {"x": zeros})[0],
                                       np.full((1, 6), plan.zero_point("y")))
 
+    def test_l2(self):
+        """L2 within one code on 1, 6 and 16 lanes, and a vector of zeros gives zeros."""
+        def l2(x):
+            total = np.sqrt((x * x).sum(axis=1, keepdims=True))
+            return x / np.where(total == 0, 1, total)
+
+        for lanes in (1, 6, 16):
+            with self.subTest(lanes=lanes):
+                got, wanted = self.against("Normalizer", l2, lanes, norm="L2")
+                self.assertLessEqual(np.abs(got - wanted).max(), 1)
+                self.assertGreaterEqual(np.mean(got == wanted), 0.98)
+        plan, unit = lowered(single("Normalizer", 6, norm="L2"), 6)
+        self.assertEqual(unit.mode, "root")
+        zeros = np.full((1, 6), plan.zero_point("x"))
+        np.testing.assert_array_equal(unit.execute(None, {"x": zeros})[0],
+                                      np.full((1, 6), plan.zero_point("y")))
+
+    def test_max(self):
+        """x over its largest value, as ONNX Runtime divides, and x itself when that is 0."""
+        def by_max(x):
+            top = x.max(axis=1, keepdims=True)
+            return x / np.where(top == 0, 1, top)
+
+        for lanes in (2, 6, 16):
+            with self.subTest(lanes=lanes):
+                got, wanted = self.against("Normalizer", by_max, lanes, norm="MAX")
+                self.assertLessEqual(np.abs(got - wanted).max(), 1)
+                self.assertGreaterEqual(np.mean(got == wanted), 0.98)
+        plan, unit = lowered(single("Normalizer", 6, norm="MAX"), 6)
+        self.assertEqual((unit.mode, unit.latency), ("max", 3))
+        x = plan.zero_point("x") + np.array([[-40, -3, 0, -7, -1, -20]])
+        real = plan.scale("x") * (x - plan.zero_point("x"))
+        wanted = np.rint(real / plan.scale("y")) + plan.zero_point("y")
+        np.testing.assert_array_equal(unit.execute(None, {"x": x})[0], wanted)
+
     def test_arg(self):
         """The first index of a tie, or the last with select_last_index."""
         x = np.clip(codes(10), -2, 2)
@@ -167,7 +202,7 @@ class Errors(unittest.TestCase):
 
     def test_refused(self):
         for model, text in ((single("ArgMax", axis=0), "works on axis 0"),
-                            (single("Normalizer", norm="L2"), "has norm L2"),
+                            (single("Normalizer", norm="L3"), "has norm L3"),
                             (single("ReduceSum", noop_with_empty_axes=1), "noop_with_empty")):
             with self.subTest(text), self.assertRaisesRegex(UnsupportedOpError, text):
                 OnnxImporter(model).run()
@@ -214,6 +249,18 @@ def pooled(seed=3):
     return builder.add_output("y", (1, 1)).build()
 
 
+def norms(seed=4):
+    """One dense layer through an L2 and a MAX Normalizer, added lane by lane."""
+    rng = np.random.default_rng(seed)
+    builder = ModelBuilder("norms").add_input("x", (1, 16))
+    builder.add_initializer("w", rng.normal(0, 0.5, (16, 8)).astype(np.float32))
+    builder.add_node("Gemm", ["x", "w"], ["h"], name="fc")
+    builder.add_node("Normalizer", ["h"], ["l2"], name="l2", norm="L2")
+    builder.add_node("Normalizer", ["h"], ["top"], name="max", norm="MAX")
+    builder.add_node("Add", ["l2", "top"], ["y"], name="out")
+    return builder.add_output("y", (1, 8)).build()
+
+
 def compiled(model, name, **options):
     acc = otf.load(model, name=name)
     x = np.random.default_rng(1).normal(0, 1, (64, 16)).astype(np.float32)
@@ -229,18 +276,22 @@ class Designs(unittest.TestCase):
         cls.ensemble = compiled(ensemble(), "ensemble")
         cls.fast = compiled(ensemble(), "ensemble_fast", clock_mhz=CLOCK)
         cls.pooled = compiled(pooled(), "pooled", clock_mhz=CLOCK)
+        cls.norms = compiled(norms(), "norms", clock_mhz=CLOCK)
 
     def test_latency(self):
         """Dense 3, softmax 5, add 2 and argmax 1; at 322 MHz every unit fits the k26 model."""
         self.assertEqual(self.ensemble.latency, 3 + 5 + 2 + 1)
         kinds = {type(unit) for unit in self.pooled.result.hardware_graph.nodes}
         self.assertTrue({ReduceUnit, SoftmaxUnit} <= kinds)
-        for acc in (self.fast, self.pooled):
+        for acc in (self.fast, self.pooled, self.norms):
             self.assertGreaterEqual(acc.result.fmax_mhz, CLOCK)
+        modes = {unit.name: unit.mode for unit in self.norms.result.hardware_graph.nodes
+                 if isinstance(unit, SoftmaxUnit)}
+        self.assertEqual(modes, {"l2": "root", "max": "max"})
 
     @unittest.skipIf(VERILATOR, VERILATOR)
     def test_simulate(self):
-        for acc in (self.ensemble, self.fast, self.pooled):
+        for acc in (self.ensemble, self.fast, self.pooled, self.norms):
             with self.subTest(acc.name):
                 report = acc.simulate()
                 self.assertTrue(report.ok, report.first.output[-2000:])
@@ -248,10 +299,12 @@ class Designs(unittest.TestCase):
 
     @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
     def test_proof(self):
-        build, latency = pathlib.Path(self.ensemble.out_dir), self.ensemble.latency
-        ok, log = prove(build, 16 * 8, latency)
-        self.assertTrue(ok, log[-3000:])
-        self.assertFalse(prove(build, 16 * 8, latency - 1)[0])
+        for acc in (self.ensemble, self.norms):
+            with self.subTest(acc.name):
+                build, latency = pathlib.Path(acc.out_dir), acc.latency
+                ok, log = prove(build, 16 * 8, latency)
+                self.assertTrue(ok, log[-3000:])
+                self.assertFalse(prove(build, 16 * 8, latency - 1)[0])
 
 
 if __name__ == "__main__":

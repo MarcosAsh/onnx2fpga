@@ -1,9 +1,10 @@
 # 005 Tree ensembles
 
 Status: partial. Frozen TreeEnsembleRegressor and binary TreeEnsembleClassifier
-models from ai.onnx.ml opsets 1 and 3 build in fixed latency mode and are
-verified. Missing: the TreeEnsemble operator of opset 5, multiclass and
-multi target ensembles, reloadable trees ([003](003-reloadable-weights.md)
+models from ai.onnx.ml opsets 1 and 3, and the TreeEnsemble operator of opset
+5 with one target, build in fixed latency mode and are verified; multiclass
+classifiers came with [012](012-multiclass-trees.md). Missing: multi target
+ensembles, reloadable trees ([003](003-reloadable-weights.md)
 made dense layers reloadable and says what trees still need), and a resource
 comparison with conifer, which needs Vivado. `clock_mhz=` from
 [002](002-pipelined-matvec.md) adds register stages to the leaf select and the
@@ -119,10 +120,15 @@ Every error names the node or the device.
 - An option we do not support raises `UnsupportedOpError` with one sentence
   naming it, for example `TreeEnsembleClassifier 'TreeEnsembleClassifier' has
   post_transform SOFTMAX, and only NONE or LOGISTIC is supported`. The same
-  goes for more than two classes, more than one target, MIN or MAX aggregation
-  and more than one base value.
-- TreeEnsemble from ai.onnx.ml opset 5 raises `UnsupportedOpError`: it is not
-  supported yet, so export TreeEnsembleRegressor or TreeEnsembleClassifier.
+  goes for more than one target, MIN or MAX aggregation and a base value per
+  score that does not match the scores; [012](012-multiclass-trees.md) took
+  the limit of two classes away.
+- TreeEnsemble from ai.onnx.ml opset 5 keeps its splits and its leaves in
+  separate arrays, and a split's child is a leaf or a split by a flag. The
+  importer puts the leaves after the splits and builds the same ensemble the
+  older operators give. Its post transform and aggregation are integers, and
+  anything but 0, NONE, and 0 or 1, AVERAGE or SUM, is refused, as is a
+  `BRANCH_MEMBER` split, which tests a set of values.
 - An ensemble that does not fit the device raises `BudgetError` with the tree
   count and depth: the example regressor on `icepi25` says `the tree ensemble
   needs 20164 LUT, past the 19430 allowed on icepi25 (100 trees of depth 4)`.
@@ -148,7 +154,12 @@ labels match `XGBClassifier.predict` on all of them, a skl2onnx gradient
 boosting classifier matches scikit-learn, and a hand built opset 3 model with
 one tree per split mode and double tensors matches ONNX Runtime exactly. These
 reference outputs are stored next to the fixtures in `tests/fixtures`, so the
-tests need neither xgboost nor onnx.
+tests need neither xgboost nor onnx. For opset 5, `make_corpus.py` rewrites
+the corpus's 20 tree XGBoost regressor as a `TreeEnsemble`, its base value
+folded into the first tree's leaves. ONNX Runtime gives the same outputs as
+for the original within 5e-7, our import gives the same margins within 1e-5,
+and the corpus test compiles it, simulates it bit exact and finds it within
+0.25 percent of ONNX Runtime, as for the original.
 
 The Hardcaml unit has expect tests on the Lws harness in
 `hardware/hardcaml/test/test_otf_trees.ml`: six random ensembles, from one leaf

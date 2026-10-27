@@ -522,7 +522,8 @@ class Accelerator:
         saved = sum(unit.weights.size - unit.multipliers for unit in units
                     if isinstance(unit, DenseUnit))
         fmax = self.result.fmax_mhz
-        stages = ["in the leaf select/adder tree" if trees
+        picks = trees and "pick" in units[0].stages
+        stages = ["in the leaf select/adder tree" + ("/pick tree" if picks else "") if trees
                   else "at the multiplies/adder tree/rescale"]
         stages += [text for kind, text in (
             (EltwiseUnit, "the multiplies/rescale of an elementwise unit"),
@@ -653,7 +654,11 @@ class Accelerator:
         raw = np.asarray(next(iter(feed.values())), dtype=np.float64)
         if name in graph.layouts:
             raw = graph.layouts[name].to_internal(raw)
-        return GraphRunner(graph).run({name: raw})[graph.outputs[0]]
+        # A grid the model states saturates, as its QDQ pair does in ONNX Runtime.
+        bounds = {tensor: spec.dequantize([spec.dtype.min, spec.dtype.max])
+                  for tensor, spec in graph.annotations.items()
+                  if spec.dtype is not None and spec.scale.size == 1}
+        return GraphRunner(graph).run({name: raw}, bounds=bounds)[graph.outputs[0]]
 
     def _dequantize(self, codes):
         plan, name = self.result.plan, self.result.hardware_graph.outputs[0]

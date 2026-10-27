@@ -50,14 +50,23 @@ module Tree = struct
   ;;
 end
 
+module Score = struct
+  type t =
+    { trees : Tree.t list
+    ; bias : int
+    }
+  [@@deriving sexp_of]
+end
+
 module Stages = struct
   type t =
     { select : int
     ; sum : int
+    ; pick : int
     }
   [@@deriving sexp_of]
 
-  let none = { select = 0; sum = 0 }
+  let none = { select = 0; sum = 0; pick = 0 }
 end
 
 module type Config = sig
@@ -65,8 +74,7 @@ module type Config = sig
   val feature_bits : int
   val leaf_bits : int
   val sum_bits : int
-  val trees : Tree.t list
-  val bias : int
+  val scores : Score.t list
   val decision : bool
   val stages : Stages.t
 end
@@ -77,13 +85,23 @@ let adder_stages operands = (Int.ceil_log2 operands + 1) / 2
 module Make (Config : Config) = struct
   open Config
 
+  let trees = List.concat_map scores ~f:(fun score -> score.trees)
+
   let depth =
     List.fold trees ~init:0 ~f:(fun deepest tree -> Int.max deepest (Tree.depth tree))
   ;;
 
-  let levels = Int.ceil_log2 (List.length trees + 1)
-  let sum_registers = adder_stages (List.length trees + 1) + stages.sum
-  let latency = 2 + stages.select + sum_registers
+  let widest =
+    List.fold scores ~init:0 ~f:(fun widest score ->
+      Int.max widest (List.length score.trees))
+  ;;
+
+  let levels = Int.ceil_log2 (widest + 1)
+  let sum_registers = adder_stages (widest + 1) + stages.sum
+  let pick_levels = Int.ceil_log2 (List.length scores)
+  let pick_registers = if pick_levels = 0 then 0 else 1 + stages.pick
+  let index_bits = Int.max 1 pick_levels
+  let latency = 2 + stages.select + sum_registers + pick_registers
 
   (* Evenly spaced cuts: [count] of the boundaries strictly inside [span] levels. *)
   let spread ~count ~span = List.init count ~f:(fun i -> (i + 1) * span / (count + 1))
@@ -91,6 +109,7 @@ module Make (Config : Config) = struct
   (* Leaf select cuts are node depths; adder tree cuts are levels. *)
   let select_cuts = spread ~count:stages.select ~span:depth
   let sum_cuts = spread ~count:(sum_registers - 1) ~span:levels @ [ levels ]
+  let pick_cuts = spread ~count:stages.pick ~span:pick_levels @ [ pick_levels ]
 
   let () =
     let fits ~bits value = value >= -(1 lsl (bits - 1)) && value < 1 lsl (bits - 1) in
@@ -110,19 +129,25 @@ module Make (Config : Config) = struct
     List.iter (List.concat_map trees ~f:Tree.leaves) ~f:(fun leaf ->
       if not (fits ~bits:leaf_bits leaf)
       then raise_s [%message "BUG: otf_trees leaf does not fit" (leaf : int)]);
-    if not (fits ~bits:sum_bits bias)
-    then raise_s [%message "BUG: otf_trees bias does not fit" (bias : int)];
+    List.iter scores ~f:(fun { bias; _ } ->
+      if not (fits ~bits:sum_bits bias)
+      then raise_s [%message "BUG: otf_trees bias does not fit" (bias : int)]);
+    if decision && pick_levels > 0
+    then raise_s [%message "BUG: otf_trees decides on one score only"];
     if stages.select < 0
        || (stages.select > 0 && stages.select >= depth)
        || stages.sum < 0
        || sum_registers > levels
+       || stages.pick < 0
+       || pick_registers > pick_levels
     then
       raise_s
         [%message
           "BUG: otf_trees stages out of range"
             (stages : Stages.t)
             (depth : int)
-            (levels : int)]
+            (levels : int)
+            (pick_levels : int)]
   ;;
 
   module I = struct
@@ -133,12 +158,14 @@ module Make (Config : Config) = struct
     [@@deriving hardcaml]
   end
 
+  let out_bits = if pick_levels > 0 then index_bits else if decision then 1 else sum_bits
+
   module O = struct
-    type 'a t = { y : 'a With_valid.t [@bits if decision then 1 else sum_bits] }
-    [@@deriving hardcaml]
+    type 'a t = { y : 'a With_valid.t [@bits out_bits] } [@@deriving hardcaml]
   end
 
-  (* Compare, select a leaf per tree, then a binary adder tree, each cut a register. *)
+  (* Compare, select a leaf per tree, a binary adder tree per score, then a compare and
+     select tree over the scores; each cut is a register. *)
   let create (scope : Scope.t) (i : Signal.t I.t) =
     let reg = Clocking.reg_no_clear i.clocking in
     let x = Array.of_list (split_lsb ~part_width:feature_bits i.x.value) in
@@ -180,12 +207,10 @@ module Make (Config : Config) = struct
         if cut_at select_cuts depth then reg out else out
     in
     let%hw_list leaves = List.map trees ~f:(fun tree -> reg (select 0 tree)) in
-    let%hw total =
+    let sum (score : Score.t) leaves =
       List.fold
         (List.range 1 (levels + 1))
-        ~init:
-          (of_signed_int ~width:sum_bits bias
-           :: List.map leaves ~f:(sresize ~width:sum_bits))
+        ~init:(of_signed_int ~width:sum_bits score.bias :: leaves)
         ~f:(fun operands level ->
           let operands =
             List.map (List.chunks_of operands ~length:2) ~f:(reduce ~f:( +: ))
@@ -193,8 +218,40 @@ module Make (Config : Config) = struct
           if cut_at sum_cuts level then List.map operands ~f:reg else operands)
       |> List.hd_exn
     in
+    let%hw_list totals =
+      List.folding_map
+        scores
+        ~init:(List.map leaves ~f:(sresize ~width:sum_bits))
+        ~f:(fun leaves score ->
+          let #(mine, rest) = List.split_n leaves (List.length score.trees) in
+          rest, sum score mine)
+    in
+    (* Ties keep the left operand, so the first largest score wins. *)
+    let larger (left, left_index) (right, right_index) =
+      let right_wins = right >+ left in
+      mux2 right_wins right left, mux2 right_wins right_index left_index
+    in
+    let picked =
+      List.fold
+        (List.range 1 (pick_levels + 1))
+        ~init:
+          (List.mapi totals ~f:(fun index total ->
+             total, of_unsigned_int ~width:index_bits index))
+        ~f:(fun operands level ->
+          let operands =
+            List.map (List.chunks_of operands ~length:2) ~f:(List.reduce_exn ~f:larger)
+          in
+          if cut_at pick_cuts level
+          then List.map operands ~f:(fun (total, index) -> reg total, reg index)
+          else operands)
+    in
+    let%hw value =
+      match totals with
+      | [ total ] -> if decision then ~:(msb total) else total
+      | _ -> snd (List.hd_exn picked)
+    in
     let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
-    { O.y = { valid; value = (if decision then ~:(msb total) else total) } }
+    { O.y = { valid; value } }
   ;;
 
   let hierarchical ?instance scope i =

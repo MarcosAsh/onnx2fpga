@@ -23,10 +23,13 @@ from onnx2fpga.targets.device import Device
 HARDCAML = Hdl.skip_reason("hardcaml")
 FIXTURES = ROOT / "tests" / "fixtures"
 EXPECTED = np.load(FIXTURES / "trees_expected.npz")
+# Three class classifiers from the corpus, with ONNX Runtime's labels.
+MULTICLASS = ("xgb_multiclass", "lgbm_multiclass", "forest_multiclass")
 
 
 def model(name):
-    return OnnxModel.load(FIXTURES / ("%s.onnx" % name))
+    path = FIXTURES / ("%s.onnx" % name)
+    return OnnxModel.load(path if path.exists() else FIXTURES / "corpus" / path.name)
 
 
 def lowered(name):
@@ -38,7 +41,7 @@ def lowered(name):
 
 
 def compiled(name, device="vu9p", clock_mhz=None):
-    acc = otf.load(FIXTURES / ("%s.onnx" % name))
+    acc = otf.load(model(name))
     acc.compile(device=device, mode="fixed", clock_mhz=clock_mhz,
                 out_dir=Fixtures.build_dir("trees_%s_%s_%s" % (name, device, clock_mhz)))
     return acc
@@ -65,6 +68,39 @@ class Import(unittest.TestCase):
         labels = graph.nodes[0].execute(graph, {"X": EXPECTED["x"]})[0].ravel()
         self.assertEqual(list(labels.astype(int)), list(EXPECTED["skl_gbc_label"]))
 
+    def test_multiclass(self):
+        """The label is the class with the largest score, whatever the post transform."""
+        for name in MULTICLASS:
+            with self.subTest(name):
+                data = np.load(FIXTURES / "corpus" / ("%s.npz" % name))
+                graph = OnnxImporter(model(name)).run()
+                op = graph.nodes[0]
+                self.assertEqual(op.ensemble.value.shape[1], 3)
+                labels = op.execute(graph, {op.inputs[0]: data["x"]})[0]
+                np.testing.assert_array_equal(labels, data["y"])
+
+    def test_opset5(self):
+        """TreeEnsemble keeps splits and leaves apart; the same trees give the same margin."""
+        old, new = (OnnxImporter(model(name)).run().nodes[0] for name in ("xgb_small",
+                                                                           "xgb_small_v5"))
+        x = np.load(FIXTURES / "corpus" / "xgb_small.npz")["x"]
+        np.testing.assert_allclose(new.margin(x), old.margin(x), atol=1e-5)
+        self.assertEqual((new.ensemble.trees, new.ensemble.splits),
+                         (old.ensemble.trees, old.ensemble.splits))
+        for key, value, text in (("post_transform", 2, "post_transform 2"),
+                                 ("aggregate_function", 3, "aggregate_function 3"),
+                                 ("n_targets", 2, "2 targets")):
+            with self.subTest(key):
+                changed = model("xgb_small_v5")
+                next(a for a in changed.graph.node[0].attribute if a.name == key).i = value
+                with self.assertRaisesRegex(UnsupportedOpError, text):
+                    otf.load(changed)
+        member = model("xgb_small_v5")
+        modes = next(a for a in member.graph.node[0].attribute if a.name == "nodes_modes").t
+        modes.int32_data[0] = 6
+        with self.assertRaisesRegex(UnsupportedOpError, "BRANCH_MEMBER"):
+            otf.load(member)
+
     def test_modes(self):
         """Opset 3 with double tensors, one tree per split mode, against ONNX Runtime."""
         expected = np.load(FIXTURES / "modes_v3.npz")
@@ -77,9 +113,16 @@ class Import(unittest.TestCase):
         next(a for a in node.attribute if a.name == "post_transform").s = b"SOFTMAX"
         with self.assertRaisesRegex(UnsupportedOpError, "post_transform SOFTMAX"):
             otf.load(softmax)
-        node.op_type = "TreeEnsemble"
-        with self.assertRaisesRegex(UnsupportedOpError, "opset 5, which is not supported"):
-            otf.load(softmax)
+        unscored = model("xgb_multiclass")
+        node = unscored.graph.node[0]
+        ids = next(a for a in node.attribute if a.name == "class_ids")
+        ids.ints[:] = [min(k, 1) for k in ids.ints]
+        with self.assertRaisesRegex(UnsupportedOpError, "3 classes and scores 2 of them"):
+            otf.load(unscored)
+        labels = next(a for a in node.attribute if a.name == "classlabels_int64s")
+        labels.ints[:] = [0, 1]
+        with self.assertRaisesRegex(UnsupportedOpError, "scores both of its 2 classes"):
+            otf.load(unscored)
 
 
 class Grid(unittest.TestCase):
@@ -123,6 +166,25 @@ class Grid(unittest.TestCase):
             if unit.decision:
                 labels = unit.execute(None, {op.inputs[0]: codes})[0].ravel()
                 self.assertGreater(np.mean(labels == (op.margin(x) > op.decision)), 0.999)
+
+    def test_multiclass(self):
+        """Each class sums its own copy of the trees that score it, and the sums never overflow."""
+        x = np.random.default_rng(4).normal(0, 1.5, (4000, 8))
+        for name in MULTICLASS:
+            with self.subTest(name):
+                op, plan, unit = lowered(name)
+                self.assertEqual(unit.classes, 3)
+                self.assertEqual(unit.out_dtype.bits, 2)
+                codes = plan.quantize(op.inputs[0], x)
+                labels = unit.execute(None, {op.inputs[0]: codes})[0].ravel()
+                self.assertGreater(np.mean(labels == np.argmax(op.margin(x), axis=1)), 0.99)
+                for score, bias in enumerate(unit.bias):
+                    trees = [leaves for leaves, owner in zip(unit.ensemble.tree_leaves(),
+                                                              unit.scores) if owner == score]
+                    high = sum(unit.ensemble.value[leaves].max() for leaves in trees) + bias
+                    low = sum(unit.ensemble.value[leaves].min() for leaves in trees) + bias
+                    self.assertLessEqual(high, unit.sum_dtype.max)
+                    self.assertGreaterEqual(low, unit.sum_dtype.min)
 
     def test_pruned(self):
         """A split no code can take one way is cut, leaving its live side."""
@@ -215,6 +277,34 @@ class Classifier(unittest.TestCase):
         self.assertEqual(report.latency, 6)
         answers = (acc.out_dir / "golden" / "x_expected.hex").read_text().split()
         self.assertEqual(sorted(set(answers)), ["0", "1"])
+
+
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Multiclass(unittest.TestCase):
+    """At 322 MHz on k26 the pick over three scores takes a second register."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.acc = compiled("xgb_multiclass", "k26", 322.265625)
+
+    def test_latency(self):
+        unit = self.acc.result.hardware_graph.nodes[0]
+        self.assertEqual((unit.stages, self.acc.latency), ({"select": 0, "sum": 0, "pick": 1}, 7))
+        self.assertGreaterEqual(self.acc.result.fmax_mhz, 322.265625)
+
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
+    def test_simulate(self):
+        report = self.acc.simulate()
+        self.assertTrue(report.ok, report.first.output)
+        self.assertEqual((report.frames, report.latency), (10000, 7))
+        answers = (self.acc.out_dir / "golden" / "x_expected.hex").read_text().split()
+        self.assertEqual(sorted(set(answers)), ["0", "1", "2"])
+
+    @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
+    def test_proof(self):
+        build = pathlib.Path(self.acc.out_dir)
+        self.assertTrue(prove(build, 8 * 16, 7)[0])
+        self.assertFalse(prove(build, 8 * 16, 6)[0], "a latency of 6 must not prove")
 
 
 if __name__ == "__main__":

@@ -436,16 +436,27 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
           let leaf_bits = param "LEAF_BITS"
           let sum_bits = param "SUM_BITS"
 
-          let trees =
-            List.map (words "roots") ~f:(fun root -> tree (Bits.to_unsigned_int root))
+          (* Each root names the score it adds to, and each score has a bias. *)
+          let scores =
+            let roots =
+              List.zip_exn
+                (List.map (words "roots") ~f:Bits.to_unsigned_int)
+                (List.map (words "scores") ~f:Bits.to_unsigned_int)
+            in
+            List.mapi (words "bias") ~f:(fun score bias ->
+              { Otf_trees.Score.trees =
+                  List.filter_map roots ~f:(fun (root, owner) ->
+                    Option.some_if (owner = score) (tree root))
+              ; bias = Bits.to_signed_int bias
+              })
           ;;
 
-          let bias = Bits.to_signed_int (List.hd_exn (words "bias"))
           let decision = param "DECISION" = 1
 
           let stages =
             { Otf_trees.Stages.select = param ~default:0 "SELECT_STAGES"
             ; sum = param ~default:0 "SUM_STAGES"
+            ; pick = param ~default:0 "PICK_STAGES"
             }
           ;;
         end)
@@ -464,8 +475,20 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
         , delay_bank clocking bank )
       ;;
     end)
-  | "otf_table" ->
+  | ("otf_table" | "otf_concat") as kind ->
     let size = 1 lsl param "IN_BITS" in
+    (* A concat's inputs arrive aligned and sit side by side, the first in the low lanes. *)
+    let join (inputs : Signal.t With_valid.t list) =
+      if String.equal kind "otf_table"
+      then single node inputs
+      else (
+        match inputs with
+        | first :: _ ->
+          { With_valid.valid = first.valid
+          ; value = Signal.concat_lsb (List.map inputs ~f:(fun x -> x.value))
+          }
+        | [] -> raise_s [%message "design.json: otf_concat has no inputs" node.name])
+    in
     (module struct
       module M = Otf_table.Make (struct
           let lanes = param "LANES"
@@ -487,11 +510,7 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
       include Circuit_of (M)
 
       let connect scope clocking ~store:_ ~bank inputs =
-        ( (M.hierarchical
-             ~instance:node.instance
-             scope
-             { clocking; x = single node inputs })
-            .y
+        ( (M.hierarchical ~instance:node.instance scope { clocking; x = join inputs }).y
         , delay_bank clocking bank )
       ;;
     end)
@@ -611,7 +630,14 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
           let lanes = param "LANES"
           let in_bits = param "IN_BITS"
           let subtract_max = param "MAX" = 1
-          let mode = if param "LOG" = 1 then Otf_softmax.Mode.Log else Divide
+
+          (* MODE counts Divide, Log, Root and Max; older designs only say LOG. *)
+          let mode =
+            List.nth_exn
+              [ Otf_softmax.Mode.Divide; Log; Root; Max ]
+              (param ~default:(param "LOG") "MODE")
+          ;;
+
           let sum_table = ints ~signed:false "sum_table"
           let sum_bits = param "SUM_BITS"
           let numer_table = ints "numer_table"

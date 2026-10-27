@@ -12,7 +12,7 @@ from ..p2_graph.datatype import FLOAT32, IntType, QuantSpec, UINT8
 from ..p2_graph.graph import Graph
 from ..p2_graph.layout import LayoutAdapter
 from ..p2_graph.tensor import Tensor
-from ..p3_ops.elementwise import FUNCTIONS, ElementwiseOp, import_elementwise
+from ..p3_ops.elementwise import FUNCTIONS, ConcatOp, ElementwiseOp, import_elementwise
 from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp,
                                ReluOp)
 from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce,
@@ -129,25 +129,47 @@ def real(importer, name, spec, axis=-1):
     return fresh
 
 
+# The float op each quantized op becomes, where its (tensor, scale, zero point) operands
+# start, where its output grid is, and its int32 bias if it has one.
+QLINEAR = {
+    "QLinearMatMul": ("MatMul", (0, 3), 6, None), "QLinearConv": ("Conv", (0, 3), 6, 8),
+    "QGemm": ("Gemm", (0, 3), 7, 6), "QLinearAdd": ("Add", (0, 3), 6, None),
+    "QLinearMul": ("Mul", (0, 3), 6, None), "QLinearSigmoid": ("Sigmoid", (0,), 3, None),
+    "QLinearLeakyRelu": ("LeakyRelu", (0,), 3, None),
+    "QLinearSoftmax": ("Softmax", (0,), 3, None),
+    "QLinearReduceMean": ("ReduceMean", (0,), 3, None),
+}
+
+
 def import_qlinear(node, importer):
-    """QLinearMatMul, QLinearConv and QLinearAdd become their float op between QDQ grids."""
+    """The QLinear ops and QGemm become their float op between QDQ grids."""
+    op_type, operands, out, bias = QLINEAR[node.op_type]
+    names = list(node.input) + [""] * 9
+    attrs = node.attributes()
+    axis = 0 if node.op_type == "QLinearConv" or int(attrs.get("transB", 0)) else -1
+    inputs = [real(importer, names[i], grid(importer, names[i + 1], names[i + 2]),
+                   axis=axis if i else -1) for i in operands]
+    if bias is not None and names[bias]:
+        scale = (importer.constant_array(names[1]) * importer.constant_array(names[4])
+                 * float(attrs.get("alpha", 1.0)))
+        inputs.append(importer.graph.fresh_name(names[bias] + "_real"))
+        importer.constants[inputs[-1]] = importer.constant_array(names[bias]) * scale
+    plain = rewritten(node, op_type, inputs)
+    if op_type not in ARITHMETIC or not importer.arithmetic(plain):
+        BUILTIN[op_type](plain, importer)
+    if names[out]:
+        spec = grid(importer, names[out], names[out + 1])
+        importer.annotate(importer.rename(node.output[0]), spec)
+        importer.annotate(node.output[0], spec)
+
+
+def import_qconcat(node, importer):
+    """QLinearConcat gives its output grid first, then a (tensor, scale, zero point) per piece."""
     names = node.input
-    a = real(importer, names[0], grid(importer, names[1], names[2]))
-    b = real(importer, names[3], grid(importer, names[4], names[5]),
-             axis=0 if node.op_type == "QLinearConv" else -1)
-    inputs = [a, b]
-    if node.op_type == "QLinearConv" and len(names) > 8 and names[8]:
-        scale = importer.constant_array(names[1]) * importer.constant_array(names[4])
-        bias = importer.graph.fresh_name(names[8] + "_real")
-        importer.constants[bias] = importer.constant_array(names[8]) * scale
-        inputs.append(bias)
-    op_type = {"QLinearMatMul": "MatMul", "QLinearConv": "Conv", "QLinearAdd": "Add"}
-    plain = rewritten(node, op_type[node.op_type], inputs)
-    if node.op_type != "QLinearAdd":
-        BUILTIN[plain.op_type](plain, importer)
-    elif not importer.arithmetic(plain):
-        import_add(plain, importer)
-    spec = grid(importer, names[6], names[7])
+    pieces = [real(importer, names[i], grid(importer, names[i + 1], names[i + 2]))
+              for i in range(2, len(names), 3)]
+    import_concat(rewritten(node, "Concat", pieces), importer)
+    spec = grid(importer, names[0], names[1])
     importer.annotate(importer.rename(node.output[0]), spec)
     importer.annotate(node.output[0], spec)
 
@@ -284,7 +306,7 @@ def import_cast(node, importer):
 
 
 def import_concat(node, importer):
-    """Pieces that are views of one feature vector or Gemms on it become one view or one Gemm."""
+    """Pieces of one feature vector become one view or one Gemm; pieces of several tensors join as they are."""
     parts = []
     for raw in node.input:
         name = importer.rename(raw)
@@ -306,8 +328,16 @@ def import_concat(node, importer):
             width = importer.graph.tensor(name).numel
             parts.append(View(name, np.arange(width), np.ones(width), np.zeros(width), None))
     sources = {p.source if isinstance(p, View) else p.inputs[0] for p in parts} - {None}
-    if len(sources) != 1:
-        refuse(node, "joins features of more than one live tensor")
+    if len(sources) > 1:
+        if any(importer.rename(raw) in importer.constants for raw in node.input):
+            refuse(node, "joins a constant to features of more than one live tensor")
+        for raw in node.input:
+            if importer.rename(raw) in importer.views:
+                importer.materialize(importer.rename(raw))
+        importer.emit(ConcatOp(node.name or importer.graph.fresh_name("concat"),
+                               [importer.rename(raw) for raw in node.input],
+                               [importer.rename(node.output[0])]))
+        return
     source = sources.pop()
     width = importer.graph.tensor(source).numel
     if not any(isinstance(p, GemmOp) for p in parts):
@@ -359,7 +389,7 @@ def import_add(node, importer):
 
 
 def import_trees(node, importer):
-    """TreeEnsembleRegressor with one target, or a binary TreeEnsembleClassifier, from ai.onnx.ml 1 or 3."""
+    """TreeEnsembleRegressor with one target, or a TreeEnsembleClassifier, from ai.onnx.ml 1 or 3."""
     attrs = node.attributes()
     op, name = node.op_type, node.name or node.op_type
     classifier = op == "TreeEnsembleClassifier"
@@ -372,7 +402,14 @@ def import_trees(node, importer):
     def refuse(text):
         raise UnsupportedOpError(op, name, message="%s %r %s" % (op, name, text))
 
-    transforms = ("NONE", "LOGISTIC") if classifier else ("NONE",)
+    prefix = "class" if classifier else "target"
+    ids = attrs.get(prefix + "_ids", [])
+    labels = attrs.get("classlabels_int64s") or attrs.get("classlabels_strings") or []
+    binary = len(labels) == 2 and len(set(ids)) == 1
+    # Every transform is monotone, so the label is the largest raw score whichever it is.
+    transforms = (("NONE", "LOGISTIC", "SOFTMAX", "SOFTMAX_ZERO", "PROBIT")
+                  if classifier and not binary else ("NONE", "LOGISTIC") if classifier
+                  else ("NONE",))
     transform = attrs.get("post_transform", "NONE")
     if transform not in transforms:
         refuse("has post_transform %s, and only %s is supported"
@@ -383,18 +420,18 @@ def import_trees(node, importer):
     unknown = sorted(set(attrs["nodes_modes"]) - set(MODES))
     if unknown:
         refuse("has a node mode %s that is not supported" % unknown[0])
-    prefix = "class" if classifier else "target"
-    ids = attrs.get(prefix + "_ids", [])
-    if classifier:
-        labels = attrs.get("classlabels_int64s") or attrs.get("classlabels_strings") or []
-        if len(labels) != 2 or len(set(ids)) > 1:
-            refuse("has %d classes scored %d ways, and only binary classifiers with one "
-                   "score are supported" % (len(labels), len(set(ids))))
-    elif int(attrs.get("n_targets", 1)) != 1:
+    scores = 1 if not classifier or binary else len(labels)
+    if classifier and len(labels) == 2 and not binary:
+        refuse("scores both of its 2 classes, and ONNX Runtime does not label that by the "
+               "larger score")
+    if classifier and not binary and sorted(set(ids)) != list(range(scores)):
+        refuse("has %d classes and scores %d of them, and every class needs a score"
+               % (len(labels), len(set(ids))))
+    if not classifier and int(attrs.get("n_targets", 1)) != 1:
         refuse("has %d targets, and only one is supported" % int(attrs["n_targets"]))
     base = floats("base_values")
-    if len(base) > 1:
-        refuse("has %d base values, and only one is supported" % len(base))
+    if len(base) not in (0, scores):
+        refuse("has %d base values for %d scores" % (len(base), scores))
 
     trees = attrs["nodes_treeids"]
     index = {key: k for k, key in enumerate(zip(trees, attrs["nodes_nodeids"]))}
@@ -409,10 +446,13 @@ def import_trees(node, importer):
     for k, tree in enumerate(trees):
         if k not in children:
             roots.setdefault(tree, k)
-    value = np.zeros(count)
-    for tree, nodeid, weight in zip(attrs[prefix + "_treeids"], attrs[prefix + "_nodeids"],
-                                    floats(prefix + "_weights")):
-        value[index[(tree, nodeid)]] += weight
+    value = np.zeros((count, scores))
+    for tree, nodeid, score, weight in zip(attrs[prefix + "_treeids"], attrs[prefix + "_nodeids"],
+                                           ids if scores > 1 else [0] * len(ids),
+                                           floats(prefix + "_weights")):
+        value[index[(tree, nodeid)], score] += weight
+    if scores == 1:
+        value = value[:, 0]
     if aggregate == "AVERAGE":
         value /= len(roots)
     ensemble = Ensemble([roots[tree] for tree in sorted(roots)], attrs["nodes_featureids"],
@@ -420,17 +460,64 @@ def import_trees(node, importer):
     # ONNX Runtime labels a binary one score classifier on the raw score, at 0.5 when no weight is negative.
     decision = None
     if classifier:
-        decision = 0.5 if np.all(floats("class_weights") >= 0) else 0.0
+        if binary:
+            decision = 0.5 if np.all(floats("class_weights") >= 0) else 0.0
         importer.drop(node.output[1])
+    if scores > 1:
+        base = base if len(base) else np.zeros(scores)
+    else:
+        base = base[0] if len(base) else 0.0
     importer.emit(TreeEnsembleOp(name, [importer.rename(node.input[0])],
-                                 [importer.rename(node.output[0])], ensemble,
-                                 base[0] if len(base) else 0.0, decision, op))
+                                 [importer.rename(node.output[0])], ensemble, base, decision,
+                                 op))
 
 
-def refuse_tree_ensemble(node, importer):
-    raise UnsupportedOpError(node.op_type, node.name, message=(
-        "TreeEnsemble %r is ai.onnx.ml opset 5, which is not supported yet; export "
-        "TreeEnsembleRegressor or TreeEnsembleClassifier instead" % node.name))
+def import_tree_ensemble(node, importer):
+    """TreeEnsemble from ai.onnx.ml 5 with one target: splits and leaves in separate arrays."""
+    attrs = node.attributes()
+    name = node.name or node.op_type
+
+    def array(key, dtype=np.float64):
+        value = attrs.get(key, [])
+        value = tensor_to_numpy(value) if isinstance(value, TensorProto) else value
+        return np.asarray(value, dtype=dtype).reshape(-1)
+
+    def refuse(text):
+        raise UnsupportedOpError(node.op_type, name, message="TreeEnsemble %r %s" % (name, text))
+
+    transform = int(attrs.get("post_transform", 0))
+    if transform != 0:
+        refuse("has post_transform %d, and only 0, NONE, is supported" % transform)
+    aggregate = int(attrs.get("aggregate_function", 1))
+    if aggregate not in (0, 1):
+        refuse("has aggregate_function %d, and only 0 and 1, AVERAGE and SUM, are supported"
+               % aggregate)
+    if int(attrs.get("n_targets", 1)) != 1:
+        refuse("has %d targets, and only one is supported" % int(attrs["n_targets"]))
+    # Modes 0 to 5 are MODES in order; 6 is BRANCH_MEMBER.
+    modes = array("nodes_modes", np.int64)
+    if np.any(modes == 6):
+        refuse("has a BRANCH_MEMBER node, which is not supported")
+    splits, leaves = len(modes), len(array("leaf_weights"))
+    # Splits keep their index and leaves follow them, each leaf its own child.
+    mode = np.concatenate([modes, np.full(leaves, LEAF)])
+    children = []
+    for side in ("true", "false"):
+        ids, leaf = array("nodes_%snodeids" % side, np.int64), array("nodes_%sleafs" % side,
+                                                                     np.int64)
+        children.append(np.concatenate([np.where(leaf == 1, ids + splits, ids),
+                                        np.arange(splits, splits + leaves)]))
+    value = np.zeros(splits + leaves)
+    value[splits:] = array("leaf_weights")
+    if aggregate == 0:
+        value /= len(array("tree_roots"))
+    feature = np.concatenate([array("nodes_featureids", np.int64), np.zeros(leaves, np.int64)])
+    threshold = np.concatenate([array("nodes_splits"), np.zeros(leaves)])
+    ensemble = Ensemble(array("tree_roots", np.int64), feature, threshold, mode, *children,
+                        value)
+    importer.emit(TreeEnsembleOp(name, [importer.rename(node.input[0])],
+                                 [importer.rename(node.output[0])], ensemble, 0.0, None,
+                                 node.op_type))
 
 
 LAYOUT_OPS = ("Flatten", "Reshape", "Squeeze", "Unsqueeze", "Transpose", "Slice", "Gather",
@@ -440,15 +527,15 @@ BUILTIN = {
     "Conv": import_conv, "Gemm": import_gemm, "MatMul": import_gemm,
     "Relu": import_relu, "MaxPool": import_maxpool, "Add": import_add,
     "QuantizeLinear": import_qdq, "DequantizeLinear": import_qdq,
-    "QLinearMatMul": import_qlinear, "QLinearConv": import_qlinear,
-    "QLinearAdd": import_qlinear, "MatMulInteger": import_integer,
+    **dict.fromkeys(QLINEAR, import_qlinear), "QLinearConcat": import_qconcat,
+    "MatMulInteger": import_integer,
     "ConvInteger": import_integer, "DynamicQuantizeLinear": refuse_dynamic,
     "Identity": import_identity, "ZipMap": import_identity, "Cast": import_cast,
     "Concat": import_concat, "BatchNormalization": import_batchnorm,
     "LinearRegressor": import_linear, "LinearClassifier": import_linear,
     "Scaler": import_scaler, "Binarizer": import_binarizer, "Normalizer": import_normalizer,
     "TreeEnsembleRegressor": import_trees, "TreeEnsembleClassifier": import_trees,
-    "TreeEnsemble": refuse_tree_ensemble,
+    "TreeEnsemble": import_tree_ensemble,
     **{op: import_elementwise for op in FUNCTIONS if op not in ("Relu", "Add")},
     **dict.fromkeys(REDUCE, import_reduce), **dict.fromkeys(SOFTMAX, import_softmax),
 }

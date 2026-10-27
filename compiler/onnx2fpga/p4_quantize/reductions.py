@@ -59,11 +59,13 @@ def widen(graph, source, dtype, extra=3):
 
 
 def lower_softmax(node, ctx):
-    """Softmax and the Normalizer give 0 to 1 or -1 to 1, so a calibrated output takes the grid 1/127."""
+    """Softmax and the L1 and L2 Normalizer give 0 to 1 or -1 to 1, so a calibrated output takes the grid 1/127."""
     graph, plan = ctx.graph, ctx.plan
     source, out = node.inputs[0], node.outputs[0]
     lanes, dtype = graph.tensor(source).numel, plan.act_dtype
-    if node.op_type != "LogSoftmax" and not (plan.from_model and plan.has(out)):
+    norm = node.attrs.get("norm", "L1")
+    bounded = node.op_type == "Softmax" or (node.op_type == "Normalizer" and norm != "MAX")
+    if bounded and not (plan.from_model and plan.has(out)):
         plan.annotate(out, QuantSpec(1.0 / dtype.max))
     scale, zero = plan.scale(source), plan.zero_point(source)
     out_scale = plan.scale(out)
@@ -71,12 +73,24 @@ def lower_softmax(node, ctx):
     mantissas = 1 + (np.arange(1 << MANTISSA_BITS) + 0.5) / (1 << MANTISSA_BITS)
     common = dict(lanes=lanes, op=node.op_type, in_dtype=dtype, out_dtype=dtype,
                   mantissa_bits=MANTISSA_BITS, out_zero_point=plan.zero_point(out))
-    if node.op_type == "Normalizer":
-        codes = index + dtype.min - zero
+    codes = index + dtype.min - zero
+    if node.op_type == "Normalizer" and norm == "L1":
         return [SoftmaxUnit(node.name, [source], [out], sum_table=np.abs(codes),
                             numer_table=codes, min_exp=0, subtract_max=False,
                             **divide(lanes * int(np.abs(codes).max()), out_scale, plan),
                             **common)]
+    if node.op_type == "Normalizer" and norm == "L2":
+        squares = codes * codes
+        # The parity takes one table bit, and a square root halves the mantissa's error.
+        return [SoftmaxUnit(node.name, [source], [out], sum_table=squares, numer_table=codes,
+                            min_exp=0, subtract_max=False, mode="root",
+                            **root(lanes * int(squares.max()), out_scale, plan),
+                            **dict(common, mantissa_bits=MANTISSA_BITS - 1))]
+    if node.op_type == "Normalizer":
+        return [SoftmaxUnit(node.name, [source], [out], sum_table=np.zeros(0, np.int64),
+                            numer_table=codes, min_exp=0, subtract_max=False, mode="max",
+                            **by_max(codes, scale, out_scale, plan),
+                            **dict(common, mantissa_bits=1))]
     exponential = np.rint(2.0 ** EXP_BITS * np.exp(-scale * index))
     total_bits = int(lanes * 2 ** EXP_BITS).bit_length()
     if node.op_type == "Softmax":
@@ -93,6 +107,31 @@ def lower_softmax(node, ctx):
                         subtract_max=True, scale_table=mantissa_log, exp_table=exponent_log,
                         scale_bits=max(2, (largest.bit_length() + 1)), shift=LOG_BITS,
                         **common)]
+
+
+def root(largest, out_scale, plan):
+    """K * 2^P / sqrt(m) for each mantissa, then the same over sqrt 2 for an odd exponent."""
+    limit = (1 << (plan.mult_bits - 1)) - 1
+    k = 1.0 / out_scale
+    shift = max(0, int(math.floor(math.log2(limit / k))))
+    bits = MANTISSA_BITS - 1
+    mantissas = 1 + (np.arange(1 << bits) + 0.5) / (1 << bits)
+    table = np.concatenate([np.rint(k * 2.0 ** shift * parity / np.sqrt(mantissas))
+                            for parity in (1.0, math.sqrt(0.5))])
+    exps = int(largest).bit_length()
+    return dict(scale_table=np.minimum(table, limit), exp_table=None,
+                scale_bits=plan.mult_bits, shift=shift + (exps - 1) // 2)
+
+
+def by_max(codes, in_scale, out_scale, plan):
+    """2^P / (so * c) at each largest code c, and 2^P * s / so at 0, which gives the input back."""
+    limit = (1 << (plan.mult_bits - 1)) - 1
+    peak = max(1.0, in_scale) / out_scale
+    shift = max(0, int(math.floor(math.log2(limit / peak))))
+    table = np.where(codes == 0, 2.0 ** shift * in_scale / out_scale,
+                     2.0 ** shift / (out_scale * np.where(codes == 0, 1, codes)))
+    return dict(scale_table=np.clip(np.rint(table), -limit, limit), exp_table=None,
+                scale_bits=plan.mult_bits, shift=shift)
 
 
 def divide(largest, out_scale, plan):

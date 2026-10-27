@@ -3,7 +3,7 @@
 import numpy as np
 
 from ..errors import BudgetError, ConfigError
-from ..p3_ops.elementwise import ElementwiseOp, EltwiseUnit, TableUnit
+from ..p3_ops.elementwise import ConcatOp, ConcatUnit, ElementwiseOp, EltwiseUnit, TableUnit
 from ..p3_ops.hardware_ops import DenseUnit, MatVecUnit, TreeEnsembleUnit
 from ..p3_ops.onnx_ops import AddOp, BinarizerOp, FlattenOp, GemmOp, ReluOp
 from ..p3_ops.reductions import ReduceOp, SoftmaxOp
@@ -15,7 +15,7 @@ from .folding import FoldingReport
 PATHS = {"product": "multiplies", "sum": "adder tree", "rescale": "rescale",
          "compare": "comparators", "select": "leaf select", "table": "table",
          "test": "comparison", "logic": "logic", "tree": "tree", "max": "max tree",
-         "normalize": "normalisation"}
+         "normalize": "normalisation", "pick": "pick tree"}
 
 
 def slowest(unit, delays):
@@ -34,7 +34,7 @@ def predicted_fmax(units, delays):
 def check_fixed_ops(graph):
     for node in graph.topological_order():
         if not isinstance(node, (GemmOp, FlattenOp, BinarizerOp, TreeEnsembleOp, ElementwiseOp,
-                                 ReluOp, AddOp, ReduceOp, SoftmaxOp)):
+                                 ReluOp, AddOp, ReduceOp, SoftmaxOp, ConcatOp)):
             kind = node.op_type + ("+Relu" if node.attrs.get("relu") else "")
             raise ConfigError("mode='fixed' cannot build %s (%s) yet" % (node.name, kind))
 
@@ -161,7 +161,7 @@ def longest_path(graph):
     for unit in graph.topological_order():
         times = [arrival[name] for name in unit.stream_inputs(graph)]
         start = max(times)
-        if isinstance(unit, EltwiseUnit):
+        if isinstance(unit, (EltwiseUnit, ConcatUnit)):
             unit.skew = [start - time for time in times]
         arrival[unit.outputs[0]] = start + unit.latency
     return arrival[graph.outputs[0]]
@@ -171,7 +171,7 @@ def compose_tables(graph):
     """A table that feeds only another table is folded into it, keeping the later one's name."""
     for unit in graph.topological_order():
         source = graph.producer(unit.inputs[0])
-        if (not isinstance(unit, TableUnit) or not isinstance(source, TableUnit)
+        if (type(unit) is not TableUnit or type(source) is not TableUnit
                 or len(graph.consumers(source.outputs[0])) != 1
                 or source.outputs[0] in graph.outputs):
             continue

@@ -4,7 +4,8 @@ import numpy as np
 
 from ..errors import ConfigError
 from ..p2_graph.datatype import QuantSpec
-from ..p3_ops.elementwise import BOOLEAN, ElementwiseOp, EltwiseUnit, TableUnit, evaluate
+from ..p3_ops.elementwise import (BOOLEAN, ConcatOp, ConcatUnit, ElementwiseOp, EltwiseUnit,
+                                  TableUnit, evaluate)
 from ..p3_ops.reductions import ReduceOp, SoftmaxOp
 from .requantize import Requantizer
 
@@ -25,7 +26,7 @@ def lookup_table(function, in_scale, in_zero_point, out_scale, out_zero_point, d
 
 def check_stream_ops(graph):
     for node in graph.topological_order():
-        if isinstance(node, (ElementwiseOp, ReduceOp, SoftmaxOp)):
+        if isinstance(node, (ElementwiseOp, ReduceOp, SoftmaxOp, ConcatOp)):
             raise ConfigError("mode='stream' cannot build %s (%s); it needs mode='fixed'"
                               % (node.name, node.op_type))
 
@@ -68,6 +69,21 @@ def table(node, ctx, source, shape):
     rows = np.broadcast_to(rows, (lanes, rows.shape[-1]))
     return TableUnit.per_lane(node.name, [source], node.outputs, rows, plan.act_dtype,
                               plan.act_dtype)
+
+
+def lower_concat(node, ctx):
+    """Each piece's codes moved onto the output grid by a table per lane, a feature at a time."""
+    graph, plan, dtype = ctx.graph, ctx.plan, ctx.plan.act_dtype
+    out, rows, widths = node.outputs[0], [], []
+    for name in node.inputs:
+        width = graph.tensor(name).numel
+        scale = np.broadcast_to(plan.scale(name), width).reshape(-1, 1)
+        zero = np.broadcast_to(plan.zero_point(name), width).reshape(-1, 1)
+        rows.append(lookup_table(lambda x: x, scale, zero, plan.scale(out), plan.zero_point(out),
+                                 dtype))
+        widths.append(width)
+    return [ConcatUnit.per_lane(node.name, node.inputs, node.outputs, np.vstack(rows), dtype,
+                                dtype, widths)]
 
 
 def eltwise(node, ctx, live, shape):

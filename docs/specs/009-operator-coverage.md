@@ -1,14 +1,12 @@
 # 009 Operator coverage
 
-Status: partial. Constant folding, live layout ops as wiring or views,
+Status: implemented. Constant folding, live layout ops as wiring or views,
 BatchNormalization, LinearRegressor, binary LinearClassifier, Scaler,
-Binarizer and the quantized MatMul, Conv and Add forms are built, and all 13
+Binarizer and ONNX Runtime's QDQ and QOperator forms are built, and all 20
 corpus models compile in fixed latency mode for `k26`, simulate bit exact and
 track ONNX Runtime; the multiclass classifier and the L1 Normalizer came with
-[011](011-reductions-and-softmax.md). Missing: a `Concat` whose pieces are
-not one Gemm's worth of the same tensor; `QGemm` and the other contrib
-quantized ops; and a float reference for ORT models whose Relu lives only in
-an output grid.
+[011](011-reductions-and-softmax.md). A `Concat` of several live tensors
+builds in fixed latency mode, its earlier pieces waiting in registers.
 
 ## Problem
 
@@ -24,11 +22,12 @@ extra ops are either computable at compile time or fold into a dense layer.
 
 ## Behaviour
 
-Nothing in this spec adds hardware, and no OCaml changed. Every op below is
-evaluated at compile time, becomes wiring, or folds into the weights of a Gemm
-or Conv that already exists. Ops that need new arithmetic on live data, such
-as Sigmoid, Mul of two live tensors or Softmax, belong to spec 010 and later
-work, and still raise `UnsupportedOpError`.
+Apart from a `Concat` of several live tensors, nothing in this spec adds
+hardware. Every other op below is evaluated at compile time, becomes wiring,
+or folds into the weights of a Gemm or Conv that already exists. Ops that
+need new arithmetic on live data, such as Sigmoid, Mul of two live tensors or
+Softmax, belong to [010](010-lookup-tables-and-elementwise.md) and later
+specs.
 
 ### Constant folding
 
@@ -80,8 +79,29 @@ channel are scaled and the bias shifted. This is how skl2onnx's `MatMul` then
 view of one tensor, the tensor itself, or a Gemm on that tensor that nothing
 else reads. The pieces then become one Gemm whose weights are the pieces side
 by side, or a view if no piece is a Gemm. In fixed latency mode that keeps the
-design a chain of dense layers with one latency. Any other live `Concat`
-raises `UnsupportedOpError`.
+design a chain of dense layers with one latency.
+
+Any other live `Concat` joins several tensors, such as a wide and deep model's
+raw features beside its hidden layer, `concat(x, relu(W x))`. Its pieces
+arrive at different cycles, so in fixed latency mode it becomes an
+`otf_concat` unit, and the fixed latency top already delays a unit's earlier
+inputs in plain registers until its latest one arrives, as it does for the
+elementwise units of 010. The pieces also sit on different grids, and the
+output gets one grid from calibration, so each lane goes through a table from
+its piece's grid onto the output's, the `otf_table` of 010 behind a join of
+its inputs, lowest lane first. That costs one cycle. A piece on a grid per
+feature, such as a model input with a scaler, gets a table per feature.
+Streaming mode refuses the unit with `ConfigError`, and a constant beside
+pieces of more than one live tensor is refused at import.
+
+On a model with 16 raw features, a Sigmoid of them and an 8 unit hidden
+layer joined into 40 lanes and read by one output, compiled for `k26` at
+322.265625 MHz, the hidden layer takes 7 cycles, so the features wait 7 and
+the Sigmoid 6. The design takes 15 cycles, 46.5 ns, and the join costs 1280
+LUTs of tables and 1985 flip flops, most of them the 1664 that hold the early
+pieces. The integer model's mean error is 2.5 percent of the output's
+standard deviation, it simulates bit exact on 10000 vectors, and the latency
+proof of [001](001-fixed-latency.md) closes at 15 cycles and fails at 14.
 
 ### BatchNormalization
 
@@ -114,8 +134,8 @@ of minus the floor of the threshold's code, and a clamp to 0 and 1, so on
 every input code it agrees with `x > threshold`; `tests/test_operators.py`
 checks all 256 codes on three feature grids. Its output grid is scale 1 and
 zero point 0, so a Gemm after it reads the bits as they are.
-`Normalizer` with an L1 norm is built by [011](011-reductions-and-softmax.md),
-and the MAX and L2 norms are refused.
+`Normalizer` is built by [011](011-reductions-and-softmax.md) with any of
+its three norms.
 
 ### Quantized operators
 
@@ -130,6 +150,18 @@ quantized tensor is the real tensor with a grid attached.
   a constant operand after a Gemm it folds into the Gemm's bias, and the Gemm
   takes the Add's output grid, so the intermediate grid ORT keeps before the
   bias is not built.
+- `QGemm` is a Gemm whose weights are dequantized along their output axis,
+  which `transB` decides. Its int32 bias is on the grid
+  `alpha * a_scale * b_scale`, as ORT defines it, and without an output grid
+  its output is float.
+- `QLinearMul`, `QLinearSigmoid`, `QLinearLeakyRelu`, `QLinearSoftmax` and
+  `QLinearReduceMean` become their float op between their grids, so the
+  units of [010](010-lookup-tables-and-elementwise.md) and
+  [011](011-reductions-and-softmax.md) build them. A `QLinearMul` with a
+  constant operand folds like a constant `Mul`. `QLinearConcat` gives its
+  output grid first and then a tensor, scale and zero point per piece, and is
+  a `Concat`. `QLinearAveragePool` and
+  `QLinearGlobalAveragePool` are refused, as their float forms are.
 - `MatMulInteger` and `ConvInteger` compute `(a - a_zero) @ (b - b_zero)` in
   int32. When `a` carries a grid of scale `s`, that equals the real input times
   `(b - b_zero) / s`, which becomes the layer's weights. The `Cast` and the
@@ -166,17 +198,17 @@ several thousand codes: on the scaler pipeline below it put the mean error at
 
 An op with no handler raises `UnsupportedOpError` naming it, as before. An op
 we know whose case we cannot build raises it with one sentence naming the
-case, for example `Normalizer 'Normalizer' has norm MAX, and only L1 is
+case, for example `TreeEnsemble 'op' has a BRANCH_MEMBER node, which is not
 supported` or `DynamicQuantizeLinear 'q' computes its scale from the data at
 run time, which a fixed point design cannot do`.
 
 ## Verification
 
-`tests/fixtures/make_corpus.py` exports thirteen small real models with
+`tests/fixtures/make_corpus.py` exports twenty small real models with
 scikit-learn 1.9, skl2onnx 1.20, XGBoost 3.4, LightGBM 4.7, onnxmltools 1.16,
 ONNX Runtime 1.31 and PyTorch 2.12, and stores each `.onnx` in
 `tests/fixtures/corpus` with 512 calibration inputs, 256 held out inputs and
-ONNX Runtime's outputs on them. The largest file is 13 KB. Features are eight
+ONNX Runtime's outputs on them. The largest file is 34 KB. Features are eight
 columns of different sizes; the scaler pipelines and the PyTorch model get
 them at the sizes of prices, volumes and ratios, so a price sits near 100 and
 a volume near 5000.
@@ -187,9 +219,15 @@ through Verilator and requires every answer to match the integer model bit for
 bit. It then requires the integer model's mean absolute error against the
 stored ONNX Runtime outputs to stay under 2.5 percent of the output's standard
 deviation, or the labels to agree on at least 98 percent of the held out
-inputs. When onnxruntime is importable it also checks the stored outputs are
-still what ONNX Runtime computes; the main test environment does not have it,
-and the repo does not depend on it.
+inputs. ONNX Runtime's quantizer drops a Relu whose output grid already clamps
+at zero, so the float graph of both ORT MLPs has no Relu. The float reference
+that `evaluate()` uses therefore clips every tensor whose grid the model
+states to that grid's range, as a QDQ pair saturates in ORT. Before, it sat 70
+percent of the output's standard deviation away from ORT on those two models;
+now it sits 1.7 percent away, and the test requires every ORT model's float
+reference to stay under the same 2.5 percent. When onnxruntime is importable
+it also checks the stored outputs are still what ONNX Runtime computes; the
+main test environment does not have it, and the repo does not depend on it.
 
 | Model | Exporter and ops | Compiles | Latency | Bit exact | Against ONNX Runtime |
 |---|---|---|---|---|---|
@@ -202,26 +240,42 @@ and the repo does not depend on it.
 | `torch_bn_mlp` | PyTorch `BatchNormalization` twice, `Gemm`, `Relu` | yes | 6 | yes | 1.3 % |
 | `ort_qoperator_mlp` | ORT static `QLinearMatMul`, `QLinearAdd` | yes | 6 | yes | 0.6 %, worst 2 output steps |
 | `ort_qdq_mlp` | ORT static QDQ, int32 bias | yes | 6 | yes | 0.6 %, worst 2 output steps |
+| `ort_qoperator_gemm` | ORT static `QGemm`, `QLinearSigmoid`, `QLinearSoftmax` | yes | 12 | yes | 0.01 %, worst 1 output step |
 | `xgb_small` | onnxmltools `TreeEnsembleRegressor`, 20 trees | yes | 5 | yes | 0.25 % |
 | `lgbm_small` | onnxmltools `TreeEnsembleRegressor`, `Identity` | yes | 5 | yes | under 0.001 % |
 | `logistic_multiclass` | skl2onnx `LinearClassifier` SOFTMAX, `Normalizer`, with [011](011-reductions-and-softmax.md) | yes | 4 | yes | labels agree on 98.8 % |
 | `mlp_sigmoid` | skl2onnx `Sigmoid`, a table from [010](010-lookup-tables-and-elementwise.md) | yes | 7 | yes | 1.7 % |
+| `xgb_multiclass` | onnxmltools `TreeEnsembleClassifier` SOFTMAX, 3 classes, with [012](012-multiclass-trees.md) | yes | 6 | yes | labels agree on 100 % |
+| `lgbm_multiclass` | onnxmltools `TreeEnsembleClassifier` SOFTMAX, `Identity`, `Cast`, `Mul` | yes | 6 | yes | labels agree on 100 % |
+| `forest_multiclass` | skl2onnx random forest, every leaf scoring 3 classes | yes | 5 | yes | labels agree on 100 % |
+| `forest_binary` | skl2onnx random forest, one score | yes | 4 | yes | labels agree on 100 % |
+| `xgb_small_v5` | `xgb_small` rewritten as ai.onnx.ml 5 `TreeEnsemble` | yes | 5 | yes | 0.25 % |
+| `normalizer_logistic` | skl2onnx L2 `Normalizer`, `LinearClassifier`, with [011](011-reductions-and-softmax.md) | yes | 8 | yes | labels agree on 99.2 % |
 
 Latencies are at the device model's clock. At `clock_mhz=322.265625` the
 logistic regression takes 5 cycles, 15.5 ns, and the PyTorch MLP 13 cycles,
 40.3 ns, in 4654 LUT and 17 DSP. The quantized MLPs differ from ONNX Runtime by
 up to two steps of the output grid because ORT rounds the product onto the
 `QLinearMatMul` output grid before adding the bias and rounds again after,
-and we round once.
+and we round once. `QGemm` adds its bias before it rounds, as we do, and the
+three class `ort_qoperator_gemm` is never more than one step of its 1/256
+output grid from ORT, with the most likely class the same on every held out
+input. It takes 22 cycles at 322.265625 MHz, 68.3 ns, in 7536 LUT and 22 DSP.
 
 `tests/test_operators.py`, in `make test-unit`, builds small models with the
 repo's own `ModelBuilder` and checks each float graph against numpy's reading
 of the ONNX model: PyTorch style shape plumbing that folds to one Gemm, the
 Flatten of a map with and without an NHWC transpose before it, BatchNorm on
 inputs, after a Gemm and after a Conv, Concat of the input, a Gemm on it and a
-Gather of it, `QLinearMatMul` with `QLinearAdd`, `MatMulInteger` with its
-`Cast` and `Mul`, `QLinearConv`, `ConvInteger`, the Binarizer on every code,
-and the refusals.
+Gather of it, the input beside a Relu of a Gemm on it, `QLinearMatMul` with
+`QLinearAdd`, `MatMulInteger` with its `Cast` and `Mul`, `QLinearConv`,
+`ConvInteger`, `QGemm` with `transB` and `alpha`, `QLinearMul`,
+`QLinearSigmoid`, `QLinearLeakyRelu`, `QLinearSoftmax`, `QLinearReduceMean`,
+`QLinearConcat`, the Binarizer on every code, and the refusals.
+
+`tests/test_elementwise.py`, in `make test-api`, compiles the wide and deep
+model of the Concat section and checks the waits, the latency, the error
+against float, the simulation, the proof and the refusal in streaming mode.
 
 ## Done when
 
@@ -234,14 +288,10 @@ and the refusals.
 
 ## Open questions
 
-- A `Concat` whose pieces have different latencies, such as `x` beside
-  `relu(W x)`, needs a delay line in the fixed latency top. Is it worth
-  building, or is the merged Gemm enough for real models?
+- The join's tables cost a cycle. When a Gemm reads the join, as in the wide
+  and deep model, the move onto one grid could fold into that Gemm's weights
+  per feature, as the input grids above do, and a table that feeds a piece
+  could fold into the join's; both would save the cycle.
 - Should every calibrated fixed latency model get per feature input grids, not
   only those with a scaler? It would change the grids of existing designs and
   of the tick to trade path, whose features unit produces codes on one grid.
-- ONNX Runtime's quantizer drops a Relu whose output grid already clamps at
-  zero, so the float graph of `ort_qoperator_mlp` has no Relu and
-  `evaluate()` compares the integer model with the wrong float model. The
-  integer model is right, as the table shows; the float reference should take
-  the clamp from the grid.
