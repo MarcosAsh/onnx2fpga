@@ -186,7 +186,9 @@ listing the valid ones.
 ### `Layer.quantize(weights=None, activations=None)`
 
 `weights="int2"` to `"int8"`. `activations` is planned and raises
-`ConfigError` today.
+`ConfigError` today, except on a tree ensemble, where `weights` sets the leaf
+width and `activations` the feature width, each `"int2"` to `"int16"`, see
+[013](../specs/013-tree-widths.md).
 
 ### `Layer.arithmetic(kind="auto")`
 

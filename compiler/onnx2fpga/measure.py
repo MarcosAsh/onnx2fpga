@@ -61,8 +61,9 @@ class SynthesisResult:
 
 class VivadoRunner:
     def __init__(self, part, period_ns=5.0, implement=False, executable="vivado",
-                 assets=None):
+                 assets=None, clock="clk"):
         self.part = part
+        self.clock = clock
         self.period_ns = period_ns
         self.implement = implement
         self.executable = executable
@@ -86,6 +87,7 @@ class VivadoRunner:
             "OTF_PERIOD": str(self.period_ns),
             "OTF_OUT": str(out_dir),
             "OTF_IMPL": "1" if self.implement else "0",
+            "OTF_CLOCK": self.clock,
         }
 
     def command(self):

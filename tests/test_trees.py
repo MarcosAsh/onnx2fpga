@@ -307,5 +307,51 @@ class Multiclass(unittest.TestCase):
         self.assertFalse(prove(build, 8 * 16, 6)[0], "a latency of 6 must not prove")
 
 
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Narrow(unittest.TestCase):
+    """12 bit features and 8 bit leaves on the three class XGBoost model at 322 MHz."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.acc = otf.load(model("xgb_multiclass"))
+        cls.acc.layers[next(iter(cls.acc.layers))].quantize(weights="int8", activations="int12")
+        cls.acc.compile(device="k26", mode="fixed", clock_mhz=322.265625,
+                        out_dir=Fixtures.build_dir("trees_narrow"))
+
+    def test_widths(self):
+        unit = self.acc.result.hardware_graph.nodes[0]
+        self.assertEqual((unit.feature_dtype.bits, unit.leaf_dtype.bits), (12, 8))
+        lines = []
+        self.acc.summary(print_fn=lines.append)
+        self.assertIn("features int12", lines[0])
+        wide = compiled("xgb_multiclass", "k26", 322.265625).result.hardware_graph.nodes[0]
+        self.assertLess(unit.resources(self.acc.device).lut,
+                        0.6 * wide.resources(self.acc.device).lut)
+
+    def test_agreement(self):
+        data = np.load(FIXTURES / "corpus" / "xgb_multiclass.npz")
+        got = self.acc.predict(data["x"]).reshape(data["y"].shape)
+        self.assertGreaterEqual(np.mean(got == data["y"]), 0.99)
+
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
+    def test_simulate(self):
+        report = self.acc.simulate()
+        self.assertTrue(report.ok, report.first.output)
+
+    @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
+    def test_proof(self):
+        build, latency = pathlib.Path(self.acc.out_dir), self.acc.latency
+        self.assertTrue(prove(build, 8 * 12, latency)[0])
+        self.assertFalse(prove(build, 8 * 12, latency - 1)[0])
+
+    def test_refused(self):
+        layer = otf.load(model("xgb_multiclass")).layers
+        layer = layer[next(iter(layer))]
+        with self.assertRaisesRegex(ConfigError, "activations='int17' .* 'int2' to 'int16'"):
+            layer.quantize(activations="int17")
+        with self.assertRaisesRegex(ConfigError, "weights='int1' .* 'int2' to 'int16'"):
+            layer.quantize(weights="int1")
+
+
 if __name__ == "__main__":
     unittest.main()

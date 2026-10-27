@@ -5,7 +5,7 @@ PYTHONPATH  := compiler:tests:examples
 export PYTHONPATH
 
 .PHONY: help models test test-unit test-sim test-cpp test-hardcaml test-api runtime lint \
-        clean demo vivado synth synth-impl synth-dry test-flaky test-flaky-all \
+        clean demo vivado synth synth-impl synth-dry measure-k26 test-flaky test-flaky-all \
         assets wheel icepi
 
 help:
@@ -24,6 +24,7 @@ help:
 	@echo "make vivado     what this machine can compile, simulate and measure"
 	@echo "make synth      measure real resources and fmax (needs Vivado)"
 	@echo "make synth-dry  print the Vivado commands without running them"
+	@echo "make measure-k26  place and route every corpus model on the K26 (needs Vivado)"
 	@echo "make icepi      the example MLP as an Icepi Zero bitstream (needs dune, yosys, nextpnr)"
 
 models:
@@ -125,6 +126,9 @@ synth: models
 synth-impl: models
 	$(PYTHON) -m onnx2fpga synth $(MODEL) --device $(DEVICE) --vivado "$(VIVADO)" \
 	  --impl --measurements build/characterize/measured.json
+
+measure-k26:
+	$(PYTHON) tools/measure_k26.py --vivado "$(VIVADO)"
 
 synth-dry: models
 	$(PYTHON) -m onnx2fpga synth $(MODEL) --device $(DEVICE) --dry-run

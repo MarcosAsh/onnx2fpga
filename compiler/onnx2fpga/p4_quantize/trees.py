@@ -20,11 +20,12 @@ def leaf_scale(ensemble, bits):
     return peak / ((1 << (bits - 1)) - 1) if peak > 0 else 1.0
 
 
-def plan_trees(graph, mult_bits=18):
+def plan_trees(graph, mult_bits=18, features=None, leaves=None):
     """Per feature grids with a power of two step, so round thresholds land on codes, spanning the thresholds with a code to spare each end."""
     op = tree_op(graph)
     ensemble = op.ensemble
-    dtype = IntType(FEATURE_BITS, True)
+    dtype = features or IntType(FEATURE_BITS, True)
+    leaves = leaves or IntType(LEAF_BITS, True)
     features = graph.tensor(op.inputs[0]).numel
     scales, zeros = np.ones(features), np.zeros(features, dtype=np.int64)
     split = ensemble.mode != LEAF
@@ -37,11 +38,11 @@ def plan_trees(graph, mult_bits=18):
             zeros[feature] = int(round(dtype.min + 1 - low / scales[feature]))
     plan = QuantizationPlan(mult_bits)
     plan.act_dtype = dtype
-    plan.weight_dtype = IntType(LEAF_BITS, True)
+    plan.weight_dtype = leaves
     plan.source = "thresholds"
     plan.annotate(op.inputs[0], QuantSpec(scales, zeros, dtype))
     plan.annotate(op.outputs[0], QuantSpec(
-        1.0 if op.decision is not None or op.label else leaf_scale(ensemble, LEAF_BITS), 0))
+        1.0 if op.decision is not None or op.label else leaf_scale(ensemble, leaves.bits), 0))
     return plan
 
 

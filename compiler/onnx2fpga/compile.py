@@ -59,7 +59,7 @@ class Compiler:
                  mult_bits=18, top_name="otf_top", verbose=False, fifo_cap=None,
                  hdl="sv", folding=None, weight_dtypes=None, custom_objects=None,
                  mode="stream", arithmetic=None, memory=None, weights="frozen",
-                 clock_mhz=None):
+                 clock_mhz=None, activation_dtypes=None):
         self.device = device if isinstance(device, Device) else Device.get(device)
         self.target_cycles = target_cycles
         self.utilisation_limit = utilisation_limit
@@ -70,6 +70,7 @@ class Compiler:
         self.hdl = hdl
         self.folding = dict(folding or {})
         self.weight_dtypes = dict(weight_dtypes or {})
+        self.activation_dtypes = dict(activation_dtypes or {})
         self.custom_handlers, self.custom_lowerings = custom_passes(custom_objects)
         self.mode = mode
         self.arithmetic = dict(arithmetic or {})
@@ -119,9 +120,11 @@ class Compiler:
 
     def _plan(self, graph, samples, context):
         """A pre-quantized model already states every scale, so calibrating it would be guessing."""
-        if tree_op(graph):
+        op = tree_op(graph)
+        if op:
             context.note("plan: feature grids from the tree thresholds")
-            plan = plan_trees(graph, self.mult_bits)
+            plan = plan_trees(graph, self.mult_bits, self.activation_dtypes.get(op.name),
+                              self.weight_dtypes.get(op.name))
         elif graph.annotations:
             context.note("plan: read %d grids from the model's quantize nodes"
                          % len(graph.annotations))

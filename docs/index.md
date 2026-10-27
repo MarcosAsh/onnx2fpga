@@ -85,6 +85,7 @@ specs/009-operator-coverage
 specs/010-lookup-tables-and-elementwise
 specs/011-reductions-and-softmax
 specs/012-multiclass-trees
+specs/013-tree-widths
 ```
 
 ```{toctree}

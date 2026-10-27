@@ -12,6 +12,7 @@ set generics [env_or OTF_GENERICS ""]
 set period   [env_or OTF_PERIOD 5.0]
 set outdir   [env_or OTF_OUT "synth_out"]
 set do_impl  [env_or OTF_IMPL 0]
+set clock    [env_or OTF_CLOCK clk]
 
 file mkdir $outdir
 
@@ -21,7 +22,7 @@ foreach source $sources {
 
 set xdc [file join $outdir clock.xdc]
 set handle [open $xdc w]
-puts $handle "create_clock -name clk -period $period \[get_ports clk\]"
+puts $handle "create_clock -name clk -period $period \[get_ports $clock\]"
 close $handle
 read_xdc -mode out_of_context $xdc
 

@@ -276,6 +276,7 @@ class Accelerator:
                             top_name=top, verbose=verbose, hdl=hdl,
                             folding=self.layers.pins(),
                             weight_dtypes=self.layers.weight_dtypes(),
+                            activation_dtypes=self.layers.activation_dtypes(),
                             arithmetic=self.layers.arithmetic(),
                              memory=self.layers.memory(),
                              custom_objects=self.custom_objects, mode=mode, weights=weights,
@@ -907,9 +908,11 @@ class Layer:
         else:
             self.factors = ("pe",)
         self.has_weights = isinstance(node, (GemmOp, ConvOp))
+        self.trees = isinstance(node, TreeEnsembleOp)
         self.custom = isinstance(node, CustomOp)
         self.pinned = {}
         self.weight_dtype = None
+        self.activation_dtype = None
         self.arithmetic_choice = "auto"
         self.memory_choice = "auto"
 
@@ -932,7 +935,14 @@ class Layer:
         return self
 
     def quantize(self, weights=None, activations=None):
-        """Sets the weight precision of this layer, "int2" to "int8"; none restores the default."""
+        """Weight precision, "int2" to "int8"; a tree takes leaves and features, "int2" to "int16"; none restores the default."""
+        if self.trees:
+            self.weight_dtype = None if weights is None else _weight_dtype(
+                weights, self.name, 16)
+            self.activation_dtype = None if activations is None else _weight_dtype(
+                activations, self.name, 16, "activations")
+            self._accelerator._changed()
+            return self
         if activations is not None:
             raise ConfigError("activation precision cannot be set per layer")
         if weights is not None and not self.has_weights:
@@ -1052,6 +1062,10 @@ class Layers(collections.abc.Mapping):
         return {name: layer.weight_dtype for name, layer in self._layers.items()
                 if layer.weight_dtype is not None}
 
+    def activation_dtypes(self):
+        return {name: layer.activation_dtype for name, layer in self._layers.items()
+                if layer.activation_dtype is not None}
+
     def arithmetic(self):
         return {name: layer.arithmetic_choice for name, layer in self._layers.items()
                 if layer.arithmetic_choice != "auto"}
@@ -1071,10 +1085,11 @@ def _fixed_hdl(hdl):
     return resolve_hdl(chosen)
 
 
-def _weight_dtype(text, layer):
+def _weight_dtype(text, layer, widest=8, what="weights"):
     found = re.fullmatch(r"int(\d+)", str(text).strip().lower())
-    if not found or not 2 <= int(found.group(1)) <= 8:
-        raise ConfigError("weights=%r for %s, expected 'int2' to 'int8'" % (text, layer))
+    if not found or not 2 <= int(found.group(1)) <= widest:
+        raise ConfigError("%s=%r for %s, expected 'int2' to 'int%d'"
+                          % (what, text, layer, widest))
     bits = int(found.group(1))
     return DataType._registry.get("INT%d" % bits) or IntType(bits, True)
 

@@ -49,7 +49,8 @@ the import follows it.
 
 ## Quantization
 
-Features are 16 bit codes and every feature gets its own grid,
+Features are 16 bit codes, or as narrow as 2 bits with
+[013](013-tree-widths.md), and every feature gets its own grid,
 `real = scale * (code - zero_point)`. The grid comes from the model, not from
 calibration data: its step is a power of two and it spans the feature's
 thresholds with one code to spare at each end. A value past the last threshold
@@ -80,7 +81,8 @@ the regressor and 99.89 percent for the classifier, the classifier's label
 agrees on all 10000, and the regressor's mean absolute error is 0.013 against
 an output standard deviation of 188. With 8 bit features the classifier agreed
 on 99.67 percent and every tree agreed on 83 percent, which is why features
-are 16 bits; comparators that wide are cheap.
+are 16 bits by default; [013](013-tree-widths.md) measures what narrower
+features and leaves cost the corpus models.
 
 ## Import
 

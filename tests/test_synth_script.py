@@ -15,7 +15,7 @@ PERIOD = 5.0
 SLACK = 0.842
 
 
-def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4"):
+def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None):
     out = Fixtures.build_dir("synth_stub_" + name) / "synth" / "unit"
     if out.exists():
         shutil.rmtree(out)
@@ -23,6 +23,8 @@ def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4"):
                        OTF_RTL="rtl/otf_requant.sv rtl/otf_mvau.sv",
                        OTF_GENERICS=generics, OTF_PERIOD=str(PERIOD), OTF_OUT=str(out),
                        OTF_IMPL="1" if implement else "0")
+    if clock:
+        environment["OTF_CLOCK"] = clock
     completed = subprocess.run(["tclsh", str(STUB)], cwd=out.parents[1], env=environment,
                                capture_output=True, text=True, timeout=120)
     calls = (out / "calls.txt").read_text().splitlines() if out.exists() else []
@@ -49,6 +51,7 @@ class SynthScriptTest(unittest.TestCase):
         xdc = (out / "clock.xdc").read_text()
         self.assertIn("create_clock", xdc)
         self.assertIn("-period 5.0", xdc)
+        self.assertIn("[get_ports clk]", xdc)
         first = {step: next(i for i, c in enumerate(calls) if c.startswith(step))
                  for step in ("read_xdc", "synth_design")}
         self.assertLess(first["read_xdc"], first["synth_design"])
@@ -70,6 +73,12 @@ class SynthScriptTest(unittest.TestCase):
             self.assertTrue(any(c.startswith(step) for c in calls), step)
         self.assertEqual(SynthesisResult.load(out / "summary.json").stage, "impl")
         self.assertTrue((out / "utilization_impl.rpt").exists())
+
+    def test_clock_port(self):
+        # Hardcaml tops name the clock port clock.
+        out, completed, _ = run_stub("clock", generics="", clock="clock")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("[get_ports clock]", (out / "clock.xdc").read_text())
 
     def test_no_generics(self):
         _, completed, calls = run_stub("nogenerics", generics="")

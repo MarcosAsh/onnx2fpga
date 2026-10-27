@@ -44,9 +44,21 @@ Anything from int2 to int8 works. On AMD parts narrower weights also pack more
 multiplies into each DSP. A QDQ model refuses the override, since its weights
 are already fixed.
 
+A tree ensemble takes its leaves as weights and its features as activations,
+each int2 to int16, 16 bits by default:
+
+```python
+acc.layers["TreeEnsembleClassifier"].quantize(weights="int8", activations="int12")
+```
+
+On the corpus that takes 45 percent of the LUTs off every tree model and keeps
+the labels within 2 percent of ONNX Runtime's, see
+[013](../specs/013-tree-widths.md).
+
 ## Not built yet
 
-`quantize(activations=...)` raises `ConfigError` today. Every stream in the
+`quantize(activations=...)` raises `ConfigError` on any layer but a tree
+ensemble. Every stream in the
 pipeline is one width, and giving a layer its own would need converters on
 both sides that the compiler does not insert yet. Importing models trained with
 quantization in QONNX, Brevitas or HGQ is not planned right now.
