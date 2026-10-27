@@ -17,6 +17,8 @@ HARDCAML = Hdl.skip_reason("hardcaml")
 MODELS = sorted(path.stem for path in CORPUS.glob("*.onnx"))
 # Models ONNX Runtime quantized, whose grids the float reference must respect.
 QUANTIZED = [name for name in MODELS if name.startswith("ort_")]
+# Models whose outputs came from qonnx, since ONNX Runtime cannot run a Quant node.
+QONNX = [name for name in MODELS if name.startswith("qonnx_")]
 # Models that need an op from later work, and that op; none today.
 EXPECTED_FAIL = {}
 # Mean absolute error against ONNX Runtime, as a share of the output's standard deviation.
@@ -75,7 +77,7 @@ class Corpus(unittest.TestCase):
             import onnxruntime
         except ImportError:
             self.skipTest("onnxruntime is not installed")
-        for name in MODELS:
+        for name in sorted(set(MODELS) - set(QONNX)):
             with self.subTest(name):
                 data = stored(name)
                 session = onnxruntime.InferenceSession(str(CORPUS / ("%s.onnx" % name)))

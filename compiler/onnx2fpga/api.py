@@ -27,8 +27,8 @@ from .p1_ingest.protobuf_codec import WireError
 from .p2_graph.datatype import DataType, IntType
 from .p2_graph.onnx_importer import OnnxImporter
 from .p3_ops.elementwise import EltwiseUnit, TableUnit
-from .p3_ops.hardware_ops import (DenseUnit, DuplicateUnit, StreamFifo, TreeEnsembleUnit,
-                                  WidthConverter)
+from .p3_ops.hardware_ops import (DenseUnit, DuplicateUnit, MatVecUnit, StreamFifo,
+                                  TreeEnsembleUnit, WidthConverter)
 from .p3_ops.onnx_ops import ConvOp, FlattenOp, GemmOp
 from .p3_ops.reductions import ReduceUnit, SoftmaxUnit
 from .p3_ops.trees import TreeEnsembleOp
@@ -581,6 +581,16 @@ class Accelerator:
             return ("features %s on per feature grids from the thresholds, leaves %s"
                     % (plan.act_dtype.name.lower(), plan.weight_dtype.name.lower()))
         weights = plan.weight_dtype.name.lower()
+        if plan.from_model and any(n.op_type in ("Quant", "IntQuant")
+                                   for n in self.model.graph.node):
+            units = self.result.hardware_graph.nodes
+            weights = "/".join(sorted({unit.weight_dtype.name.lower() for unit in units
+                                       if isinstance(unit, MatVecUnit)})) or weights
+            narrow = sorted({spec.dtype.bits for spec in plan.specs.values()
+                             if spec.dtype is not None and spec.dtype.bits < plan.act_dtype.bits})
+            grids = " on %s bit grids" % "/".join(map(str, narrow)) if narrow else ""
+            return "weights %s, activations %s%s, from the model's Quant nodes" % (
+                weights, plan.act_dtype.name.lower(), grids)
         if plan.layer_weight_dtypes:
             weights += " (%s)" % ", ".join(
                 "%s %s" % (name, dtype.name.lower())

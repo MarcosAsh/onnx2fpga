@@ -117,6 +117,48 @@ def import_qdq(node, importer):
     importer.annotate(target, spec)
 
 
+def import_quant(node, importer):
+    """A QONNX Quant: a constant is rounded onto its grid, anything else is annotated with it."""
+    attributes = node.attributes()
+    signed, narrow = int(attributes.get("signed", 1)), int(attributes.get("narrow", 0))
+    bits = importer.constant_array(node.input[3])
+    zero = importer.constant_array(node.input[2])
+    scale = importer.constant_array(node.input[1])
+    mode = attributes.get("rounding_mode", "ROUND")
+    mode = mode.decode() if isinstance(mode, bytes) else mode
+    if bits.size != 1 or bits.flat[0] != int(bits.flat[0]):
+        refuse(node, "has a bit width that is not one integer")
+    bits = int(bits.flat[0])
+    if np.any(zero != np.rint(zero)):
+        refuse(node, "has a zero point that is not an integer")
+    if mode.upper() not in ("ROUND", "HALF_EVEN"):
+        refuse(node, "rounds by %s, and only ROUND is supported" % mode)
+    low = narrow - (1 << (bits - 1)) if signed else 0
+    high = (1 << (bits - 1)) - 1 if signed else (1 << bits) - 1 - narrow
+    source, target = importer.rename(node.input[0]), node.output[0]
+    raw = importer.constants.get(source)
+    if raw is not None:
+        if not 2 <= bits <= 32:
+            refuse(node, "quantizes a constant to %d bits, and only 2 to 32 are supported"
+                   % bits)
+        codes = np.clip(np.rint(np.asarray(raw, dtype=np.float64) / scale + zero), low, high)
+        importer.constants[target] = scale * (codes - zero)
+        if bits <= 8:
+            importer.annotate(target, QuantSpec(scale.reshape(-1), zero.reshape(-1),
+                                                IntType(bits, bool(signed))))
+        return
+    if not 2 <= bits <= 8:
+        refuse(node, "quantizes to %d bits, and activations take 2 to 8" % bits)
+    if scale.size != 1 or zero.size != 1:
+        refuse(node, "has a scale per channel, which an activation cannot have yet")
+    if narrow:
+        refuse(node, "has a narrow range, which an activation cannot have yet")
+    spec = QuantSpec(scale.reshape(-1), zero.reshape(-1), IntType(bits, bool(signed)))
+    importer.alias(target, node.input[0], reads=False)
+    importer.annotate(source, spec)
+    importer.annotate(target, spec)
+
+
 def real(importer, name, spec, axis=-1):
     """The real tensor behind integer tensor `name` on grid `spec`, as a QDQ pair would give."""
     raw = importer.constants.get(importer.rename(name))
@@ -527,6 +569,7 @@ BUILTIN = {
     "Conv": import_conv, "Gemm": import_gemm, "MatMul": import_gemm,
     "Relu": import_relu, "MaxPool": import_maxpool, "Add": import_add,
     "QuantizeLinear": import_qdq, "DequantizeLinear": import_qdq,
+    "Quant": import_quant, "IntQuant": import_quant,
     **dict.fromkeys(QLINEAR, import_qlinear), "QLinearConcat": import_qconcat,
     "MatMulInteger": import_integer,
     "ConvInteger": import_integer, "DynamicQuantizeLinear": refuse_dynamic,

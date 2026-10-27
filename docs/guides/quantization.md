@@ -60,5 +60,9 @@ the labels within 2 percent of ONNX Runtime's, see
 `quantize(activations=...)` raises `ConfigError` on any layer but a tree
 ensemble. Every stream in the
 pipeline is one width, and giving a layer its own would need converters on
-both sides that the compiler does not insert yet. Importing models trained with
-quantization in QONNX, Brevitas or HGQ is not planned right now.
+both sides that the compiler does not insert yet.
+
+A QONNX model, as Brevitas and the hls4ml tools export, states its own grids
+with `Quant` nodes, and they are read like QDQ ones: weights keep their 2 to 8
+bit width, and activations of 2 to 8 bits are clamped to their range on the
+8 bit streams, see [014](../specs/014-qonnx.md).

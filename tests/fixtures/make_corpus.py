@@ -1,7 +1,7 @@
 """Exports the models in tests/fixtures/corpus, each with its inputs and ONNX Runtime's outputs.
 
-Needs scikit-learn, skl2onnx, xgboost, lightgbm, onnxmltools, onnx and onnxruntime, and torch
-for torch_bn_mlp; pass model names to export only those.
+Needs scikit-learn, skl2onnx, xgboost, lightgbm, onnxmltools, onnx and onnxruntime, torch
+for torch_bn_mlp and qonnx for qonnx_mlp; pass model names to export only those.
 """
 
 import pathlib
@@ -32,14 +32,17 @@ def target(x, seed=1):
         0, 0.1, len(x))
 
 
-def save(name, model, x):
-    """The model, and the first output ONNX Runtime gives on 256 held out inputs."""
+def save(name, model, x, run=None):
+    """The model, and the first output ONNX Runtime, or `run`, gives on 256 held out inputs."""
     if model.ir_version > 9:
         model.ir_version = 9
-    session = onnxruntime.InferenceSession(model.SerializeToString())
     inputs = x[-256:]
-    feed = {session.get_inputs()[0].name: inputs}
-    y = np.asarray(session.run([session.get_outputs()[0].name], feed)[0], dtype=np.float64)
+    if run is None:
+        session = onnxruntime.InferenceSession(model.SerializeToString())
+        feed = {session.get_inputs()[0].name: inputs}
+        y = np.asarray(session.run([session.get_outputs()[0].name], feed)[0], dtype=np.float64)
+    else:
+        y = np.asarray(run(inputs), dtype=np.float64)
     OUT.mkdir(exist_ok=True)
     onnx.save(model, OUT / ("%s.onnx" % name))
     np.savez(OUT / ("%s.npz" % name), x=inputs, y=y.reshape(len(inputs), -1),
@@ -339,11 +342,74 @@ def ort_qoperator_gemm():
     model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=9)
     ort_static("ort_qoperator_gemm", QuantFormat.QOperator, model)
 
+
+def qonnx_mlp():
+    """A 4 bit MLP in QONNX, as Brevitas exports one: 8 bit input, 4 bit weights and activations."""
+    from onnx import TensorProto, helper, numpy_helper
+    from qonnx.core.modelwrapper import ModelWrapper
+    from qonnx.core import onnx_exec
+    from qonnx.transformation.infer_shapes import InferShapes
+    from sklearn.neural_network import MLPRegressor
+
+    x = market(False)
+    net = MLPRegressor(hidden_layer_sizes=(32, 16), max_iter=500, random_state=0)
+    net.fit(x, target(x))
+    initializers, nodes = [], []
+
+    def constant(name, value):
+        initializers.append(numpy_helper.from_array(np.asarray(value, np.float32), name))
+        return name
+
+    def quant(source, name, scale, bits, signed, narrow=0):
+        nodes.append(helper.make_node(
+            "Quant", [source, constant(name + "_scale", scale), constant(name + "_zero", 0.0),
+                      constant(name + "_bits", float(bits))], [name],
+            domain="qonnx.custom_op.general", signed=signed, narrow=narrow,
+            rounding_mode="ROUND"))
+        return name
+
+    calibration = x[:512].astype(np.float64)
+    h = quant("x", "xq", np.abs(calibration).max() / 127, 8, 1)
+    in_scale = np.abs(calibration).max() / 127
+    for k, (w, b) in enumerate(zip(net.coefs_, net.intercepts_)):
+        last = k == len(net.coefs_) - 1
+        w_scale = np.maximum(np.abs(w).max(axis=0, keepdims=True), 1e-6) / 7
+        wq = quant(constant("w%d" % k, w), "w%dq" % k, w_scale, 4, 1, narrow=1)
+        bq = quant(constant("b%d" % k, b), "b%dq" % k, (in_scale * w_scale).reshape(-1), 24, 1)
+        nodes.append(helper.make_node("MatMul", [h, wq], ["m%d" % k]))
+        nodes.append(helper.make_node("Add", ["m%d" % k, bq], ["a%d" % k]))
+        calibration = calibration @ w + b
+        if last:
+            peak = np.abs(calibration).max()
+            h, in_scale = quant("a%d" % k, "y", peak / 127, 8, 1), peak / 127
+        else:
+            nodes.append(helper.make_node("Relu", ["a%d" % k], ["r%d" % k]))
+            calibration = np.maximum(calibration, 0)
+            in_scale = calibration.max() / 15
+            h = quant("r%d" % k, "h%d" % k, in_scale, 4, 0)
+    graph = helper.make_graph(
+        nodes, "qonnx_mlp", [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, FEATURES])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1])], initializers)
+    model = helper.make_model(graph, opset_imports=[
+        helper.make_opsetid("", 13), helper.make_opsetid("qonnx.custom_op.general", 1)],
+        ir_version=9)
+    wrapper = ModelWrapper(model).transform(InferShapes())
+    # qonnx runs each node in a model of onnx's newest IR, past what onnxruntime reads.
+    make = onnx_exec.qonnx_make_model
+    onnx_exec.qonnx_make_model = lambda graph, **options: make(graph, ir_version=9, **options)
+
+    def run(inputs):
+        return [onnx_exec.execute_onnx(wrapper, {"x": row[None]})["y"].reshape(-1)
+                for row in inputs]
+
+    save("qonnx_mlp", model, x, run)
+
+
 MODELS = [linear_regression, ridge, logistic_binary, scaler_linear, scaler_logistic,
           logistic_multiclass, mlp_regressor, mlp_sigmoid, xgb_small, lgbm_small, torch_bn_mlp,
           ort_qoperator_mlp, ort_qdq_mlp, ort_qoperator_gemm, xgb_multiclass,
           lgbm_multiclass, forest_multiclass, forest_binary, xgb_small_v5,
-          normalizer_logistic]
+          normalizer_logistic, qonnx_mlp]
 
 if __name__ == "__main__":
     chosen = sys.argv[1:] or [model.__name__ for model in MODELS]

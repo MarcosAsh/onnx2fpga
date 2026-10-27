@@ -55,6 +55,7 @@ test-api: models
 	$(PYTHON) -m unittest discover -s tests -p "test_trees.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_reload.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_corpus.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_qonnx.py" -v
 
 test-cpp: runtime
 	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v

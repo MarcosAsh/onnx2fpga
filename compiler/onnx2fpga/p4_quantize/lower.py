@@ -94,6 +94,11 @@ class LoweringContext:
             matrix, in_scale, weight_spec = matrix * spec.scale[:, None], 1.0, None
         scales = plan.weight_scales(matrix, weight_spec, node.name)
         weights = plan.quantize_weights(matrix, scales, node.name)
+        weight_dtype = plan.weight_dtype_for(node.name)
+        # A QONNX model can state narrower weights than the default.
+        if weight_spec is not None and weight_spec.dtype is not None \
+                and weight_spec.dtype.bits < weight_dtype.bits:
+            weight_dtype = weight_spec.dtype
         raw = np.zeros(matrix.shape[1])
         if len(node.inputs) > 2:
             raw = np.asarray(self.graph.tensor(node.inputs[2]).data,
@@ -105,8 +110,8 @@ class LoweringContext:
             plan.mult_bits, relu=bool(node.attrs.get("relu")),
             zero_point=self.zero_point(node.outputs[0]))
         return MatVecUnit(node.name, inputs, node.outputs, weights, INT32.clamp(bias),
-                          requant, plan.act_dtype, plan.act_dtype,
-                          plan.weight_dtype_for(node.name), vectors=vectors)
+                          requant, plan.act_dtype, plan.act_dtype, weight_dtype,
+                          vectors=vectors)
 
 
 def lower_gemm(node, ctx):
@@ -232,7 +237,25 @@ class LowerToHardware(Pass):
             rule = self.rules.get(type(node))
             if rule is None:
                 raise NotImplementedError("no lowering for %s" % type(node).__name__)
-            graph.replace_node(node, rule(node, ctx))
+            units = rule(node, ctx)
+            for unit in units:
+                self.narrow(unit)
+            graph.replace_node(node, units)
         graph.infer()
         context.artifacts["plan"] = self.plan
         return graph
+
+    def narrow(self, unit):
+        """A unit whose output grid is narrower than the stream clamps to it in its requant."""
+        for name in unit.outputs:
+            low, high = self.plan.bounds(name)
+            if (low, high) == (self.plan.act_dtype.min, self.plan.act_dtype.max):
+                continue
+            requant = getattr(unit, "requant", None)
+            if requant is not None:
+                requant.lower_clamp = max(requant.lower_clamp, low)
+                requant.upper_clamp = min(requant.upper_clamp, high)
+            elif not any(self.plan.bounds(source) == (low, high) for source in unit.inputs
+                         if self.plan.has(source)):
+                raise NotImplementedError("%s cannot clamp its output %s to %d bits"
+                                          % (unit.name, name, self.plan.spec(name).dtype.bits))

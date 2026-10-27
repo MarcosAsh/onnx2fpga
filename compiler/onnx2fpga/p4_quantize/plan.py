@@ -44,6 +44,8 @@ class QuantizationPlan:
         try:
             return self.specs[name]
         except KeyError:
+            if self.from_model:
+                raise NotImplementedError("the model gives tensor %r no grid" % name) from None
             raise KeyError("no quantization for tensor %r" % name)
 
     def propagate(self, source, target):
@@ -54,7 +56,15 @@ class QuantizationPlan:
     def quantize(self, name, real):
         """Codes for real values of tensor `name`, per element when its grid is per feature."""
         spec = self.spec(name)
-        return self.act_dtype.clamp(np.rint(real / spec.scale) + spec.zero_point)
+        return np.clip(np.rint(real / spec.scale) + spec.zero_point,
+                       *self.bounds(name)).astype(np.int64)
+
+    def bounds(self, name):
+        """The codes a tensor can take: its own type's when the model gave it a narrower one."""
+        spec, dtype = self.specs.get(name), self.act_dtype
+        if spec is not None and spec.dtype is not None and spec.dtype.bits < dtype.bits:
+            dtype = spec.dtype
+        return dtype.min, dtype.max
 
     def scale(self, name):
         return float(self.spec(name).scale.flat[0])

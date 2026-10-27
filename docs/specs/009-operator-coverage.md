@@ -204,11 +204,11 @@ run time, which a fixed point design cannot do`.
 
 ## Verification
 
-`tests/fixtures/make_corpus.py` exports twenty small real models with
+`tests/fixtures/make_corpus.py` exports 21 small real models with
 scikit-learn 1.9, skl2onnx 1.20, XGBoost 3.4, LightGBM 4.7, onnxmltools 1.16,
-ONNX Runtime 1.31 and PyTorch 2.12, and stores each `.onnx` in
+ONNX Runtime 1.31, PyTorch 2.12 and qonnx 1.0, and stores each `.onnx` in
 `tests/fixtures/corpus` with 512 calibration inputs, 256 held out inputs and
-ONNX Runtime's outputs on them. The largest file is 34 KB. Features are eight
+ONNX Runtime's outputs on them, or qonnx's for `qonnx_mlp`. The largest file is 34 KB. Features are eight
 columns of different sizes; the scaler pipelines and the PyTorch model get
 them at the sizes of prices, volumes and ratios, so a price sits near 100 and
 a volume near 5000.
@@ -251,6 +251,7 @@ main test environment does not have it, and the repo does not depend on it.
 | `forest_binary` | skl2onnx random forest, one score | yes | 4 | yes | labels agree on 100 % |
 | `xgb_small_v5` | `xgb_small` rewritten as ai.onnx.ml 5 `TreeEnsemble` | yes | 5 | yes | 0.25 % |
 | `normalizer_logistic` | skl2onnx L2 `Normalizer`, `LinearClassifier`, with [011](011-reductions-and-softmax.md) | yes | 8 | yes | labels agree on 99.2 % |
+| `qonnx_mlp` | QONNX `Quant` at 4 and 8 bits, `MatMul`, `Add`, `Relu`, with [014](014-qonnx.md) | yes | 9 | yes | equal to qonnx's outputs |
 
 Latencies are at the device model's clock. At `clock_mhz=322.265625` the
 logistic regression takes 5 cycles, 15.5 ns, and the PyTorch MLP 13 cycles,

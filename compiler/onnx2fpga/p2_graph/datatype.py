@@ -75,8 +75,6 @@ FLOAT32 = DataType.register(FloatType(32))
 class QuantSpec:
     """Affine quantization, real = scale * (integer - zero_point)."""
 
-    REBASE = 128
-
     def __init__(self, scale, zero_point=0, dtype=None, rebased=False):
         self.scale = np.atleast_1d(np.asarray(scale, dtype=np.float64))
         self.zero_point = np.atleast_1d(np.asarray(zero_point, dtype=np.int64))
@@ -87,7 +85,7 @@ class QuantSpec:
         """The same grid on a signed type, shifting the zero point if it was unsigned."""
         if self.dtype is None or self.dtype.signed:
             return self
-        return QuantSpec(self.scale, self.zero_point - self.REBASE,
+        return QuantSpec(self.scale, self.zero_point - (1 << (self.dtype.bits - 1)),
                          IntType(self.dtype.bits, True), rebased=True)
 
     def dequantize(self, integers):
