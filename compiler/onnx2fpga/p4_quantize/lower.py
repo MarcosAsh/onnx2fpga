@@ -105,6 +105,17 @@ class LoweringContext:
                              dtype=np.float64).reshape(-1)
         # A large zero point times the rounded weights would scale their rounding error by it.
         bias = np.rint((raw - in_scale * (in_zero @ matrix)) / (in_scale * scales))
+        out = node.outputs[0]
+        if plan.from_model and not plan.has(out) and out in self.graph.outputs:
+            # Brevitas leaves the last layer in float: answer on the accumulator's own grid.
+            peak = int(np.abs(weights).sum(axis=0).max()) * max(
+                abs(bound) for bound in plan.bounds(node.inputs[0])) + int(np.abs(bias).max())
+            dtype = IntType.smallest_for(-peak, peak)
+            plan.annotate(out, QuantSpec(in_scale * scales, 0, dtype))
+            requant = Requantizer(np.ones(matrix.shape[1]), 0, dtype,
+                                  lower_clamp=0 if node.attrs.get("relu") else None)
+            return MatVecUnit(node.name, inputs, node.outputs, weights, INT32.clamp(bias),
+                              requant, plan.act_dtype, dtype, weight_dtype, vectors=vectors)
         requant = Requantizer.from_real_multipliers(
             in_scale * scales / self.scale(node.outputs[0]), plan.act_dtype,
             plan.mult_bits, relu=bool(node.attrs.get("relu")),

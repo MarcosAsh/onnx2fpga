@@ -1,7 +1,8 @@
 """Exports the models in tests/fixtures/corpus, each with its inputs and ONNX Runtime's outputs.
 
 Needs scikit-learn, skl2onnx, xgboost, lightgbm, onnxmltools, onnx and onnxruntime, torch
-for torch_bn_mlp and qonnx for qonnx_mlp; pass model names to export only those.
+for torch_bn_mlp, qonnx for qonnx_mlp and brevitas for brevitas_mlp; pass model names to
+export only those.
 """
 
 import pathlib
@@ -405,11 +406,59 @@ def qonnx_mlp():
     save("qonnx_mlp", model, x, run)
 
 
+def qonnx_runner(model, ir_version=9):
+    """qonnx's executor on one row at a time; its per node models need an IR onnxruntime reads."""
+    from qonnx.core import onnx_exec
+    from qonnx.core.modelwrapper import ModelWrapper
+    from qonnx.transformation.infer_shapes import InferShapes
+
+    make = onnx_exec.qonnx_make_model
+    onnx_exec.qonnx_make_model = lambda graph, **options: make(graph, ir_version=ir_version,
+                                                               **options)
+    wrapper = ModelWrapper(model).transform(InferShapes())
+    source, sink = wrapper.graph.input[0].name, wrapper.graph.output[0].name
+    return lambda inputs: [onnx_exec.execute_onnx(wrapper, {source: row[None]})[sink].reshape(-1)
+                           for row in inputs]
+
+
+def brevitas_mlp(float_bias=False):
+    """A Brevitas MLP trained on the market features and exported by brevitas.export_qonnx."""
+    import brevitas.nn as qnn
+    import torch
+    from brevitas.export import export_qonnx
+    from brevitas.quant import Int32Bias
+
+    torch.manual_seed(0)
+    bias = None if float_bias else Int32Bias
+    layers = [qnn.QuantIdentity(bit_width=8, return_quant_tensor=True)]
+    for k, (fan_in, fan_out) in enumerate(((FEATURES, 32), (32, 16), (16, 1))):
+        layers.append(qnn.QuantLinear(fan_in, fan_out, bias=True, weight_bit_width=4,
+                                      bias_quant=bias, return_quant_tensor=True))
+        if k < 2:
+            layers.append(qnn.QuantReLU(bit_width=4, return_quant_tensor=True))
+    net = torch.nn.Sequential(*layers)
+    x = market(False)
+    features, labels = torch.tensor(x), torch.tensor(target(x), dtype=torch.float32)
+    optimizer = torch.optim.Adam(net.parameters(), lr=0.01)
+    for _ in range(300):
+        optimizer.zero_grad()
+        loss = torch.mean((net(features).value.reshape(-1) - labels) ** 2)
+        loss.backward()
+        optimizer.step()
+    net.eval()
+    with tempfile.TemporaryDirectory() as folder:
+        path = pathlib.Path(folder) / "net.onnx"
+        export_qonnx(net, torch.tensor(x[:1]), str(path))
+        model = onnx.load(path)
+    name = "brevitas_mlp_float_bias" if float_bias else "brevitas_mlp"
+    save(name, model, x, qonnx_runner(model))
+
+
 MODELS = [linear_regression, ridge, logistic_binary, scaler_linear, scaler_logistic,
           logistic_multiclass, mlp_regressor, mlp_sigmoid, xgb_small, lgbm_small, torch_bn_mlp,
           ort_qoperator_mlp, ort_qdq_mlp, ort_qoperator_gemm, xgb_multiclass,
           lgbm_multiclass, forest_multiclass, forest_binary, xgb_small_v5,
-          normalizer_logistic, qonnx_mlp]
+          normalizer_logistic, qonnx_mlp, brevitas_mlp]
 
 if __name__ == "__main__":
     chosen = sys.argv[1:] or [model.__name__ for model in MODELS]

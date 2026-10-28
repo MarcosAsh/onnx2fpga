@@ -111,5 +111,39 @@ class Mlp(unittest.TestCase):
         self.assertFalse(prove(build, 8 * 8, latency - 1)[0])
 
 
+@unittest.skipIf(HARDCAML, HARDCAML)
+class Brevitas(unittest.TestCase):
+    """brevitas.export_qonnx of a trained MLP: Gemms with transB, int32 biases, a float output."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = np.load(CORPUS / "brevitas_mlp.npz")
+        cls.acc = otf.load(CORPUS / "brevitas_mlp.onnx")
+        cls.acc.compile(device="k26", mode="fixed", out_dir=Fixtures.build_dir("brevitas_mlp"))
+
+    def test_exact(self):
+        got = self.acc.predict(self.data["x"]).reshape(self.data["y"].shape)
+        np.testing.assert_allclose(got, self.data["y"], rtol=0, atol=1e-5)
+
+    def test_output_grid(self):
+        # The last layer has no Quant, so it answers on its accumulator's grid.
+        last = self.acc.result.hardware_graph.topological_order()[-1]
+        spec = self.acc.result.plan.spec(last.outputs[0])
+        self.assertEqual((last.out_dtype.name, last.requant.shift), ("INT11", 0))
+        self.assertEqual(spec.dtype.name, "INT11")
+        self.assertEqual(last.weight_dtype.name, "INT4")
+
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
+    def test_simulate(self):
+        report = self.acc.simulate()
+        self.assertTrue(report.ok, report.first.output)
+
+    @unittest.skipIf(IcepiZero.tool("sby") is None, "sby not found")
+    def test_proof(self):
+        build, latency = pathlib.Path(self.acc.out_dir), self.acc.latency
+        self.assertTrue(prove(build, 8 * 8, latency)[0])
+        self.assertFalse(prove(build, 8 * 8, latency - 1)[0])
+
+
 if __name__ == "__main__":
     unittest.main()

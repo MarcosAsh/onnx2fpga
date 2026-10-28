@@ -55,6 +55,15 @@ output ports keep 8 bits, so the host and the register shell see the same
 design either way, and in stream mode, where the frozen SystemVerilog library
 sets the stream width, the codes stay 4 bits wide on 8 bit streams.
 
+Brevitas leaves the last layer without a `Quant` unless it is asked for one, so
+the model's output has no grid. When the last dense layer's output is ungridded
+and the rest of the model is, the layer answers on its accumulator's own grid,
+the input scale times each output channel's weight scale, as wide as the
+accumulator, with a multiplier of 1 and no shift: no rounding at all after the
+sum. A bias in float, Brevitas's default, is rounded onto that grid, so it is
+off by under half a step there; one Brevitas puts on 32 bits with `Int32Bias`
+is already on it.
+
 The summary names what was read, for example `weights int4, activations int8
 on 4 bit grids, from the model's Quant nodes`.
 
@@ -72,7 +81,7 @@ outputs equal qonnx's, not within a step but exactly, every dense unit has
 4 bit weights, the hidden layers clamp to -8 and 7 and are joined by 4 bit
 wires, 10000 random vectors
 simulate bit exact under Verilator, and the latency proof closes at 9 cycles
-and fails at 8. The corpus test compiles it with the other 20 models. The
+and fails at 8. The corpus test compiles it with the other 21 models. The
 refusals below are each checked on a changed copy of the model.
 
 | Layer | Weights | Inputs, outputs | Latency | LUT | DSP |
@@ -88,6 +97,24 @@ With 8 bit wires the compiler's estimate was 11701 LUTs. yosys 0.52
 1176, 2547 and 49 with 8 bit ones, so the narrow wires save 40 percent of the
 LUTs where the estimate says 15. Stream mode on `vu9p` matches qonnx just as
 exactly and simulates bit exact.
+
+`make_corpus.py` also trains `brevitas_mlp` with Brevitas 0.13.4 and PyTorch
+2.14: a `QuantIdentity` of 8 bits, three `QuantLinear` layers of 8, 32, 16 and 1
+with 4 bit weights and `Int32Bias`, and 4 bit `QuantReLU`s, 300 Adam steps on
+the market features, exported by `brevitas.export.export_qonnx`. The export is
+ONNX opset 20 and IR 10, with `Gemm`s that take their weights transposed, the
+weight, bias and activation `Quant`s sharing their zero point and bit width
+constants, and no `Quant` on the output. `tests/test_qonnx.py` checks that all
+256 held out outputs equal qonnx's, that the last layer gives 11 bit
+accumulator codes with no shift, and that it simulates bit exact and proves at
+9 cycles and fails at 8. It builds in 9659 LUTs and 49 DSPs, and at
+322.265625 MHz in 18 cycles, 55.9 ns, with the fmax predicted at 333.9 MHz.
+
+The same network with Brevitas's float biases is not in the corpus. Against
+qonnx, 90.6 percent of its outputs are within half a step of the output grid,
+the mean error is 0.72 percent of the output's standard deviation, and the
+worst is 14 steps, where a rounded hidden layer bias moved one 4 bit activation
+across a code boundary.
 
 ## Errors
 
@@ -126,6 +153,7 @@ All three are met.
   the dense cost model wants refitting against Vivado at 4 bits.
 - HGQ and QKeras networks usually quantize their input to 16 bits, past the
   8 that activations take.
-- A real Brevitas export, and the hls4ml jet tagger in QONNX, would test what
-  hand building cannot: Brevitas's own node order, its `Transpose`s, and
-  `Trunc` after average pooling.
+- A float bias could be kept exact by giving the accumulator a few fractional
+  bits, a shift of each product that constant arithmetic gets for free.
+- The hls4ml jet tagger in QONNX, and Brevitas convolutions with `Trunc` after
+  average pooling, are not tried yet.

@@ -673,8 +673,7 @@ class Accelerator:
 
     def _dequantize(self, codes):
         plan, name = self.result.plan, self.result.hardware_graph.outputs[0]
-        return plan.scale(name) * (np.asarray(codes, dtype=np.float64)
-                                   - plan.zero_point(name))
+        return plan.spec(name).dequantize(codes)
 
     def _on_board(self, feeds):
         graph = self.result.hardware_graph
