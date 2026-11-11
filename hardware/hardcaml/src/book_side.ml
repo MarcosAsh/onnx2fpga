@@ -125,7 +125,12 @@ module Make (Config : Config) = struct
     let ahead =
       List.map levels ~f:(fun l -> live l &: better ~ask:i.ask l.price i.insert.price)
     in
-    let levels, gone = remove levels i.remove in
+    let levels = List.map levels ~f:(Level.map ~f:register) in
+    let matched = List.map matched ~f:register in
+    let ahead = List.map ahead ~f:register in
+    let removing = Change.map i.remove ~f:register in
+    let inserting = Change.map { i.insert with valid = accepted } ~f:register in
+    let levels, gone = remove levels removing in
     let shift flags =
       List.map3_exn
         gone
@@ -133,13 +138,7 @@ module Make (Config : Config) = struct
         (List.tl_exn flags @ [ gnd ])
         ~f:(fun gone here next -> mux2 gone next here)
     in
-    let updated =
-      insert
-        ~matched:(List.map (shift matched) ~f:register)
-        ~ahead:(List.map (shift ahead) ~f:register)
-        (List.map levels ~f:(Level.map ~f:register))
-        (Change.map { i.insert with valid = accepted } ~f:register)
-    in
+    let updated = insert ~matched:(shift matched) ~ahead:(shift ahead) levels inserting in
     { O.updated = concat_lsb (List.map updated ~f:Level.to_word); accepted }
   ;;
 

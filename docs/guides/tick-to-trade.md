@@ -57,7 +57,7 @@ prices before compacting removed levels, then moves those comparison bits
 with the levels. `tests/test_tick_to_trade.py` proves this update equivalent
 to the four-level RTL from revision `5244d34` for all inputs, using
 `tests/fixtures/book_side_baseline.v`. The existing invariant proofs and
-replay checks still apply. A register separates removal and insertion; the
+replay checks still apply. A register holds the removal inputs and insertion comparison bits; the
 sequential proof checks that its result equals the original update delayed
 one cycle. The table still writes in its second cycle, and the book accepts
 one event every two cycles.
@@ -72,17 +72,18 @@ with a 3.103 ns constraint:
 | Parallel book comparisons | 20 | 7643 | 4815 | 14.5 | 0 | -3.386 |
 | Pipelined book update | 21 | 6434 | 5674 | 14.5 | 0 | -2.759 |
 | Early table address | 21 | 6443 | 5674 | 14.5 | 0 | -2.352 |
+| Earlier book register | 21 | 6565 | 5739 | 14.5 | 0 | -1.948 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
 estimate from 113.70 to 154.11 MHz. Pipelining the update reaches 170.59 MHz
 with one more cycle. Selecting the RAM address from the event phase
 instead of the write decision reaches 183.32 MHz at the same latency.
-The remaining critical path starts at an order-table
-RAM output and ends at the new book pipeline register. These are routed
+Moving the book register before removal reaches 197.98 MHz. The remaining
+critical path starts at an order-table RAM output and ends at its write enable. These are routed
 estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records all five runs.
+records all six runs.
 
 ## What runs
 
