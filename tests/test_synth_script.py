@@ -16,7 +16,7 @@ SLACK = 0.842
 
 
 def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None,
-             report=None, checkpoint=None, checkpoint_period=None):
+             report=None, checkpoint=None, checkpoint_period=None, replicate_net=None):
     out = Fixtures.build_dir("synth_stub_" + name) / "synth" / "unit"
     if out.exists():
         shutil.rmtree(out)
@@ -29,6 +29,8 @@ def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None
         environment.pop("OTF_RTL")
     if checkpoint_period is not None:
         environment["OTF_TEST_PERIOD"] = str(checkpoint_period)
+    if replicate_net is not None:
+        environment["OTF_REPLICATE_NET"] = replicate_net
     if report:
         environment["OTF_TEST_REPORT"] = str(report)
     if clock:
@@ -122,6 +124,31 @@ class SynthScriptTest(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("checkpoint period mismatch", completed.stderr)
         self.assertFalse((out / "summary.json").exists())
+
+    def test_checkpoint_replication(self):
+        _, completed, calls = run_stub("replicate", checkpoint="routed.dcp",
+                                       replicate_net="book/control")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        unroute = calls.index("route_design -unroute")
+        replicate = calls.index("phys_opt_design -force_replication_on_nets book/control")
+        route = calls.index("route_design -directive Explore")
+        self.assertLess(unroute, replicate)
+        self.assertLess(replicate, route)
+        self.assertNotIn("phys_opt_design -directive AggressiveExplore", calls)
+
+    def test_replication_requires_checkpoint_and_net(self):
+        for checkpoint, net, error in (
+            (None, "book/control", "replication requires a checkpoint"),
+            ("routed.dcp", "missing", "replication requires one exact net name"),
+            ("routed.dcp", "book/*", "replication requires one exact net name"),
+            ("routed.dcp", "*", "replication requires one exact net name"),
+        ):
+            with self.subTest(checkpoint=checkpoint, net=net):
+                out, completed, _ = run_stub("bad_replication", checkpoint=checkpoint,
+                                             replicate_net=net)
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(error, completed.stderr)
+                self.assertFalse((out / "summary.json").exists())
 
     def test_clock_port(self):
         # Hardcaml tops name the clock port clock.

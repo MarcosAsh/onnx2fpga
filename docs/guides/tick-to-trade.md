@@ -41,7 +41,8 @@ PYTHONPATH=compiler python3 -m onnx2fpga.trading.replay \
 The model takes 12 cycles and the full path takes 22. The 100000-message
 replay matches all 65151 tracked messages, including the book, features and
 orders. The printed nanoseconds use the requested clock, not a measured
-clock. The whole pipeline does not yet meet 322.265625 MHz.
+clock. The out-of-context implementation meets 322.265625 MHz after the
+replication and refinement steps below. Board timing remains unvalidated.
 
 For out-of-context place and route, run from the generated directory:
 
@@ -99,6 +100,7 @@ with a 3.103 ns constraint:
 | Post-route refinement of early book selection | 22 | 8963 | 7258 | 13.5 | 0 | -0.103 |
 | Second refinement of early book selection | 22 | 8963 | 7258 | 13.5 | 0 | -0.075 |
 | Remaining-share data mux, two refinements | 22 | 8976 | 7253 | 13.5 | 0 | -0.073 |
+| Removal-control replication, two refinements | 22 | 8986 | 7253 | 13.5 | 0 | 0.009 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
@@ -109,7 +111,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records fifty-five runs, including the intermediate memory layouts.
+records sixty-five runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
@@ -178,6 +180,45 @@ after two refinements, at the same 22 cycles and 69.9 ns. The third pass gives
 the same result. This revision uses 8976 LUTs and 7253 flip-flops. Setup slack
 is -0.073 ns and hold slack is positive at 0.012 ns; the worst path ends at a
 book-side level register. The 100000-message replay and formal checks pass.
+
+Forced replication of the removal-control net reaches 315.76 MHz. Two
+subsequent refinement passes reach 320.62 and 323.21 MHz. The final run has
+0.009 ns setup slack, 0.026 ns hold slack, and no failing timing endpoints.
+It uses 8986 LUTs, 7253 flip-flops, 9 DSPs and 13.5 BRAM36 equivalents.
+The 22-cycle pipeline takes 68.1 ns at the routed frequency estimate.
+Unrouting and rerouting the same source checkpoint without replication gives
+308.55 MHz. Repeating replication and both refinement passes through the
+repository script reproduces all three timing and resource results exactly.
+
+To reproduce the sequence, start in the generated K26 directory after the
+initial implementation above. Refine twice, replicate, then refine twice more:
+
+```sh
+checkpoint=vivado/routed.dcp
+for pass in 1 2; do
+  OTF_PART=xck26-sfvc784-2LV-c OTF_TOP=tick_to_trade OTF_PERIOD=3.103 \
+  OTF_CHECKPOINT="$checkpoint" OTF_OUT="vivado_before_$pass" \
+    vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
+  checkpoint="vivado_before_$pass/routed.dcp"
+done
+OTF_PART=xck26-sfvc784-2LV-c OTF_TOP=tick_to_trade OTF_PERIOD=3.103 \
+OTF_CHECKPOINT="$checkpoint" OTF_OUT=vivado_replicated \
+OTF_REPLICATE_NET=order_book/pipelined_order_table/signal_reg_15_i_5__0_n_0 \
+  vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
+checkpoint=vivado_replicated/routed.dcp
+for pass in 1 2; do
+  OTF_PART=xck26-sfvc784-2LV-c OTF_TOP=tick_to_trade OTF_PERIOD=3.103 \
+  OTF_CHECKPOINT="$checkpoint" OTF_OUT="vivado_after_$pass" \
+    vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
+  checkpoint="vivado_after_$pass/routed.dcp"
+done
+```
+
+`OTF_REPLICATE_NET` requires a checkpoint and one exact net name. The script
+unroutes the design before forced replication because Vivado does not support
+that operation after routing. This net name belongs to the measured RTL;
+changes to synthesis or RTL may require selecting a new net from the timing
+report. Replication is opt-in and leaves the RTL and pipeline latency unchanged.
 
 The table induction check covers a four-slot instance for arbitrary legal
 operation sequences, including pending flag writes, simultaneous reads and

@@ -17,6 +17,11 @@ proc record {name arguments} {
 
 proc open_checkpoint {args} { record open_checkpoint $args }
 proc get_clocks {args} { return clk }
+proc get_nets {args} {
+    if {[lindex $args end] in {book/control book/*}} { return book/control }
+    if {[lindex $args end] eq "*"} { return {book/control book/data} }
+    return {}
+}
 proc write_checkpoint {args} {
     record write_checkpoint $args
     close [open [lindex $args end] w]
@@ -75,6 +80,7 @@ set ::stub_run [file join [pwd] vivado stub_run]
 
 proc get_property {property object} {
     switch $property {
+        NAME { return $object }
         PART { return $::env(OTF_PART) }
         PERIOD {
             if {[info exists ::env(OTF_TEST_PERIOD)]} { return $::env(OTF_TEST_PERIOD) }

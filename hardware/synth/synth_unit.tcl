@@ -14,6 +14,9 @@ set outdir   [env_or OTF_OUT "synth_out"]
 set do_impl  [env_or OTF_IMPL 0]
 set clock    [env_or OTF_CLOCK clk]
 set checkpoint [env_or OTF_CHECKPOINT ""]
+set replicate_net [env_or OTF_REPLICATE_NET ""]
+
+if {$replicate_net ne "" && $checkpoint eq ""} { error "replication requires a checkpoint" }
 
 file mkdir $outdir
 
@@ -21,7 +24,16 @@ if {$checkpoint ne ""} {
     open_checkpoint $checkpoint
     if {[get_property PART [current_design]] ne $part} { error "checkpoint part mismatch" }
     if {[get_property PERIOD [get_clocks clk]] != $period} { error "checkpoint period mismatch" }
-    phys_opt_design -directive AggressiveExplore
+    if {$replicate_net ne ""} {
+        set net [get_nets -quiet $replicate_net]
+        if {[llength $net] != 1 || [get_property NAME $net] ne $replicate_net} {
+            error "replication requires one exact net name: $replicate_net"
+        }
+        route_design -unroute
+        phys_opt_design -force_replication_on_nets $net
+    } else {
+        phys_opt_design -directive AggressiveExplore
+    }
     route_design -directive Explore
     report_utilization -file [file join $outdir utilization_impl.rpt]
     report_timing_summary -file [file join $outdir timing_impl.rpt]
