@@ -105,7 +105,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records thirty-nine runs, including the intermediate memory layouts.
+records forty-four runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
