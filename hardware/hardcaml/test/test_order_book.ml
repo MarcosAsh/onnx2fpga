@@ -173,3 +173,33 @@ let%expect_test "rejected writes preserve live payloads" =
     ((kind Execute) (order 11) (bids ((13 35))) (asks ((20 90))) (flow -3))
     |}]
 ;;
+
+let%expect_test "crossing checks see the preceding event" =
+  run
+    [ event Add 1 ~shares:10 ~price:10
+    ; event Add 2 ~side:'S' ~shares:10 ~price:10
+    ; event Delete 1
+    ; event Add 2 ~side:'S' ~shares:10 ~price:10
+    ; event Add 3 ~shares:10 ~price:10
+    ; event Delete 2
+    ; event Add 3 ~shares:10 ~price:10
+    ; event Add 4 ~symbol:1 ~side:'S' ~shares:10 ~price:9
+    ; event Add 5 ~symbol:1 ~shares:10 ~price:9
+    ; event Delete 3
+    ; event Add 6 ~side:'S' ~shares:10 ~price:9
+    ];
+  [%expect
+    {|
+    ((kind Add) (order 1) (bids ((10 10))) (asks ()) (flow 0))
+    ((kind Add) (order 2) (bids ((10 10))) (asks ()) (flow 0))
+    ((kind Delete) (order 1) (bids ()) (asks ()) (flow 0))
+    ((kind Add) (order 2) (bids ()) (asks ((10 10))) (flow 0))
+    ((kind Add) (order 3) (bids ()) (asks ((10 10))) (flow 0))
+    ((kind Delete) (order 2) (bids ()) (asks ()) (flow 0))
+    ((kind Add) (order 3) (bids ((10 10))) (asks ()) (flow 0))
+    ((kind Add) (order 4) (bids ()) (asks ((9 10))) (flow 0))
+    ((kind Add) (order 5) (bids ()) (asks ((9 10))) (flow 0))
+    ((kind Delete) (order 3) (bids ()) (asks ()) (flow 0))
+    ((kind Add) (order 6) (bids ()) (asks ((9 10))) (flow 0))
+    |}]
+;;
