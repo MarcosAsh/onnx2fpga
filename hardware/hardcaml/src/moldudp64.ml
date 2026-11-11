@@ -34,6 +34,7 @@ module State = struct
     { phase : 'a [@bits Phase.width]
     ; skip : 'a [@bits 16]
     ; length : 'a [@bits 16]
+    ; base : 'a [@bits 16]
     ; high : 'a [@bits 8]
     ; count : 'a [@bits 16]
     ; first : 'a [@bits 32]
@@ -67,6 +68,7 @@ let initial =
   { State.phase = Phase.const Header
   ; skip = of_unsigned_int ~width:16 header_bytes
   ; length = zero 16
+  ; base = zero 16
   ; high = zero 8
   ; count = zero 16
   ; first = zero 32
@@ -122,7 +124,7 @@ module Step = struct
     let%hw field = high_byte @: lane (sel_bottom low_lane ~width:3) in
     let%hw start = low_here &: (field >=:. min_length) in
     let%hw body_starts = start &: (low_lane <=:. 6) in
-    let%hw base = state.length -: state.skip in
+    let%hw base = state.base in
     let%hw complete =
       in_body &: prefix_ends &: kept (sel_bottom (state.skip -:. 1) ~width:3)
     in
@@ -159,6 +161,11 @@ module Step = struct
             (field +: uresize low_lane ~width:16 -:. 7)
             (mux2 counting (mux2 prefix_ends (zero 16) (state.skip -:. 8)) state.skip)
       ; length = mux2 start field state.length
+      ; base =
+          mux2
+            start
+            (of_unsigned_int ~width:16 7 -: uresize low_lane ~width:16)
+            (mux2 in_body (state.base +:. 8) state.base)
       ; high =
           mux2
             high_here

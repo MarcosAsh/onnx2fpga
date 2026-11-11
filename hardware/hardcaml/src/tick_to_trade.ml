@@ -263,6 +263,16 @@ let verilog ?unit params =
       in
       let module C = Circuit.With_interface (Side.Pipelined.I) (Side.Pipelined.O) in
       C.create_exn ~name:"dut" (Side.Pipelined.hierarchical scope)
+    | Some "features" ->
+      let module Extract =
+        Features.Make (struct
+          let levels = params.Params.levels
+          let spread_shift = params.spread_shift
+          let flow_shift = params.flow_shift
+        end)
+      in
+      let module C = Circuit.With_interface (Extract.I) (Extract.O) in
+      C.create_exn ~name:"dut" (Extract.hierarchical scope)
     | Some unit -> raise_s [%message "tick_to_trade: no unit called" unit]
   in
   Rtl.create ~database:(Scope.circuit_database scope) Verilog [ circuit ]

@@ -71,22 +71,22 @@ module serial (
 endmodule
 
 module check (
-    input [2:0] phase, input [15:0] skip, input [15:0] length, input [7:0] high,
+    input [2:0] phase, input [15:0] skip, input [15:0] length, base, input [7:0] high,
     input [15:0] count, input [31:0] first, input [319:0] buffer,
     input [63:0] data, input [7:0] keep, input valid, input last, input [31:0] now
 );
     localparam HEADER = 0, BODY = 3;
     wire [2:0] p_phase, s_phase;
-    wire [15:0] p_skip, s_skip, p_length, s_length, p_count, s_count, p_elen, s_elen;
+    wire [15:0] p_base, p_skip, s_skip, p_length, s_length, p_count, s_count, p_elen, s_elen;
     wire [7:0] p_high, s_high;
     wire [31:0] p_first, s_first, p_efirst, s_efirst, p_elast, s_elast;
     wire [319:0] p_buffer, s_buffer, p_bytes, s_bytes;
     wire p_emit, s_emit;
     dut parallel (
-        .state$phase(phase), .state$skip(skip), .state$length(length), .state$high(high),
+        .state$phase(phase), .state$skip(skip), .state$length(length), .state$base(base), .state$high(high),
         .state$count(count), .state$first(first), .state$buffer(buffer),
         .beat$data(data), .beat$keep(keep), .beat$valid(valid), .beat$last(last), .now(now),
-        .next$phase(p_phase), .next$skip(p_skip), .next$length(p_length),
+        .next$phase(p_phase), .next$skip(p_skip), .next$length(p_length), .next$base(p_base),
         .next$high(p_high), .next$count(p_count), .next$first(p_first),
         .next$buffer(p_buffer), .message$valid(p_emit), .message$length(p_elen),
         .message$bytes(p_bytes), .message$t_first(p_efirst), .message$t_last(p_elast));
@@ -103,7 +103,9 @@ module check (
         || (keep != 0 && (keep & (keep + 8'd1)) == 0 && (last || keep == 8'hff));
     always @* begin
         assume (invariant(phase, skip, length) && beat_ok);
+        assume (phase != BODY || base == length - skip);
         assert (invariant(p_phase, p_skip, p_length));
+        assert (p_phase != BODY || p_base == p_length - p_skip);
         assert ({p_phase, p_skip, p_length, p_high, p_count, p_first, p_buffer}
                 == {s_phase, s_skip, s_length, s_high, s_count, s_first, s_buffer});
         assert (p_emit == s_emit);

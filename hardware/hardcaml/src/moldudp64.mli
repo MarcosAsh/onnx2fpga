@@ -32,6 +32,7 @@ module State : sig
     { phase : 'a
     ; skip : 'a
     ; length : 'a
+    ; base : 'a
     ; high : 'a
     ; count : 'a
     ; first : 'a

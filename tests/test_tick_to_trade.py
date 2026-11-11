@@ -159,6 +159,24 @@ endmodule
         self.assertIn("SUCCESS", result.stdout)
 
 
+@unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
+class FeatureEquivalence(unittest.TestCase):
+    def test_features(self):
+        build = Fixtures.build_dir("feature_equivalence")
+        config = build / "config.json"
+        config.write_text(json.dumps(Config().as_json(DESIGN)))
+        shutil.copyfile(ROOT / "tests" / "fixtures" / "features_baseline.v", build / "before.v")
+        after = generate(config, "-unit", "features").split("endmodule", 1)[0] + "endmodule\n"
+        (build / "after.v").write_text(after.replace("module features (", "module features_after ("))
+        script = ("read_verilog before.v after.v; "
+                  "miter -equiv -flatten features_before features_after miter; prep -top miter; "
+                  "sat -verify -seq 4 -prove-skip 3 -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("SUCCESS", result.stdout)
+
+
 @unittest.skipIf(HARDCAML, HARDCAML)
 @unittest.skipIf(SBY is None, "sby not found")
 class Proofs(unittest.TestCase):

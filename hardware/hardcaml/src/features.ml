@@ -101,15 +101,19 @@ module Make (Config : Config) = struct
     (* Shift both so the larger keeps four bits; the ratio is then a 256 entry table. *)
     let normalize bid ask =
       let bits = width bid in
-      let zeros = leading_zeros (bid |: ask) in
-      let shift =
-        mux2
-          (zeros >=:. bits - 4)
-          (zero (width zeros))
-          (of_unsigned_int ~width:(width zeros) (bits - 4) -: zeros)
+      let combined = bid |: ask in
+      let choices =
+        List.init (bits - 3) ~f:(fun shift ->
+          let above = shift + 4 in
+          let highest =
+            if above = bits then vdd else sel_top combined ~width:(bits - above) ==:. 0
+          in
+          { With_valid.valid =
+              (highest &: if shift = 0 then vdd else combined.:(above - 1))
+          ; value = bid.:[above - 1, shift] @: ask.:[above - 1, shift]
+          })
       in
-      let top value = reg (sel_bottom (log_shift ~f:srl value ~by:shift) ~width:4) in
-      top bid @: top ask
+      reg (onehot_select choices)
     in
     let table =
       List.init 256 ~f:(fun index ->
@@ -117,13 +121,15 @@ module Make (Config : Config) = struct
     in
     let%hw top_index = normalize top_bid top_ask in
     let%hw depth_index = normalize depth_bid depth_ask in
+    let lookup index =
+      reg
+        (add_attribute
+           (mux index table)
+           (Rtl_attribute.create "rom_style" ~value:(String "distributed")))
+    in
     let features =
       concat_lsb
-        [ reg (reg spread)
-        ; reg (mux top_index table)
-        ; reg (mux depth_index table)
-        ; reg (reg flow)
-        ]
+        [ reg (reg spread); lookup top_index; lookup depth_index; reg (reg flow) ]
     in
     let context =
       { Context.symbol = book.symbol
