@@ -160,6 +160,12 @@ module Make (Config : Config) = struct
     in
     let table =
       Table.hierarchical
+        ~memory_attributes:
+          [ Rtl_attribute.create
+              "ram_style"
+              ~applies_to:[ Memories ]
+              ~value:(String "block")
+          ]
         ~name:"order_table"
         scope
         { clock = clocking.clock

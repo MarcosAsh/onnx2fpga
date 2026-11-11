@@ -19,7 +19,7 @@ seconds:
 ```
 100000 messages in 4934 packets, 410437 beats; 65151 tracked messages, all identical
 orders: 6627 buy, 6942 sell; 471 adds dropped on a full slot, 2570 levels forgotten
-last byte to decision: 14 cycles, 43.4 ns at 322.27 MHz, every message (moldudp64 1, itch_parser 1, order_book 2, features 3, model 6, decision 1)
+last byte to decision: 14 cycles, 43.4 ns at 322.27 MHz target, every message (moldudp64 1, itch_parser 1, order_book 2, features 3, model 6, decision 1)
 first byte to decision: min 16, median 18, p99 19, max 19 cycles
 ```
 
@@ -27,6 +27,54 @@ first byte to decision: min 16, median 18, p99 19, max 19 cycles
 between beats, and `--out` names the build directory, `build/tick_to_trade` by
 default. A difference stops the run and prints the message, the RTL's output
 and the model's.
+
+## K26 clock target
+
+The default replay keeps the six-cycle model compiled for `vu9p`. To pipeline
+the model for the K26 trading clock:
+
+```sh
+PYTHONPATH=compiler python3 -m onnx2fpga.trading.replay \
+  --device k26 --clock-mhz 322.265625 --messages 100000 --out build/tick_k26
+```
+
+The model takes 12 cycles and the full path takes 20. The 100000-message
+replay matches all 65151 tracked messages, including the book, features and
+orders. The printed nanoseconds use the requested clock, not a measured
+clock. The whole pipeline does not yet meet 322.265625 MHz.
+
+For out-of-context place and route, run from the generated directory:
+
+```sh
+cd build/tick_k26
+OTF_PART=xck26-sfvc784-2LV-c OTF_TOP=tick_to_trade OTF_RTL=tick_to_trade.v \
+OTF_PERIOD=3.103 OTF_CLOCK=clock OTF_IMPL=1 OTF_OUT=vivado \
+  vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
+```
+
+The order table explicitly requests block RAM. The book compares insertion
+prices before compacting removed levels, then moves those comparison bits
+with the levels. `tests/test_tick_to_trade.py` proves this update equivalent
+to the four-level RTL from revision `5244d34` for all inputs, using
+`tests/fixtures/book_side_baseline.v`. The existing invariant proofs and
+replay checks still apply.
+
+Vivado 2026.1 out-of-context routed results on `xck26-sfvc784-2LV-c`,
+with a 3.103 ns constraint:
+
+| Variant | Cycles | LUTs | Registers | BRAM36 equivalents | URAMs | Setup slack (ns) |
+|---|---:|---:|---:|---:|---:|---:|
+| Original | 14 | 7153 | 4450 | 1 | 2 | -6.903 |
+| K26 model, block RAM | 20 | 7148 | 4865 | 14.5 | 0 | -5.692 |
+| Parallel book comparisons | 20 | 7643 | 4815 | 14.5 | 0 | -3.386 |
+
+The first change includes both the model pipeline and the RAM mapping.
+Reordering the book comparisons alone improves the timing-derived frequency
+estimate from 113.70 to 154.11 MHz. The remaining critical path starts at
+an order-table RAM output and ends at a book register. These are routed
+estimates, without board I/O constraints or a physical board measurement.
+The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
+records all three runs.
 
 ## What runs
 

@@ -2,9 +2,10 @@
 
 import json
 import shutil
+import subprocess
 import unittest
 
-from support import Fixtures, Hdl
+from support import Fixtures, Hdl, ROOT
 
 from onnx2fpga.board import IcepiZero
 from onnx2fpga.trading import formal, itch
@@ -90,6 +91,39 @@ class Rtl(unittest.TestCase):
     def test_idle_cycles(self):
         compare(self.replay.run(gap=30, seed=2), self.decisions, self.replay.config,
                 self.latency, timed=False)
+
+
+@unittest.skipIf(HARDCAML or VERILATOR, HARDCAML or VERILATOR)
+class K26(unittest.TestCase):
+    def test_replay(self):
+        replay = Replay(Fixtures.build_dir("tick_to_trade_k26"), messages=2000)
+        acc, model = replay.model(device="k26", clock_mhz=322.265625)
+        replay.build(acc)
+        self.assertEqual(acc.latency, 12)
+        latency = sum(cycles for _, cycles in replay.stages)
+        self.assertEqual(latency, 20)
+        decisions = Pipeline(replay.config, model).run(replay.framed)
+        for gap in (0, 30):
+            compare(replay.run(gap=gap), decisions, replay.config, latency, timed=gap == 0)
+
+
+@unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
+class BookEquivalence(unittest.TestCase):
+    def test_update(self):
+        build = Fixtures.build_dir("book_equivalence")
+        config = build / "config.json"
+        config.write_text(json.dumps(Config().as_json(DESIGN)))
+        before = ROOT / "tests" / "fixtures" / "book_side_baseline.v"
+        shutil.copyfile(before, build / "before.v")
+        after = generate(config, "-unit", "book_side").split("endmodule", 1)[0] + "endmodule\n"
+        (build / "after.v").write_text(after.replace("module book_side (", "module book_after ("))
+        script = ("read_verilog before.v after.v; "
+                  "miter -equiv -flatten book_before book_after miter; prep -top miter; "
+                  "sat -verify -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("SUCCESS", result.stdout)
 
 
 @unittest.skipIf(HARDCAML, HARDCAML)

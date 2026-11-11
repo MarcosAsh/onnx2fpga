@@ -74,28 +74,28 @@ module Make (Config : Config) = struct
       List.map2_exn found levels ~f:(fun found l -> found &: (change.shares >=: l.shares))
     in
     let shifted = List.tl_exn levels @ [ Level.empty ] in
-    List.map3_exn
-      (List.zip_exn levels shifted)
-      found
-      (prefix_or emptied)
-      ~f:(fun (level, next) found gone ->
-        pick
-          gone
-          next
-          (pick found { level with shares = level.shares -: change.shares } level))
+    let gone = prefix_or emptied in
+    let updated =
+      List.map3_exn
+        (List.zip_exn levels shifted)
+        found
+        gone
+        ~f:(fun (level, next) found gone ->
+          pick
+            gone
+            next
+            (pick found { level with shares = level.shares -: change.shares } level))
+    in
+    updated, gone
   ;;
 
   (* More shares at a held price, or a new level in place; one past the end is lost. *)
-  let insert ~ask levels (change : _ Change.t) =
+  let insert ~matched ~ahead levels (change : _ Change.t) =
     let saturating a b =
       let sum = ue a +: ue b in
       mux2 (msb sum) (ones 32) (lsbs sum)
     in
-    let matched = List.map levels ~f:(fun l -> live l &: (l.price ==: change.price)) in
     let any_match = reduce matched ~f:( |: ) in
-    let ahead =
-      List.map levels ~f:(fun l -> live l &: better ~ask l.price change.price)
-    in
     let ahead_previous = vdd :: List.drop_last_exn ahead in
     let previous = Level.empty :: List.drop_last_exn levels in
     let added = { Level.price = change.price; shares = change.shares } in
@@ -121,8 +121,24 @@ module Make (Config : Config) = struct
       &: mux2 i.ask (i.insert.price <=: opposite.price) (i.insert.price >=: opposite.price)
     in
     let%hw accepted = i.insert.valid &: (i.insert.shares <>:. 0) &: ~:crosses in
+    let matched = List.map levels ~f:(fun l -> live l &: (l.price ==: i.insert.price)) in
+    let ahead =
+      List.map levels ~f:(fun l -> live l &: better ~ask:i.ask l.price i.insert.price)
+    in
+    let levels, gone = remove levels i.remove in
+    let shift flags =
+      List.map3_exn
+        gone
+        flags
+        (List.tl_exn flags @ [ gnd ])
+        ~f:(fun gone here next -> mux2 gone next here)
+    in
     let updated =
-      insert ~ask:i.ask (remove levels i.remove) { i.insert with valid = accepted }
+      insert
+        ~matched:(shift matched)
+        ~ahead:(shift ahead)
+        levels
+        { i.insert with valid = accepted }
     in
     { O.updated = concat_lsb (List.map updated ~f:Level.to_word); accepted }
   ;;

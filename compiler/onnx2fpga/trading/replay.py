@@ -77,12 +77,12 @@ class Replay:
         self.beats = itch.beats(self.packets)
         self.framed = frame(self.packets)
 
-    def model(self):
+    def model(self, device="vu9p", clock_mhz=None):
         """Compiles the MLP in fixed mode on the stream's features; thresholds at its 10th and 90th percentile."""
         books = Pipeline(self.config, lambda vector: 0).run(self.framed)
         vectors = [decision.features for decision in books]
         accelerator = load(tiny_mlp(), name="t2t_model")
-        accelerator.compile(device="vu9p", mode="fixed", hdl="hardcaml",
+        accelerator.compile(device=device, mode="fixed", hdl="hardcaml", clock_mhz=clock_mhz,
                             calibration=np.array(vectors[:4096], np.float32),
                             out_dir=self.out / "model")
         model = IntegerModel(accelerator)
@@ -177,10 +177,12 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--gap", type=int, default=0, help="percent of idle cycles between beats")
     parser.add_argument("--out", default="build/tick_to_trade")
+    parser.add_argument("--device", default="vu9p")
+    parser.add_argument("--clock-mhz", type=float)
     args = parser.parse_args(argv)
 
     replay = Replay(args.out, args.messages, args.seed)
-    accelerator, model = replay.model()
+    accelerator, model = replay.model(args.device, args.clock_mhz)
     replay.build(accelerator)
     pipeline = Pipeline(replay.config, model)
     decisions = pipeline.run(replay.framed)
@@ -193,8 +195,8 @@ def main(argv=None):
     print("orders: %d buy, %d sell; %d adds dropped on a full slot, %d levels forgotten"
           % (actions.count(1), actions.count(2), pipeline.book.collisions,
              pipeline.book.forgotten))
-    print("last byte to decision: %d cycles, %.1f ns at %.2f MHz, every message (%s)"
-          % (latency, latency * 1000 / CLOCK_MHZ, CLOCK_MHZ,
+    print("last byte to decision: %d cycles, %.1f ns at %.2f MHz target, every message (%s)"
+          % (latency, latency * 1000 / (args.clock_mhz or CLOCK_MHZ), args.clock_mhz or CLOCK_MHZ,
              ", ".join("%s %d" % stage for stage in replay.stages)))
     print("first byte to decision: min %d, median %d, p99 %d, max %d cycles"
           % (totals.min(), np.median(totals), np.percentile(totals, 99), totals.max()))
