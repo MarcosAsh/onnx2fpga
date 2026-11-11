@@ -1,4 +1,4 @@
-"""The synthesis driver without synthesis; the TCL itself has never run under a real Vivado."""
+"""The synthesis driver against recorded results and a Tcl stub."""
 
 import json
 import os
@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 from support import Fixtures, ROOT
 
@@ -100,6 +101,16 @@ class Runner(unittest.TestCase):
         self.assertEqual(environment["OTF_RTL"], "rtl/otf_fifo.sv")
         self.assertTrue(runner.script.exists(), runner.script)
         self.assertIn(str(runner.script), " ".join(runner.command()))
+
+    def test_failed_launch(self):
+        runner = VivadoRunner("xck26-sfvc784-2LV-c")
+        subject = Subject("model", "otf_top", {}, None, 0)
+        work = Fixtures.build_dir("vivado_failure")
+        failure = subprocess.CompletedProcess([], 42, "", "license checkout failed\n")
+        with patch("onnx2fpga.measure.subprocess.run", return_value=failure):
+            with self.assertRaisesRegex(RuntimeError, "license checkout failed"):
+                runner.run(subject, [], work, "vivado")
+        self.assertEqual((work / "vivado_output.log").read_text(), failure.stderr)
 
     def test_empty_generics_are_dropped(self):
         """An empty file name would make Vivado read a file called nothing, so those parameters keep their default."""

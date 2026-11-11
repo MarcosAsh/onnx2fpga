@@ -99,10 +99,12 @@ class VivadoRunner:
         environment.update(self.environment(subject, sources, out_dir))
         completed = subprocess.run(self.command(), cwd=work_dir, env=environment,
                                    capture_output=True, text=True)
+        log = completed.stdout + completed.stderr
+        pathlib.Path(work_dir, "vivado_output.log").write_text(log)
         summary = pathlib.Path(work_dir) / out_dir / "summary.json"
         if completed.returncode != 0 or not summary.exists():
             raise RuntimeError("vivado failed for %s\n%s"
-                               % (subject.name, completed.stdout[-3000:]))
+                               % (subject.name, log[-3000:]))
         return SynthesisResult.load(summary)
 
 
