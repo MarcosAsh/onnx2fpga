@@ -160,7 +160,7 @@ class Kria:
     BASE = 0xA0000000
     SPAN = 0x10000
     SFP = False
-    FILES = ("build.tcl", "kria.xdc", "kria_top.v")
+    FILES = ("build.tcl", "check_timing.tcl", "kria.xdc", "kria_top.v")
     FLOW_TIMEOUT = 4 * 3600
 
     def __init__(self, out, jobs=8, generator=None):
@@ -226,7 +226,7 @@ class Kria:
         completed = subprocess.run(self.command(), cwd=self.build, capture_output=True,
                                    text=True, timeout=self.FLOW_TIMEOUT)
         if completed.returncode != 0:
-            said = completed.stdout.strip().splitlines()[-8:]
+            said = completed.stdout.strip().splitlines()[-8:] + completed.stderr.strip().splitlines()[:8]
             raise BoardError("vivado failed in %s:\n%s" % (self.build, "\n".join(said)))
         return completed.stdout
 

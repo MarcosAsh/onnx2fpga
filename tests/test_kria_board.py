@@ -13,7 +13,7 @@ import numpy as np
 from support import Fixtures, Hdl, ROOT
 
 import onnx2fpga as otf
-from onnx2fpga.board import KV260, Kria
+from onnx2fpga.board import BoardError, KV260, Kria
 from onnx2fpga.errors import ConfigError, ToolchainError
 from onnx2fpga.measure import TimingReport
 from onnx2fpga.targets.device import Device
@@ -40,6 +40,11 @@ class K26(unittest.TestCase):
         self.assertTrue(report.met)
         with self.assertRaisesRegex(ValueError, "no timing for clock otf_clk"):
             TimingReport.parse("stub report")
+
+    def test_generated_clock_report(self):
+        report = TimingReport.load(ROOT / "tests" / "kr260_generated_timing_summary.rpt")
+        self.assertEqual((report.period_ns, report.wns_ns), (3.103, 0.561))
+        self.assertTrue(report.met)
 
     def test_synth_dry_run(self):
         completed = subprocess.run(
@@ -103,8 +108,9 @@ class Flow(unittest.TestCase):
         self.assertTrue(bitstream.is_file())
         self.assertIn("create_project -force kr260 vivado -part xck26-sfvc784-2LV-c", calls)
         self.assertIn("add_files {kria_shell.v kria_top.v}", calls)
-        clock = next(c for c in calls if c.startswith("create_clock -name otf_clk"))
-        self.assertIn("-period 3.103", clock)
+        clock = next(c for c in calls if c.startswith("create_generated_clock -name otf_clk"))
+        self.assertNotIn("-period", clock)
+        self.assertFalse(any(c.startswith("create_clock -name otf_clk") for c in calls))
         self.assertIn("create_clock -name sfp_mgt_refclk -period 6.400 clk", calls)
         self.assertIn("set_property IS_ENABLED false get_files", calls)
         self.assertTrue(any(c.startswith("assign_bd_address -offset 0xA0000000 -range 64K")
@@ -124,7 +130,51 @@ class Flow(unittest.TestCase):
         self.assertFalse((self.out / "kv260" / "sfp.xdc").exists())
         self.assertFalse(any("sfp" in c for c in calls))
 
+    def test_invalid_timing_fails(self):
+        failures = [
+            ({"OTF_TEST_PRIMARY_CLOCK": "1"}, "MMCM generated clock"),
+            ({"OTF_TEST_BOARD_PERIOD": "3.2"}, "unexpected otf_clk period"),
+            ({"OTF_TEST_BAD_METHOD": "1"}, "critical methodology violations"),
+        ]
+        for check in ("no_clock", "unconstrained_internal_endpoints", "generated_clocks", "loops"):
+            failures.append(({"OTF_TEST_BAD_CHECK": check}, "timing check failed"))
+        for environment, error in failures:
+            with self.subTest(environment=environment), mock.patch.dict(os.environ, environment):
+                with self.assertRaisesRegex(BoardError, error):
+                    self.build("kr260")
+                self.assertFalse((self.out / "kr260" / "kr260.bit").exists())
+
+    def test_failed_rebuild_removes_bitstream(self):
+        bitstream, _ = self.build("kr260")
+        path = str(self.bin) + os.pathsep + os.environ["PATH"]
+        with mock.patch.dict(os.environ, {"PATH": path, "OTF_TEST_PRIMARY_CLOCK": "1"}):
+            with self.assertRaisesRegex(BoardError, "MMCM generated clock"):
+                self.acc.build(board="kr260")
+        for suffix in (".bit", ".bin", ".xsa"):
+            self.assertFalse(bitstream.with_suffix(suffix).exists())
+
+    def test_failed_timing_summary(self):
+        original = CANNED.read_text()
+        row = next(line for line in original.splitlines() if line.strip().startswith("0.137"))
+        report = Fixtures.build_dir("kria_bad_timing") / "report.rpt"
+        for index, value, error in ((0, "-0.1", "setup"), (4, "-0.1", "hold"),
+                                    (8, "-0.1", "pulse_width"), (2, "1", "setup"),
+                                    (3, "0", "setup")):
+            fields = row.split()
+            fields[index] = value
+            report.write_text(original.replace(row, " ".join(fields)))
+            with self.subTest(index=index), mock.patch.dict(os.environ, {"OTF_TEST_TIMING_REPORT": str(report)}):
+                with self.assertRaisesRegex(BoardError, error + " timing failed"):
+                    self.build("kr260")
+                self.assertFalse((self.out / "kr260" / "kr260.bit").exists())
+        report.write_text("missing summary\n")
+        with mock.patch.dict(os.environ, {"OTF_TEST_TIMING_REPORT": str(report)}):
+            with self.assertRaisesRegex(BoardError, "missing design timing summary"):
+                self.build("kr260")
+
     def test_summary(self):
+        for board in ("kv260", "kr260"):
+            shutil.rmtree(self.out / board, ignore_errors=True)
         lines = []
         self.acc.summary(print_fn=lines.append)
         self.assertNotIn("measured by Vivado", "\n".join(lines))

@@ -29,9 +29,9 @@ serial frame arrived broken or a buffer filled up.
 
 ## KV260 and KR260
 
-Status: partial, see [006](../specs/006-kv260.md). The projects are generated
-and checked against a Vivado stub, but have not been through real Vivado or
-run on a board.
+Status: partial, see [006](../specs/006-kv260.md). A small KR260 inference
+design passes full implementation in Vivado 2026.1 and produces a bitstream.
+Physical board operation, host access and I/O remain untested.
 
 Both kits carry the Kria K26 SOM, a Zynq UltraScale+ part, and share the device
 `k26`. The KR260 has one SFP+ cage, which the 10G demo of
@@ -85,6 +85,39 @@ The example MLP fits the K26 unrolled only with one layer on multipliers. On
 multipliers alone it needs 1706 DSPs on the estimate, and with constant
 arithmetic everywhere 102618 LUTs, both past the 80 percent limit. With
 `acc.layers["fc1"].arithmetic("multiplier")` it needs 86932 LUTs and 602 DSPs.
+
+## Reproduce the KR260 build
+
+From a checkout with Hardcaml, Verilator and Vivado available:
+
+```sh
+python3 tools/build_kr260.py
+```
+
+This creates a seeded 4-8-1 MLP, compiles it for 322.265625 MHz, checks 16
+vectors in Verilator, and runs the complete PS, SmartConnect and inference
+shell through Vivado. `--generate-only` performs simulation and writes the
+project without starting Vivado. `--out` selects the build directory.
+The default is `build/kr260_smoke`.
+
+The full build on `xck26-sfvc784-2LV-c` uses 1530 LUTs, 1760 flip-flops and
+9 DSPs, with no block RAM. Its routed clock is 322.266 MHz, with 0.561 ns
+setup slack, 0.013 ns hold slack and 0.052 ns pulse-width slack. These are
+Vivado results for the small inference example, not the tick-to-trade design
+or measurements from a board. The [measurement record](../measurements/kr260-mlp-2026-11-11.json)
+includes the model seed and hashes of the reports and build artifacts.
+
+The PS uses IOPLL for nominal 100 MHz `pl_clk0`. Vivado derives `otf_clk`
+through the MMCM, preserving the clock relationship and jitter. The build
+rejects an independent clock, the wrong period, unconstrained internal paths,
+critical methodology violations or failing setup, hold or pulse-width timing.
+A failed rebuild removes the previous exported bitstream and handoff.
+
+The output directory contains `kr260.bit`, `kr260.bin`, `kr260.xsa`,
+`timing_summary.rpt`, `utilization.rpt` and `methodology.rpt`. The generated
+`model.onnx`, simulation vectors and manifest remain in the parent directory.
+The host runtime and Linux overlay still need validation on a board; the
+bitstream alone does not establish that Linux can access the accelerator.
 
 ## Adding a board
 

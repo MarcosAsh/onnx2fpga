@@ -193,7 +193,7 @@ class TimingReport:
         name = re.escape(clock)
         period = re.search(r"^\s*%s\s+\{[^}]*\}\s+([\d.]+)" % name, text, re.MULTILINE)
         intra = text.split("Intra Clock Table", 1)[-1]
-        slack = re.search(r"^%s\s+(-?[\d.]+)" % name, intra, re.MULTILINE)
+        slack = re.search(r"^\s*%s\s+(-?[\d.]+)" % name, intra, re.MULTILINE)
         if "Intra Clock Table" not in text or not period or not slack:
             raise ValueError("no timing for clock %s in the report" % clock)
         return cls(clock, float(period.group(1)), float(slack.group(1)))

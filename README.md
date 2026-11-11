@@ -32,7 +32,9 @@ This is not a board measurement; see the
 The example MLP also runs on an Icepi Zero (Lattice ECP5) built with yosys and
 nextpnr, bit exact against the integer reference. K26 model-only
 [Vivado measurements](docs/guides/k26-measurements.md) cover the 22-model
-corpus. The full Kria board builds have not been validated yet.
+corpus. A small inference model also passes the full KR260 Vivado build;
+[reproduce it](docs/guides/boards.md#reproduce-the-kr260-build). Physical Kria
+board operation remains untested.
 
 ## Running it
 

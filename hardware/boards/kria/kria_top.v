@@ -1,7 +1,7 @@
 // The Vivado top: the block design (PS and SmartConnect) wired to the Hardcaml kria_shell.
 module kria_top;
     wire        pl_clk0, pl_resetn0, aclk, aresetn;
-    wire [15:0] awaddr, araddr;
+    wire [31:0] awaddr, araddr;
     wire [2:0]  awprot, arprot;
     wire [31:0] wdata, rdata;
     wire [3:0]  wstrb;
@@ -21,10 +21,10 @@ module kria_top;
 
     kria_shell otf (
         .pl_clk0(pl_clk0), .pl_resetn0(pl_resetn0), .aclk(aclk), .aresetn(aresetn),
-        .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
+        .s_axi_awaddr(awaddr[15:0]), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
         .s_axi_wdata(wdata), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
-        .s_axi_araddr(araddr), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
+        .s_axi_araddr(araddr[15:0]), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
         .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid),
         .s_axi_rready(rready));
 endmodule

@@ -1,6 +1,7 @@
 # A Kria bitstream in one batch run: vivado -mode batch -source build.tcl, from the directory onnx2fpga wrote.
 
 source settings.tcl
+file delete -force $board.bit $board.bin $board.xsa
 
 create_project -force $board vivado -part $part
 add_files {kria_shell.v kria_top.v}
@@ -19,13 +20,14 @@ set_property -dict [list \
     CONFIG.PSU__USE__M_AXI_GP1 0 \
     CONFIG.PSU__USE__M_AXI_GP2 0 \
     CONFIG.PSU__FPGA_PL0_ENABLE 1 \
+    CONFIG.PSU__CRL_APB__PL0_REF_CTRL__SRCSEL IOPLL \
     CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ 100 \
 ] $ps
 set smc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc]
 set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1] $smc
 
 set m_axi [create_bd_intf_port -mode Master -vlnv xilinx.com:interface:aximm_rtl:1.0 M_AXI]
-set_property -dict [list CONFIG.PROTOCOL AXI4LITE CONFIG.DATA_WIDTH 32 CONFIG.ADDR_WIDTH 16] $m_axi
+set_property -dict [list CONFIG.PROTOCOL AXI4LITE CONFIG.DATA_WIDTH 32 CONFIG.ADDR_WIDTH 32] $m_axi
 create_bd_port -dir O -type clk pl_clk0
 create_bd_port -dir O -type rst pl_resetn0
 set aclk [create_bd_port -dir I -type clk -freq_hz 322265625 aclk]
@@ -55,6 +57,7 @@ if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
 open_run impl_1
 report_timing_summary -max_paths 10 -file timing_summary.rpt
 report_utilization -file utilization.rpt
+source check_timing.tcl
 set run [get_property DIRECTORY [get_runs impl_1]]
 file copy -force [file join $run kria_top.bit] $board.bit
 file copy -force [file join $run kria_top.bin] $board.bin

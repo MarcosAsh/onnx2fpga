@@ -1,6 +1,7 @@
 # Stand-ins for the Vivado commands synth_unit.tcl and the Kria build.tcl call, so they run under plain tclsh.
 
 set ::calls {}
+set ::stub_dir [file dirname [info script]]
 
 # Canned primitive counts, keyed by the filter the script uses.
 array set ::primitives {
@@ -16,7 +17,10 @@ proc record {name arguments} {
 }
 
 proc open_checkpoint {args} { record open_checkpoint $args }
-proc get_clocks {args} { return clk }
+proc get_clocks {args} {
+    if {[lindex $args end] eq "otf_clk"} { return otf_clk }
+    return clk
+}
 proc get_nets {args} {
     if {[lindex $args end] in {book/control book/*}} { return book/control }
     if {[lindex $args end] eq "*"} { return {book/control book/data} }
@@ -59,7 +63,31 @@ proc report_utilization {args} {
         close $handle
     }
 }
-proc report_timing_summary {args} { record report_timing_summary $args; write_stub_report $args }
+proc report_timing_summary {args} {
+    record report_timing_summary $args
+    set path [lindex $args [expr {[lsearch $args -file] + 1}]]
+    if {$path eq "timing_summary.rpt"} {
+        set source [file join $::stub_dir kr260_timing_summary.rpt]
+        if {[info exists ::env(OTF_TEST_TIMING_REPORT)]} { set source $::env(OTF_TEST_TIMING_REPORT) }
+        file copy -force $source $path
+    } else {
+        write_stub_report $args
+    }
+}
+proc check_timing {args} {
+    set report ""
+    foreach check {no_clock unconstrained_internal_endpoints generated_clocks loops} {
+        set count 0
+        if {[info exists ::env(OTF_TEST_BAD_CHECK)] && $::env(OTF_TEST_BAD_CHECK) eq $check} { set count 1 }
+        append report "checking $check ($count)\n"
+    }
+    return $report
+}
+proc report_methodology {args} { write_stub_report $args }
+proc get_methodology_violations {args} {
+    if {[info exists ::env(OTF_TEST_BAD_METHOD)]} { return TIMING-1 }
+    return {}
+}
 
 proc get_cells {args} {
     record get_cells $args
@@ -81,8 +109,16 @@ set ::stub_run [file join [pwd] vivado stub_run]
 proc get_property {property object} {
     switch $property {
         NAME { return $object }
+        IS_GENERATED {
+            if {[info exists ::env(OTF_TEST_PRIMARY_CLOCK)]} { return 0 }
+            return 1
+        }
         PART { return $::env(OTF_PART) }
         PERIOD {
+            if {$object eq "otf_clk"} {
+                if {[info exists ::env(OTF_TEST_BOARD_PERIOD)]} { return $::env(OTF_TEST_BOARD_PERIOD) }
+                return [expr {1000.0 / 322.265625}]
+            }
             if {[info exists ::env(OTF_TEST_PERIOD)]} { return $::env(OTF_TEST_PERIOD) }
             return 5.0
         }
@@ -118,7 +154,7 @@ foreach command {
     create_bd_intf_port create_bd_port get_bd_intf_pins get_bd_pins get_bd_ports
     connect_bd_intf_net connect_bd_net assign_bd_address get_bd_addr_spaces
     get_bd_addr_segs validate_bd_design save_bd_design make_wrapper current_fileset
-    get_runs wait_on_run open_run write_hw_platform create_clock get_pins current_design
+    get_runs wait_on_run open_run write_hw_platform create_clock create_generated_clock get_pins current_design
 } {
     proc $command {args} "record $command \$args; return $command"
 }

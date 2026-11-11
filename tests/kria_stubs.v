@@ -1,10 +1,10 @@
 // Port-accurate stand-ins for the block design wrapper and the two UltraScale+ primitives, for linting kria_top.
 module system_wrapper (
     output pl_clk0, output pl_resetn0, input aclk, input aresetn,
-    output [15:0] M_AXI_awaddr, output [2:0] M_AXI_awprot, output M_AXI_awvalid,
+    output [31:0] M_AXI_awaddr, output [2:0] M_AXI_awprot, output M_AXI_awvalid,
     input M_AXI_awready, output [31:0] M_AXI_wdata, output [3:0] M_AXI_wstrb,
     output M_AXI_wvalid, input M_AXI_wready, input [1:0] M_AXI_bresp,
-    input M_AXI_bvalid, output M_AXI_bready, output [15:0] M_AXI_araddr,
+    input M_AXI_bvalid, output M_AXI_bready, output [31:0] M_AXI_araddr,
     output [2:0] M_AXI_arprot, output M_AXI_arvalid, input M_AXI_arready,
     input [31:0] M_AXI_rdata, input [1:0] M_AXI_rresp, input M_AXI_rvalid,
     output M_AXI_rready);

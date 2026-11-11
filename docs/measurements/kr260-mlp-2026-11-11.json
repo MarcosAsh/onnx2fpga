@@ -1,0 +1,47 @@
+{
+  "tool": "Vivado 2026.1",
+  "board": "kr260",
+  "part": "xck26-sfvc784-2LV-c",
+  "scope": "Full PS, SmartConnect and inference shell implementation; no physical board validation.",
+  "command": "python3 tools/build_kr260.py --out build/kr260_validated",
+  "model": {
+    "widths": [
+      4,
+      8,
+      1
+    ],
+    "seed": 7,
+    "calibration_seed": 5,
+    "calibration_vectors": 64,
+    "simulation_vectors": 16,
+    "simulation_bit_exact": true,
+    "latency_cycles": 12
+  },
+  "clock_mhz": 322.265625,
+  "ps_clock_mhz": 100.0,
+  "setup_slack_ns": 0.561,
+  "hold_slack_ns": 0.013,
+  "pulse_width_slack_ns": 0.052,
+  "failing_endpoints": {
+    "setup": 0,
+    "hold": 0,
+    "pulse_width": 0
+  },
+  "resources": {
+    "lut": 1530,
+    "ff": 1760,
+    "dsp": 9,
+    "bram36": 0
+  },
+  "critical_methodology_violations": 0,
+  "sha256": {
+    "model.onnx": "390999433bfcb8ffaf5330967f0991fe3a06414c45a3a5d0a5d2f78c70864986",
+    "kr260/kria_shell.v": "a844592a5a0216e5dc4c890bdc4f28d0e749e748e5192f77686d8092eb3f9fb3",
+    "kr260/kr260.bit": "7ee58180cc9b78480c71dc4f24969ed071b56cf312697d3a52adc6fe1eb1fbb1",
+    "kr260/kr260.bin": "dcc15719884f65c09863ed741f5161910223b03409ab5331bc12994ad2017157",
+    "kr260/kr260.xsa": "285074de843bd6e1dfd4ab40144225223893c1935071d027c6170c677b2c7f9f",
+    "kr260/timing_summary.rpt": "5d7dd1022e654f8e8b1dd223791ae607767ab45d37ff2748f05fa899116cd566",
+    "kr260/utilization.rpt": "8bd5ae014e57087cc4aec935209d45e7ac44b7869b094f2813a04f0793e4822f",
+    "kr260/methodology.rpt": "76ece9da0aead4a95a96d8a444916fb6e893f748fc81a777004fa7370cecefaa"
+  }
+}
