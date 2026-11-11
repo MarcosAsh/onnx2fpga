@@ -15,6 +15,13 @@ proc record {name arguments} {
     lappend ::calls [concat $name $arguments]
 }
 
+proc open_checkpoint {args} { record open_checkpoint $args }
+proc get_clocks {args} { return clk }
+proc write_checkpoint {args} {
+    record write_checkpoint $args
+    close [open [lindex $args end] w]
+}
+
 proc read_verilog {args} { record read_verilog $args }
 proc read_xdc {args} { record read_xdc $args }
 proc synth_design {args} { record synth_design $args }
@@ -68,6 +75,11 @@ set ::stub_run [file join [pwd] vivado stub_run]
 
 proc get_property {property object} {
     switch $property {
+        PART { return $::env(OTF_PART) }
+        PERIOD {
+            if {[info exists ::env(OTF_TEST_PERIOD)]} { return $::env(OTF_TEST_PERIOD) }
+            return 5.0
+        }
         PROGRESS { return "100%" }
         DIRECTORY { return $::stub_run }
         default { return $::stub_slack }

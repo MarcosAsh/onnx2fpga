@@ -52,6 +52,19 @@ OTF_PERIOD=3.103 OTF_CLOCK=clock OTF_IMPL=1 OTF_OUT=vivado \
   vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
 ```
 
+The implementation run saves `vivado/routed.dcp`. From the same build
+directory, refine its placement and routing with:
+
+```sh
+OTF_PART=xck26-sfvc784-2LV-c OTF_TOP=tick_to_trade OTF_PERIOD=3.103 \
+OTF_CHECKPOINT=vivado/routed.dcp OTF_OUT=vivado_refined \
+  vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
+```
+
+The script checks the checkpoint's part and clock period, runs aggressive
+physical optimization, then reroutes with the Explore directive. Reports and
+the refined checkpoint go to `vivado_refined`.
+
 The order table stores payloads in block RAM and live-state flags in
 distributed RAM. Reads take two cycles. Forwarding makes simultaneous writes
 and pending flag updates visible to reads. The book accepts one event every
@@ -79,6 +92,7 @@ with a 3.103 ns constraint:
 | Early payload writes | 21 | 17825 | 5977 | 0 | 0 | -1.564 |
 | Pipelined table, fixed header lanes | 22 | 7402 | 6104 | 13.5 | 0 | -1.110 |
 | Narrow payload banks, early lookup | 22 | 7787 | 6778 | 13.5 | 0 | -0.569 |
+| Post-route refinement | 22 | 7787 | 6778 | 13.5 | 0 | -0.472 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
@@ -89,7 +103,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records twenty-seven runs, including the intermediate memory layouts.
+records thirty-four runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
@@ -123,6 +137,10 @@ bid and ask updates run in parallel. Removal shares its subtraction with
 the empty-level check, and event delays stay in flip-flops. This revision
 uses 7787 LUTs, 6778 flip-flops and 13.5 block-RAM equivalents. Its worst
 slack remains -0.569 ns against the 322.265625 MHz target.
+
+Post-route refinement reaches 279.72 MHz with the same RTL and resource
+counts. The 22-cycle path takes 78.7 ns at that estimate. Hold slack is
+positive at 0.033 ns; setup slack is still -0.472 ns against the target.
 
 The table induction check covers a four-slot instance for arbitrary legal
 operation sequences, including pending flag writes, simultaneous reads and

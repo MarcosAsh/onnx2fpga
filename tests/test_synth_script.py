@@ -15,7 +15,8 @@ PERIOD = 5.0
 SLACK = 0.842
 
 
-def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None, report=None):
+def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None,
+             report=None, checkpoint=None, checkpoint_period=None):
     out = Fixtures.build_dir("synth_stub_" + name) / "synth" / "unit"
     if out.exists():
         shutil.rmtree(out)
@@ -23,6 +24,11 @@ def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None
                        OTF_RTL="rtl/otf_requant.sv rtl/otf_mvau.sv",
                        OTF_GENERICS=generics, OTF_PERIOD=str(PERIOD), OTF_OUT=str(out),
                        OTF_IMPL="1" if implement else "0")
+    if checkpoint:
+        environment["OTF_CHECKPOINT"] = checkpoint
+        environment.pop("OTF_RTL")
+    if checkpoint_period is not None:
+        environment["OTF_TEST_PERIOD"] = str(checkpoint_period)
     if report:
         environment["OTF_TEST_REPORT"] = str(report)
     if clock:
@@ -99,6 +105,23 @@ class SynthScriptTest(unittest.TestCase):
             self.assertTrue(any(c.startswith(step) for c in calls), step)
         self.assertEqual(SynthesisResult.load(out / "summary.json").stage, "impl")
         self.assertTrue((out / "utilization_impl.rpt").exists())
+
+    def test_checkpoint_refinement(self):
+        out, completed, calls = run_stub("refine", checkpoint="routed.dcp")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(SynthesisResult.load(out / "summary.json").stage, "impl")
+        self.assertTrue((out / "routed.dcp").exists())
+        self.assertIn("open_checkpoint routed.dcp", calls)
+        self.assertIn("phys_opt_design -directive AggressiveExplore", calls)
+        self.assertIn("route_design -directive Explore", calls)
+        self.assertFalse(any(c.startswith(("read_verilog", "read_xdc", "synth_design"))
+                             for c in calls))
+
+    def test_checkpoint_clock_mismatch(self):
+        out, completed, _ = run_stub("bad_clock", checkpoint="routed.dcp", checkpoint_period=4)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("checkpoint period mismatch", completed.stderr)
+        self.assertFalse((out / "summary.json").exists())
 
     def test_clock_port(self):
         # Hardcaml tops name the clock port clock.

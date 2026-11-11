@@ -7,43 +7,55 @@ proc env_or {name fallback} {
 
 set part     $::env(OTF_PART)
 set top      $::env(OTF_TOP)
-set sources  $::env(OTF_RTL)
+set sources  [env_or OTF_RTL ""]
 set generics [env_or OTF_GENERICS ""]
 set period   [env_or OTF_PERIOD 5.0]
 set outdir   [env_or OTF_OUT "synth_out"]
 set do_impl  [env_or OTF_IMPL 0]
 set clock    [env_or OTF_CLOCK clk]
+set checkpoint [env_or OTF_CHECKPOINT ""]
 
 file mkdir $outdir
 
-foreach source $sources {
-    read_verilog -sv $source
-}
-
-set xdc [file join $outdir clock.xdc]
-set handle [open $xdc w]
-puts $handle "create_clock -name clk -period $period \[get_ports $clock\]"
-close $handle
-read_xdc -mode out_of_context $xdc
-
-set overrides {}
-foreach pair $generics {
-    lappend overrides -generic $pair
-}
-
-synth_design -top $top -part $part -mode out_of_context {*}$overrides
-report_utilization -file [file join $outdir utilization_synth.rpt]
-report_timing_summary -file [file join $outdir timing_synth.rpt]
-set stage synth
-
-if {$do_impl} {
-    opt_design
-    place_design
-    phys_opt_design
-    route_design
+if {$checkpoint ne ""} {
+    open_checkpoint $checkpoint
+    if {[get_property PART [current_design]] ne $part} { error "checkpoint part mismatch" }
+    if {[get_property PERIOD [get_clocks clk]] != $period} { error "checkpoint period mismatch" }
+    phys_opt_design -directive AggressiveExplore
+    route_design -directive Explore
     report_utilization -file [file join $outdir utilization_impl.rpt]
     report_timing_summary -file [file join $outdir timing_impl.rpt]
     set stage impl
+} else {
+    foreach source $sources {
+        read_verilog -sv $source
+    }
+
+    set xdc [file join $outdir clock.xdc]
+    set handle [open $xdc w]
+    puts $handle "create_clock -name clk -period $period \[get_ports $clock\]"
+    close $handle
+    read_xdc -mode out_of_context $xdc
+
+    set overrides {}
+    foreach pair $generics {
+        lappend overrides -generic $pair
+    }
+
+    synth_design -top $top -part $part -mode out_of_context {*}$overrides
+    report_utilization -file [file join $outdir utilization_synth.rpt]
+    report_timing_summary -file [file join $outdir timing_synth.rpt]
+    set stage synth
+
+    if {$do_impl} {
+        opt_design
+        place_design
+        phys_opt_design
+        route_design
+        report_utilization -file [file join $outdir utilization_impl.rpt]
+        report_timing_summary -file [file join $outdir timing_impl.rpt]
+        set stage impl
+    }
 }
 
 proc report_count {report labels} {
@@ -98,3 +110,5 @@ puts $handle "}"
 close $handle
 
 puts "OTF_SUMMARY [file join $outdir summary.json]"
+
+if {$stage eq "impl"} { write_checkpoint -force [file join $outdir routed.dcp] }
