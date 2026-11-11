@@ -102,7 +102,7 @@ class SimulatedRegisters:
             HardcamlGenerator().verilog((build_dir / "design.json").resolve(), "kria-regs"))
         harness = AssetLocator(assets).runtime_dir / "sim" / "regs_harness.cpp"
         built = subprocess.run(
-            ["verilator", "--cc", "--exe", "--build", "-j", "0", "-Wno-fatal",
+            ["verilator", "--cc", "--exe", "--build", "--build-jobs", "0", "-Wno-fatal",
              "--top-module", "kria_regs", "-CFLAGS", "-O1 -std=c++17", "kria_regs.v",
              str(harness), "-o", "Vkria_regs"],
             cwd=folder, capture_output=True, text=True)

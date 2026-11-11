@@ -268,7 +268,7 @@ class HardcamlLockstepTest(unittest.TestCase):
             "pairs": "\n\n".join(pair.render() for pair in pairs)})
 
         library = sorted(str(p) for p in (ROOT / "hardware" / "rtl").glob("otf_*.sv"))
-        built = run(["verilator", "--binary", "--timing", "-j", "0",
+        built = run(["verilator", "--binary", "--timing", "--build-jobs", "0",
                      "-Wno-fatal", "-Wno-lint", "-Wno-style", "--top-module", "lockstep",
                      "-o", "Vlockstep", str(folder / "lockstep.sv"),
                      str(folder / "hc.v")] + library, cwd=folder)

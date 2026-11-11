@@ -102,7 +102,7 @@ class Replay:
                        in re.findall(r"\((\w+) (\d+)\)", generate(config_path, "-stages"))]
         runtime = AssetLocator().runtime_dir
         completed = subprocess.run(
-            ["verilator", "--cc", "--exe", "--build", "-j", "0", *WARNINGS,
+            ["verilator", "--cc", "--exe", "--build", "--build-jobs", "0", *WARNINGS,
              "-CFLAGS", "-O2 -std=c++17 -I%s" % (runtime / "include"),
              "--top-module", "tick_to_trade", "tick_to_trade.v",
              str(runtime / "sim" / "tick_harness.cpp"), "-o", "Vtick_to_trade"],

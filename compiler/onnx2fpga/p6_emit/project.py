@@ -193,7 +193,7 @@ CXXFLAGS  := -O2 -std=c++17 -I$(OTF_ROOT)/runtime/include%(defines)s
 all: obj_dir/V$(TOP)
 
 obj_dir/V$(TOP): $(SOURCES) $(HARNESS)
-\t$(VERILATOR) --cc --exe --build -j 0 $(WARNINGS) \\
+\t$(VERILATOR) --cc --exe --build --build-jobs 0 $(WARNINGS) \\
 \t  -CFLAGS "$(CXXFLAGS)" --top-module $(TOP) \\
 \t  $(SOURCES) $(HARNESS) -o V$(TOP)
 
