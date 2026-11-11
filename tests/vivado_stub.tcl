@@ -4,8 +4,6 @@ set ::calls {}
 
 # Canned primitive counts, keyed by the filter the script uses.
 array set ::primitives {
-    "PRIMITIVE_GROUP == LUT"         412
-    "PRIMITIVE_GROUP == FLOP_LATCH"  288
     "REF_NAME =~ DSP*"               6
     "REF_NAME =~ RAMB36*"            1
     "REF_NAME =~ RAMB18*"            2
@@ -36,7 +34,18 @@ proc write_stub_report {arguments} {
     }
 }
 
-proc report_utilization {args} { record report_utilization $args; write_stub_report $args }
+proc report_utilization {args} {
+    record report_utilization $args
+    set path [lindex $args [expr {[lsearch $args -file] + 1}]]
+    if {[info exists ::env(OTF_TEST_REPORT)]} {
+        file copy -force $::env(OTF_TEST_REPORT) $path
+    } else {
+        set handle [open $path w]
+        puts $handle "| Slice LUTs* | 412 | 0 | 53200 | 0.77 |"
+        puts $handle "| Slice Registers | 288 | 0 | 106400 | 0.27 |"
+        close $handle
+    }
+}
 proc report_timing_summary {args} { record report_timing_summary $args; write_stub_report $args }
 
 proc get_cells {args} {

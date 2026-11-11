@@ -15,7 +15,7 @@ PERIOD = 5.0
 SLACK = 0.842
 
 
-def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None):
+def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None, report=None):
     out = Fixtures.build_dir("synth_stub_" + name) / "synth" / "unit"
     if out.exists():
         shutil.rmtree(out)
@@ -23,11 +23,13 @@ def run_stub(name, implement=False, generics="MW=9 MH=4 SIMD=3 PE=4", clock=None
                        OTF_RTL="rtl/otf_requant.sv rtl/otf_mvau.sv",
                        OTF_GENERICS=generics, OTF_PERIOD=str(PERIOD), OTF_OUT=str(out),
                        OTF_IMPL="1" if implement else "0")
+    if report:
+        environment["OTF_TEST_REPORT"] = str(report)
     if clock:
         environment["OTF_CLOCK"] = clock
     completed = subprocess.run(["tclsh", str(STUB)], cwd=out.parents[1], env=environment,
                                capture_output=True, text=True, timeout=120)
-    calls = (out / "calls.txt").read_text().splitlines() if out.exists() else []
+    calls = (out / "calls.txt").read_text().splitlines() if (out / "calls.txt").exists() else []
     return out, completed, calls
 
 
@@ -65,6 +67,23 @@ class SynthScriptTest(unittest.TestCase):
         self.assertTrue(any("otf_mvau.sv" in c for c in reads))
         self.assertFalse(any(c.startswith("route_design") for c in calls))
         self.assertFalse((out / "utilization_impl.rpt").exists())
+
+    def test_real_utilization(self):
+        for implement in (False, True):
+            with self.subTest(implement=implement):
+                out, completed, _ = run_stub("real", implement=implement,
+                                             report=ROOT / "tests" / "k26_utilization_synth.rpt")
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                measured = SynthesisResult.load(out / "summary.json").measured
+                self.assertEqual((measured.lut, measured.ff), (860, 694))
+
+    def test_missing_utilization(self):
+        report = Fixtures.build_dir("missing_utilization") / "report.rpt"
+        report.write_text("| CLB LUTs* | 860 | 0 | 117120 | 0.73 |\n")
+        out, completed, _ = run_stub("missing", report=report)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("missing utilization row", completed.stderr)
+        self.assertFalse((out / "summary.json").exists())
 
     def test_implementation_run(self):
         out, completed, calls = run_stub("impl", implement=True)

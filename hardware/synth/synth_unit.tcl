@@ -46,16 +46,28 @@ if {$do_impl} {
     set stage impl
 }
 
-# Counts primitives directly because report layout changes between releases.
-proc count_group {group} {
-    return [llength [get_cells -hier -filter "PRIMITIVE_GROUP == $group"]]
+proc report_count {report labels} {
+    foreach line [split $report "\n"] {
+        set fields [split $line |]
+        set label [string trim [lindex $fields 1] " *"]
+        if {$label in $labels} {
+            set count [string map {, ""} [string trim [lindex $fields 2]]]
+            if {[string is integer -strict $count] && $count >= 0} { return $count }
+            error "invalid utilization count for $label"
+        }
+    }
+    error "missing utilization row: $labels"
 }
+
 proc count_ref {pattern} {
     return [llength [get_cells -hier -filter "REF_NAME =~ $pattern"]]
 }
 
-set lut    [count_group LUT]
-set ff     [count_group FLOP_LATCH]
+set handle [open [file join $outdir utilization_${stage}.rpt] r]
+set utilization [read $handle]
+close $handle
+set lut [report_count $utilization {"CLB LUTs" "Slice LUTs"}]
+set ff  [report_count $utilization {"CLB Registers" "Slice Registers"}]
 set dsp    [count_ref "DSP*"]
 set ramb36 [count_ref "RAMB36*"]
 set ramb18 [count_ref "RAMB18*"]
