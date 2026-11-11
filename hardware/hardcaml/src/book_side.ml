@@ -81,10 +81,10 @@ module Make (Config : Config) = struct
         found
         gone
         ~f:(fun (level, next) found gone ->
-          pick
-            gone
-            next
-            (pick found { level with shares = level.shares -: change.shares } level))
+          let shares =
+            add_attribute (level.shares -: change.shares) (Rtl_attribute.Vivado.keep true)
+          in
+          pick gone next (pick found { level with shares } level))
     in
     updated, gone
   ;;
