@@ -56,31 +56,41 @@ let run events =
        let set signal value =
          signal := Bits.of_unsigned_int ~width:(Bits.width !signal) value
        in
-       List.iter events ~f:(fun { kind; symbol; side; order; new_order; shares; price } ->
-         set e.kind (Itch_parser.Kind.code kind);
-         set e.symbol symbol;
-         set e.side (Bool.to_int (Char.equal side 'S'));
-         set e.order order;
-         set e.new_order new_order;
-         set e.shares shares;
-         set e.price price;
-         e.valid := Bits.vdd;
+       let pending = Queue.create () in
+       let cycle () =
          Lws.cycle h;
-         e.valid := Bits.gnd;
          let b = o.book in
-         while not (Bits.to_bool !(b.valid)) do
-           Lws.cycle h
-         done;
-         let bids = levels !(b.bids) in
-         let asks = levels !(b.asks) in
-         let flow = Bits.to_signed_int !(b.flow) in
-         print_s
-           [%message
-             (kind : Itch_parser.Kind.t)
-               (order : int)
-               (bids : (int * int) list)
-               (asks : (int * int) list)
-               (flow : int)]);
+         if Bits.to_bool !(b.valid)
+         then (
+           let { kind; order; _ } = Queue.dequeue_exn pending in
+           let bids = levels !(b.bids) in
+           let asks = levels !(b.asks) in
+           let flow = Bits.to_signed_int !(b.flow) in
+           print_s
+             [%message
+               (kind : Itch_parser.Kind.t)
+                 (order : int)
+                 (bids : (int * int) list)
+                 (asks : (int * int) list)
+                 (flow : int)])
+       in
+       List.iter
+         events
+         ~f:(fun ({ kind; symbol; side; order; new_order; shares; price } as event) ->
+           Queue.enqueue pending event;
+           set e.kind (Itch_parser.Kind.code kind);
+           set e.symbol symbol;
+           set e.side (Bool.to_int (Char.equal side 'S'));
+           set e.order order;
+           set e.new_order new_order;
+           set e.shares shares;
+           set e.price price;
+           e.valid := Bits.vdd;
+           cycle ();
+           e.valid := Bits.gnd;
+           cycle ());
+       List.iter (List.init Order_book.latency ~f:Fn.id) ~f:(fun _ -> cycle ());
+       assert (Queue.is_empty pending);
        ())
 ;;
 

@@ -255,6 +255,14 @@ let verilog ?unit params =
       in
       let module C = Circuit.With_interface (Side.I) (Side.O) in
       C.create_exn ~name:"dut" (Side.hierarchical scope)
+    | Some "book_side_pipelined" ->
+      let module Side =
+        Book_side.Make (struct
+          let levels = params.Params.levels
+        end)
+      in
+      let module C = Circuit.With_interface (Side.Pipelined.I) (Side.Pipelined.O) in
+      C.create_exn ~name:"dut" (Side.Pipelined.hierarchical scope)
     | Some unit -> raise_s [%message "tick_to_trade: no unit called" unit]
   in
   Rtl.create ~database:(Scope.circuit_database scope) Verilog [ circuit ]

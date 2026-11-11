@@ -19,8 +19,8 @@ seconds:
 ```
 100000 messages in 4934 packets, 410437 beats; 65151 tracked messages, all identical
 orders: 6627 buy, 6942 sell; 471 adds dropped on a full slot, 2570 levels forgotten
-last byte to decision: 14 cycles, 43.4 ns at 322.27 MHz target, every message (moldudp64 1, itch_parser 1, order_book 2, features 3, model 6, decision 1)
-first byte to decision: min 16, median 18, p99 19, max 19 cycles
+last byte to decision: 15 cycles, 46.5 ns at 322.27 MHz target, every message (moldudp64 1, itch_parser 1, order_book 3, features 3, model 6, decision 1)
+first byte to decision: min 17, median 19, p99 20, max 20 cycles
 ```
 
 `--seed` picks another day, `--gap 30` leaves 30 percent of cycles idle
@@ -38,7 +38,7 @@ PYTHONPATH=compiler python3 -m onnx2fpga.trading.replay \
   --device k26 --clock-mhz 322.265625 --messages 100000 --out build/tick_k26
 ```
 
-The model takes 12 cycles and the full path takes 20. The 100000-message
+The model takes 12 cycles and the full path takes 21. The 100000-message
 replay matches all 65151 tracked messages, including the book, features and
 orders. The printed nanoseconds use the requested clock, not a measured
 clock. The whole pipeline does not yet meet 322.265625 MHz.
@@ -57,7 +57,10 @@ prices before compacting removed levels, then moves those comparison bits
 with the levels. `tests/test_tick_to_trade.py` proves this update equivalent
 to the four-level RTL from revision `5244d34` for all inputs, using
 `tests/fixtures/book_side_baseline.v`. The existing invariant proofs and
-replay checks still apply.
+replay checks still apply. A register separates removal and insertion; the
+sequential proof checks that its result equals the original update delayed
+one cycle. The table still writes in its second cycle, and the book accepts
+one event every two cycles.
 
 Vivado 2026.1 out-of-context routed results on `xck26-sfvc784-2LV-c`,
 with a 3.103 ns constraint:
@@ -67,14 +70,16 @@ with a 3.103 ns constraint:
 | Original | 14 | 7153 | 4450 | 1 | 2 | -6.903 |
 | K26 model, block RAM | 20 | 7148 | 4865 | 14.5 | 0 | -5.692 |
 | Parallel book comparisons | 20 | 7643 | 4815 | 14.5 | 0 | -3.386 |
+| Pipelined book update | 21 | 6434 | 5674 | 14.5 | 0 | -2.759 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
-estimate from 113.70 to 154.11 MHz. The remaining critical path starts at
-an order-table RAM output and ends at a book register. These are routed
+estimate from 113.70 to 154.11 MHz. Pipelining the update reaches 170.59 MHz
+with one more cycle. The remaining critical path starts at an order-table
+RAM output and ends at the new book pipeline register. These are routed
 estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records all three runs.
+records all four runs.
 
 ## What runs
 
@@ -109,7 +114,7 @@ hardware/hardcaml/_build/default/bin/generate.exe tick-to-trade tick_to_trade.js
 | `clock`, `clear` | 1 | One clock domain; `clear` is synchronous. |
 | `data`, `keep`, `valid`, `last` | 64, 8, 1, 1 | UDP payload bytes, byte 0 in the low bits. |
 | `ready` | 1 | Low for 4096 cycles after a clear while the order table empties. |
-| `book_*` | | The updated symbol's book, two cycles after each tracked message. |
+| `book_*` | | The updated symbol's book, three cycles after each tracked message. |
 | `features_valid`, `features` | 1, 32 | Spread, top imbalance, depth imbalance, trade flow, as int8. |
 | `decision_valid`, `action`, `prediction` | 1, 2, 8 | One per tracked message: hold, buy or sell. |
 | `order_valid`, `order` | 1, 376 | A 47 byte OUCH 5.0 Enter Order when the action is not hold. |

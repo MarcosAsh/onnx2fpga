@@ -74,7 +74,7 @@ class Rtl(unittest.TestCase):
 
     def test_latency(self):
         self.assertEqual(self.replay.stages, [("moldudp64", 1), ("itch_parser", 1),
-                                              ("order_book", 2), ("features", 3),
+                                              ("order_book", 3), ("features", 3),
                                               ("model", 6), ("decision", 1)])
         self.assertEqual(self.accelerator.latency, 6)
 
@@ -101,7 +101,7 @@ class K26(unittest.TestCase):
         replay.build(acc)
         self.assertEqual(acc.latency, 12)
         latency = sum(cycles for _, cycles in replay.stages)
-        self.assertEqual(latency, 20)
+        self.assertEqual(latency, 21)
         decisions = Pipeline(replay.config, model).run(replay.framed)
         for gap in (0, 30):
             compare(replay.run(gap=gap), decisions, replay.config, latency, timed=gap == 0)
@@ -120,6 +120,39 @@ class BookEquivalence(unittest.TestCase):
         script = ("read_verilog before.v after.v; "
                   "miter -equiv -flatten book_before book_after miter; prep -top miter; "
                   "sat -verify -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("SUCCESS", result.stdout)
+
+    def test_pipeline(self):
+        build = Fixtures.build_dir("book_pipeline_equivalence")
+        config = build / "config.json"
+        config.write_text(json.dumps(Config().as_json(DESIGN)))
+        shutil.copyfile(ROOT / "tests" / "fixtures" / "book_side_baseline.v", build / "before.v")
+        after = generate(config, "-unit", "book_side_pipelined")
+        (build / "after.v").write_text(after.replace("module dut (", "module book_after ("))
+        (build / "reference.v").write_text("""
+module reference (
+    input clock, clear,
+    input [255:0] book$levels, input book$ask, input [63:0] book$opposite,
+    input book$remove$valid, input [31:0] book$remove$price, book$remove$shares,
+    input book$insert$valid, input [31:0] book$insert$price, book$insert$shares,
+    output reg [255:0] updated, output accepted
+);
+    wire [255:0] next;
+    book_before original (
+        .levels(book$levels), .ask(book$ask), .opposite(book$opposite),
+        .remove$valid(book$remove$valid), .remove$price(book$remove$price),
+        .remove$shares(book$remove$shares), .insert$valid(book$insert$valid),
+        .insert$price(book$insert$price), .insert$shares(book$insert$shares),
+        .updated(next), .accepted(accepted));
+    always @(posedge clock) updated <= next;
+endmodule
+""")
+        script = ("read_verilog before.v reference.v after.v; "
+                  "miter -equiv -flatten reference book_after miter; prep -top miter; "
+                  "sat -verify -seq 2 -prove-skip 1 -prove trigger 0")
         result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
                                 cwd=build, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)

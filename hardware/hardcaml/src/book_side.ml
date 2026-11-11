@@ -113,7 +113,7 @@ module Make (Config : Config) = struct
              level))
   ;;
 
-  let create scope (i : Signal.t I.t) =
+  let update scope ~register (i : Signal.t I.t) =
     let levels = split_lsb ~part_width:64 i.levels |> List.map ~f:Level.of_word in
     let opposite = Level.of_word i.opposite in
     let%hw crosses =
@@ -135,16 +135,39 @@ module Make (Config : Config) = struct
     in
     let updated =
       insert
-        ~matched:(shift matched)
-        ~ahead:(shift ahead)
-        levels
-        { i.insert with valid = accepted }
+        ~matched:(List.map (shift matched) ~f:register)
+        ~ahead:(List.map (shift ahead) ~f:register)
+        (List.map levels ~f:(Level.map ~f:register))
+        (Change.map { i.insert with valid = accepted } ~f:register)
     in
     { O.updated = concat_lsb (List.map updated ~f:Level.to_word); accepted }
   ;;
+
+  let create scope i = update scope ~register:Fn.id i
 
   let hierarchical ?instance scope i =
     let module H = Hierarchy.In_scope (I) (O) in
     H.hierarchical ?instance ~scope ~name:"book_side" create i
   ;;
+
+  module Pipelined = struct
+    module I = struct
+      type 'a t =
+        { clocking : 'a Clocking.t
+        ; book : 'a I.t
+        }
+      [@@deriving hardcaml]
+    end
+
+    module O = O
+
+    let create scope ({ clocking; book } : Signal.t I.t) =
+      update scope ~register:(Clocking.reg_no_clear clocking) book
+    ;;
+
+    let hierarchical ?instance scope i =
+      let module H = Hierarchy.In_scope (I) (O) in
+      H.hierarchical ?instance ~scope ~name:"book_side_pipelined" create i
+    ;;
+  end
 end

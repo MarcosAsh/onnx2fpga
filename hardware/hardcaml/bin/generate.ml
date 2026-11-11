@@ -96,7 +96,7 @@ let tick_to_trade_command =
         flag
           "unit"
           (optional string)
-          ~doc:"NAME only this unit, moldudp64_step or book_side, under a top named dut"
+          ~doc:"NAME only this trading unit under a top named dut"
       and stages = flag "stages" no_arg ~doc:" print each unit's latency instead" in
       fun () ->
         let params = Tick_to_trade.Params.of_string (In_channel.read_all path) in

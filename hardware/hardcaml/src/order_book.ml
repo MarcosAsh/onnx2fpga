@@ -2,7 +2,7 @@ open! Core
 open! Hardcaml
 open! Signal
 
-let latency = 2
+let latency = 3
 let flow_bits = 20
 
 module type Config = sig
@@ -109,20 +109,23 @@ module Make (Config : Config) = struct
     let bids = mux index (List.map sides ~f:fst) in
     let asks = mux index (List.map sides ~f:snd) in
     let update =
-      Side.hierarchical
+      Side.Pipelined.hierarchical
         scope
-        { levels = mux2 ask asks bids
-        ; ask
-        ; opposite = sel_bottom (mux2 ask bids asks) ~width:64
-        ; remove =
-            { valid = hit &: ~:(is Add)
-            ; price = table_a.price
-            ; shares = mux2 reduce executed table_a.shares
-            }
-        ; insert =
-            { valid = adding |: replacing
-            ; price = current.price
-            ; shares = current.shares
+        { clocking
+        ; book =
+            { Side.I.levels = mux2 ask asks bids
+            ; ask
+            ; opposite = sel_bottom (mux2 ask bids asks) ~width:64
+            ; remove =
+                { valid = hit &: ~:(is Add)
+                ; price = table_a.price
+                ; shares = mux2 reduce executed table_a.shares
+                }
+            ; insert =
+                { valid = adding |: replacing
+                ; price = current.price
+                ; shares = current.shares
+                }
             }
         }
     in
@@ -193,20 +196,24 @@ module Make (Config : Config) = struct
       let amount = uresize capped ~width:flow_bits in
       flow -: sra flow ~by:3 +: mux2 table_a.side amount (negate amount)
     in
+    let delayed = Clocking.reg_no_clear clocking in
+    let%hw updating = Clocking.reg clocking current.valid in
+    let%hw update_index = delayed index in
+    let%hw update_ask = delayed ask in
     List.iteri sides ~f:(fun s (bid_levels, ask_levels) ->
-      let enable side = current.valid &: (index ==:. s) &: (ask ==: side) in
+      let enable side = updating &: (update_index ==:. s) &: (update_ask ==: side) in
       bid_levels <-- Clocking.reg clocking ~enable:(enable gnd) update.updated;
       ask_levels <-- Clocking.reg clocking ~enable:(enable vdd) update.updated);
     List.iteri flows ~f:(fun s f ->
       f <-- Clocking.reg clocking ~enable:(traded &: (index ==:. s)) flow_next);
     let book =
-      { Snapshot.valid = current.valid
-      ; symbol = index
-      ; bids = mux2 ask bids update.updated
-      ; asks = mux2 ask update.updated asks
-      ; flow = mux2 traded flow_next flow
-      ; t_first = current.t_first
-      ; t_last = current.t_last
+      { Snapshot.valid = updating
+      ; symbol = update_index
+      ; bids = mux2 update_ask (delayed bids) update.updated
+      ; asks = mux2 update_ask update.updated (delayed asks)
+      ; flow = delayed (mux2 traded flow_next flow)
+      ; t_first = delayed current.t_first
+      ; t_last = delayed current.t_last
       }
     in
     let registered = Snapshot.map book ~f:(Clocking.reg_no_clear clocking) in
