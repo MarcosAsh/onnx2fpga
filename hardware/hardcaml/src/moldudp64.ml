@@ -110,9 +110,7 @@ module Step = struct
     let%hw boundary = counting &: (state.skip <:. 8) in
     let k = sel_bottom state.skip ~width:3 in
     let%hw header_count =
-      let count =
-        mux2 (state.skip ==:. 1) state.high (lane (k -:. 2)) @: lane (k -:. 1)
-      in
+      let count = List.nth_exn lanes 2 @: List.nth_exn lanes 3 in
       mux2 (count ==:. 0xffff) (zero 16) count
     in
     let%hw count_after = mux2 in_header header_count state.count in

@@ -74,7 +74,7 @@ class Rtl(unittest.TestCase):
 
     def test_latency(self):
         self.assertEqual(self.replay.stages, [("moldudp64", 1), ("itch_parser", 1),
-                                              ("order_book", 3), ("features", 3),
+                                              ("order_book", 4), ("features", 3),
                                               ("model", 6), ("decision", 1)])
         self.assertEqual(self.accelerator.latency, 6)
 
@@ -101,7 +101,7 @@ class K26(unittest.TestCase):
         replay.build(acc)
         self.assertEqual(acc.latency, 12)
         latency = sum(cycles for _, cycles in replay.stages)
-        self.assertEqual(latency, 21)
+        self.assertEqual(latency, 22)
         decisions = Pipeline(replay.config, model).run(replay.framed)
         for gap in (0, 30):
             compare(replay.run(gap=gap), decisions, replay.config, latency, timed=gap == 0)
@@ -208,6 +208,29 @@ endmodule
 
 
 @unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
+class QuantityEquivalence(unittest.TestCase):
+    def test_quantity(self):
+        build = Fixtures.build_dir("quantity_equivalence")
+        config = build / "config.json"
+        config.write_text(json.dumps(Config().as_json(DESIGN)))
+        (build / "dut.v").write_text(generate(config, "-unit", "order_quantity"))
+        (build / "check.v").write_text("""
+module check (input [31:0] held, requested, output trigger);
+    wire [31:0] executed, remaining;
+    dut optimized (.held(held), .requested(requested), .executed(executed), .remaining(remaining));
+    wire [31:0] expected = requested < held ? requested : held;
+    assign trigger = executed != expected || remaining != held - expected;
+endmodule
+""")
+        script = ("read_verilog dut.v check.v; prep -flatten -top check; "
+                  "sat -verify -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("SUCCESS", result.stdout)
+
+
+@unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
 class TableEquivalence(unittest.TestCase):
     def test_table_induction(self):
         build = Fixtures.build_dir("order_table_equivalence")
@@ -257,6 +280,85 @@ class TableEquivalence(unittest.TestCase):
     generate for (index=0; index<4; index=index+1) begin
         assign mismatch[index] = initialized[index]
             && (((created[index] ^ deleted[index]) != reference[index][0])
+                || (reference[index][0] && payload[index] != reference[index][%(top)d:1]));
+    end endgenerate
+    assign trigger = legal_so_far && ((|mismatch)
+        || (seen_a && (qa[0] != expected_a[0] || (expected_a[0] && qa != expected_a)))
+        || (seen_b && (qb[0] != expected_b[0] || (expected_b[0] && qb != expected_b))));
+endmodule
+""" % {"top": 132 - config.order_bits}
+        (build / "check.v").write_text(source + invariant)
+        script = ("read_verilog check.v; prep -flatten -top check; memory_map; opt; "
+                  "sat -verify -tempinduct -seq 2 -maxsteps 6 -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("Induction step proven: SUCCESS", result.stdout)
+
+
+@unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
+class PipelinedTableEquivalence(unittest.TestCase):
+    def test_table_induction(self):
+        build = Fixtures.build_dir("pipelined_order_table_equivalence")
+        config = Config(order_bits=2)
+        path = build / "config.json"
+        path.write_text(json.dumps(config.as_json(DESIGN)))
+        source = generate(path, "-unit", "pipelined_order_table").split("endmodule", 1)[0]
+        source = source.replace("module pipelined_order_table (", "module check (")
+        source = source.replace("    qb\n);", "    qb,\n    trigger\n);")
+        invariant = """
+    output trigger;
+    reg [%(top)d:0] reference [0:3];
+    reg [3:0] initialized = 0;
+    reg legal_so_far = 1;
+    wire wa = write_a$enable;
+    wire wb = write_b$enable;
+    wire creates = (wa && write_a$data[0]) || (wb && write_b$data[0]);
+    wire [1:0] target = prefer_b ? write_b$address : write_a$address;
+    wire target_deleted = wa && !write_a$data[0] && write_a$address == target;
+    wire [%(top)d:0] payload_data = prefer_b ? write_b$data : write_a$data;
+    wire legal = initialize || ((!wb || (write_b$data[0] && prefer_b))
+        && (!(wa && write_a$data[0]) || !prefer_b)
+        && (!creates || payload_write)
+        && (!payload_write || creates || !reference[target][0] || target_deleted
+            || payload_data[%(top)d:1] == reference[target][%(top)d:1])
+        && !(wa && wb && write_a$address == write_b$address));
+    reg [%(top)d:0] expected_a, expected_b, first_a, first_b;
+    reg first_seen_a = 0, first_seen_b = 0;
+    wire [%(top)d:0] next_a = initialize && read_a == write_a$address ? 0
+        : !initialize && wa && read_a == write_a$address ? write_a$data
+        : !initialize && wb && read_a == write_b$address ? write_b$data : reference[read_a];
+    wire [%(top)d:0] next_b = initialize && read_b == write_a$address ? 0
+        : !initialize && wa && read_b == write_a$address ? write_a$data
+        : !initialize && wb && read_b == write_b$address ? write_b$data : reference[read_b];
+    reg seen_a = 0, seen_b = 0;
+    always @(posedge clock) begin
+        legal_so_far <= legal_so_far && legal;
+        if (initialize) begin
+            reference[write_a$address] <= 0;
+            initialized[write_a$address] <= 1;
+        end else begin
+            if (wa) reference[write_a$address] <= write_a$data;
+            if (wb) reference[write_b$address] <= write_b$data;
+        end
+        first_a <= next_a;
+        first_b <= next_b;
+        expected_a <= first_a;
+        expected_b <= first_b;
+        first_seen_a <= initialized[read_a] || (initialize && read_a == write_a$address);
+        first_seen_b <= initialized[read_b] || (initialize && read_b == write_a$address);
+        seen_a <= first_seen_a;
+        seen_b <= first_seen_b;
+    end
+    wire [3:0] mismatch;
+    genvar index;
+    generate for (index=0; index<4; index=index+1) begin
+        wire effective_created = pending_created_enable && pending_created_address == index
+            ? pending_created_data : created[index];
+        wire effective_deleted = pending_deleted_enable && pending_deleted_address == index
+            ? pending_deleted_data : deleted[index];
+        assign mismatch[index] = initialized[index]
+            && (((effective_created ^ effective_deleted) != reference[index][0])
                 || (reference[index][0] && payload[index] != reference[index][%(top)d:1]));
     end endgenerate
     assign trigger = legal_so_far && ((|mismatch)

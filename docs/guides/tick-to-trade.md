@@ -38,7 +38,7 @@ PYTHONPATH=compiler python3 -m onnx2fpga.trading.replay \
   --device k26 --clock-mhz 322.265625 --messages 100000 --out build/tick_k26
 ```
 
-The model takes 12 cycles and the full path takes 21. The 100000-message
+The model takes 12 cycles and the full path takes 22. The 100000-message
 replay matches all 65151 tracked messages, including the book, features and
 orders. The printed nanoseconds use the requested clock, not a measured
 clock. The whole pipeline does not yet meet 322.265625 MHz.
@@ -52,17 +52,16 @@ OTF_PERIOD=3.103 OTF_CLOCK=clock OTF_IMPL=1 OTF_OUT=vivado \
   vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
 ```
 
-The order table uses distributed RAM. A single writer stores payloads, and
-separate creation and deletion flags track whether each slot is live.
-The book compares insertion prices before compacting removed levels,
-then moves those comparison bits
-with the levels. `tests/test_tick_to_trade.py` proves this update equivalent
-to the four-level RTL from revision `5244d34` for all inputs, using
-`tests/fixtures/book_side_baseline.v`. The existing invariant proofs and
-replay checks still apply. A register holds the removal inputs and insertion comparison bits; the
-sequential proof checks that its result equals the original update delayed
-one cycle. The table still writes in its second cycle, and the book accepts
-one event every two cycles.
+The order table stores payloads in block RAM and live-state flags in
+distributed RAM. Reads take two cycles. Forwarding makes simultaneous writes
+and pending flag updates visible to reads. The book accepts one event every
+two cycles and produces its snapshot after four cycles.
+
+The book compares insertion prices before compacting removed levels, then
+moves those comparison bits with the levels. A register separates removal
+from insertion. `tests/test_tick_to_trade.py` proves the result equals the
+four-level RTL from revision `5244d34`, delayed one cycle, for all inputs.
+The reference is in `tests/fixtures/book_side_baseline.v`.
 
 Vivado 2026.1 out-of-context routed results on `xck26-sfvc784-2LV-c`,
 with a 3.103 ns constraint:
@@ -78,6 +77,7 @@ with a 3.103 ns constraint:
 | Parallel feature normalization | 21 | 6701 | 5763 | 13.5 | 0 | -2.052 |
 | Stored framer offset | 21 | 6299 | 5777 | 13.5 | 0 | -1.910 |
 | Early payload writes | 21 | 17825 | 5977 | 0 | 0 | -1.564 |
+| Pipelined table, fixed header lanes | 22 | 7402 | 6104 | 13.5 | 0 | -1.110 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
@@ -88,7 +88,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records twelve runs, including the intermediate memory layouts.
+records nineteen runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
@@ -106,10 +106,18 @@ Early payload writes reach 214.27 MHz with the same 21-cycle latency, using
 17825 LUTs and no block RAM. The wide payload write no longer waits for
 price acceptance. Rejected writes may change an empty slot's payload;
 the live flags still follow acceptance. Both crossing comparisons run
-before side selection. The critical path is now in the book update logic.
+before side selection.
+
+Two-cycle payload reads and registered flag writes reach 237.36 MHz with
+22 cycles of total latency. The book separates removal from insertion, and
+the framer reads the packet count from fixed header lanes. Its proof checks
+that header states have 20, 12 or 4 bytes left. The design uses 7402 LUTs and
+13.5 block-RAM equivalents. At the routed frequency estimate, 22 cycles take
+92.7 ns, compared with 98.0 ns for the 21-cycle, 214.27 MHz revision.
 
 The table induction check covers a four-slot instance for arbitrary legal
-operation sequences, including speculative writes and initialization.
+operation sequences, including pending flag writes, simultaneous reads and
+writes, and initialization. Extra payload writes preserve live entries.
 A combinational proof checks crossing comparisons for all inputs. The
 maximum-rate book tests cover rejected same-slot replacements and occupied
 targets. The 100000-message K26 replay still matches every tracked message.

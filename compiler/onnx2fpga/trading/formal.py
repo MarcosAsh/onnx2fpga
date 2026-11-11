@@ -96,7 +96,7 @@ module check (
         s_emit, s_elen, s_bytes, s_efirst, s_elast);
     function invariant(input [2:0] f_phase, input [15:0] f_skip, input [15:0] f_length);
         invariant = f_phase <= 4
-            && (f_phase != HEADER || (f_skip >= 1 && f_skip <= 20))
+            && (f_phase != HEADER || f_skip == 20 || f_skip == 12 || f_skip == 4)
             && (f_phase != BODY || (f_length >= 12 && f_skip >= 1 && f_skip <= f_length));
     endfunction
     wire beat_ok = !valid

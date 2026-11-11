@@ -2,7 +2,7 @@ open! Core
 open! Hardcaml
 open! Signal
 
-let latency = 3
+let latency = 4
 let flow_bits = 20
 
 module type Config = sig
@@ -37,7 +37,7 @@ module Make (Config : Config) = struct
     [@@deriving hardcaml]
   end
 
-  module Table = Order_table.Make (struct
+  module Table = Pipelined_order_table.Make (struct
       let address_bits = order_bits
       let data_bits = Entry.sum_of_port_widths
     end)
@@ -84,8 +84,15 @@ module Make (Config : Config) = struct
         mux2 (msb s) s (s +:. 1))
     in
     let%hw ready = msb sweep in
-    let current = Itch_parser.Event.map event ~f:(Clocking.reg_no_clear clocking) in
-    let current = { current with valid = Clocking.reg clocking (event.valid &: ready) } in
+    let delay value =
+      Clocking.reg_no_clear clocking (Clocking.reg_no_clear clocking value)
+    in
+    let current = Itch_parser.Event.map event ~f:delay in
+    let current =
+      { current with
+        valid = Clocking.reg clocking (Clocking.reg clocking (event.valid &: ready))
+      }
+    in
     let is kind = current.kind ==:. Itch_parser.Kind.code kind in
     let table_a = Entry.Of_signal.wires () in
     let table_b = Entry.Of_signal.wires () in
@@ -95,9 +102,12 @@ module Make (Config : Config) = struct
       &: (table_a.tag ==: tag current.order)
       &: (table_a.symbol ==: current.symbol)
     in
-    let%hw executed =
-      mux2 (current.shares <: table_a.shares) current.shares table_a.shares
+    let quantity =
+      Order_quantity.hierarchical
+        scope
+        { held = table_a.shares; requested = current.shares }
     in
+    let executed = quantity.executed in
     let%hw reduce = is Execute |: is Cancel in
     let%hw ask = mux2 (is Add) current.side table_a.side in
     let%hw adding = is Add &: ~:(table_a.live) in
@@ -138,7 +148,7 @@ module Make (Config : Config) = struct
             }
         }
     in
-    let%hw remaining = table_a.shares -: executed in
+    let remaining = quantity.remaining in
     let added ~order ~side =
       { Entry.live = vdd
       ; tag = tag order
@@ -156,20 +166,21 @@ module Make (Config : Config) = struct
     let entry_a =
       Entry.Of_signal.mux2
         (is Add)
-        (added ~order:current.order ~side:current.side)
         (Entry.Of_signal.mux2
-           (reduce &: (remaining <>:. 0))
-           { table_a with shares = remaining }
-           empty)
+           adding
+           (added ~order:current.order ~side:current.side)
+           table_a)
+        (Entry.Of_signal.mux2
+           hit
+           (Entry.Of_signal.mux2
+              (reduce &: (remaining <>:. 0))
+              { table_a with shares = remaining }
+              empty)
+           table_a)
     in
     let%hw write_b = current.valid &: is Replace &: update.accepted in
-    let%hw writing_cycle = current.valid |: ~:ready in
-    let port ~write ~address ~data ~read_address =
-      { Table.Port.address = mux2 writing_cycle address read_address
-      ; data = Entry.Of_signal.pack data
-      ; enable = write |: event.valid
-      ; write
-      }
+    let port ~write ~address ~data =
+      { Table.Write.address; data = Entry.Of_signal.pack data; enable = write }
     in
     let table =
       Table.hierarchical
@@ -178,47 +189,55 @@ module Make (Config : Config) = struct
         ; initialize = ~:ready
         ; prefer_b = is Replace
         ; payload_write =
-            current.valid &: (adding |: replacing |: (hit &: reduce &: (remaining <>:. 0)))
-        ; port_a =
+            current.valid
+            &: (is Add |: reduce |: (is Replace &: (~:(table_b.live) |: same_slot)))
+        ; read_a = slot event.order
+        ; read_b = slot event.new_order
+        ; write_a =
             port
               ~write:(write_a |: ~:ready)
               ~address:(mux2 ready (slot current.order) (lsbs sweep))
               ~data:(Entry.Of_signal.mux2 ready entry_a empty)
-              ~read_address:(slot event.order)
-        ; port_b =
+        ; write_b =
             port
               ~write:write_b
               ~address:(slot current.new_order)
-              ~data:(added ~order:current.new_order ~side:table_a.side)
-              ~read_address:(slot event.new_order)
+              ~data:
+                (Entry.Of_signal.mux2
+                   (same_slot &: ~:hit)
+                   table_a
+                   (added ~order:current.new_order ~side:table_a.side))
         }
     in
     Entry.Of_signal.assign table_a (Entry.Of_signal.unpack table.qa);
     Entry.Of_signal.assign table_b (Entry.Of_signal.unpack table.qb);
-    let flows = List.init symbols ~f:(fun _ -> Signal.wire flow_bits) in
-    let flow = mux index flows in
-    let%hw traded = current.valid &: is Execute &: hit in
-    let%hw flow_next =
-      let capped = mux2 (executed >:. 0xffff) (ones 16) (sel_bottom executed ~width:16) in
-      let amount = uresize capped ~width:flow_bits in
-      flow -: sra flow ~by:3 +: mux2 table_a.side amount (negate amount)
-    in
     let delayed = Clocking.reg_no_clear clocking in
     let%hw updating = Clocking.reg clocking current.valid in
     let%hw update_index = delayed index in
     let%hw update_ask = delayed ask in
+    let flows = List.init symbols ~f:(fun _ -> Signal.wire flow_bits) in
+    let flow = mux update_index flows in
+    let%hw traded = Clocking.reg clocking (current.valid &: is Execute &: hit) in
+    let%hw trade_side = delayed table_a.side in
+    let%hw trade_shares =
+      delayed (mux2 (executed >:. 0xffff) (ones 16) (sel_bottom executed ~width:16))
+    in
+    let%hw flow_next =
+      let amount = uresize trade_shares ~width:flow_bits in
+      flow -: sra flow ~by:3 +: mux2 trade_side amount (negate amount)
+    in
     List.iteri sides ~f:(fun s (bid_levels, ask_levels) ->
       let enable side = updating &: (update_index ==:. s) &: (update_ask ==: side) in
       bid_levels <-- Clocking.reg clocking ~enable:(enable gnd) update.updated;
       ask_levels <-- Clocking.reg clocking ~enable:(enable vdd) update.updated);
     List.iteri flows ~f:(fun s f ->
-      f <-- Clocking.reg clocking ~enable:(traded &: (index ==:. s)) flow_next);
+      f <-- Clocking.reg clocking ~enable:(traded &: (update_index ==:. s)) flow_next);
     let book =
       { Snapshot.valid = updating
       ; symbol = update_index
       ; bids = mux2 update_ask (delayed bids) update.updated
       ; asks = mux2 update_ask update.updated (delayed asks)
-      ; flow = delayed (mux2 traded flow_next flow)
+      ; flow = mux2 traded flow_next flow
       ; t_first = delayed current.t_first
       ; t_last = delayed current.t_last
       }

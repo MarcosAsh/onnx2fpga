@@ -15,8 +15,8 @@ What runs today: the Python API below, both backends, a fixed latency mode that
 answers the example MLP exactly 9 cycles after its input and a 100 tree XGBoost
 model 6 cycles after its input, a small MLP on an Icepi Zero that came back bit
 exact on 300 random inputs, and, in simulation, a tick to trade path from ITCH
-packets to orders that decides 21 cycles after each message's last byte on K26.
-The full pipeline has a 214.27 MHz out-of-context routed estimate in Vivado
+packets to orders that decides 22 cycles after each message's last byte on K26.
+The full pipeline has a 237.36 MHz out-of-context routed estimate in Vivado
 2026.1; the target is 322.265625 MHz. Pages
 marked "planned" are specs for work not built yet. We write the page first and
 then make the code match it.

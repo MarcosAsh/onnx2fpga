@@ -276,9 +276,21 @@ let verilog ?unit params =
     | Some "book_crossing" ->
       let module C = Circuit.With_interface (Book_crossing.I) (Book_crossing.O) in
       C.create_exn ~name:"dut" (Book_crossing.hierarchical scope)
+    | Some "order_quantity" ->
+      let module C = Circuit.With_interface (Order_quantity.I) (Order_quantity.O) in
+      C.create_exn ~name:"dut" (Order_quantity.hierarchical scope)
     | Some "order_table" ->
       let module Table =
         Order_table.Make (struct
+          let address_bits = params.Params.order_bits
+          let data_bits = 64 - params.order_bits + 1 + 3 + 1 + 32 + 32
+        end)
+      in
+      let module C = Circuit.With_interface (Table.I) (Table.O) in
+      C.create_exn ~name:"dut" (Table.hierarchical scope)
+    | Some "pipelined_order_table" ->
+      let module Table =
+        Pipelined_order_table.Make (struct
           let address_bits = params.Params.order_bits
           let data_bits = 64 - params.order_bits + 1 + 3 + 1 + 32 + 32
         end)

@@ -34,9 +34,9 @@ let%expect_test "stages" =
   [%expect
     {|
     ((T.stages
-      ((moldudp64 1) (itch_parser 1) (order_book 3) (features 3) (model 3)
+      ((moldudp64 1) (itch_parser 1) (order_book 4) (features 3) (model 3)
        (decision 1)))
-     (T.latency 12))
+     (T.latency 13))
     |}]
 ;;
 
@@ -86,8 +86,8 @@ let%expect_test "decisions from a packet" =
        ());
   [%expect
     {|
-    ((action Hold) (prediction 127) (from_last 12) (from_first 17))
-    ((action Sell) (prediction -76) (from_last 12) (from_first 16))
-    ((action Buy) (prediction 107) (from_last 12) (from_first 15))
+    ((action Hold) (prediction 127) (from_last 13) (from_first 18))
+    ((action Sell) (prediction -76) (from_last 13) (from_first 17))
+    ((action Buy) (prediction 107) (from_last 13) (from_first 16))
     |}]
 ;;

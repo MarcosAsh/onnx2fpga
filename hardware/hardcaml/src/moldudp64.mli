@@ -69,6 +69,7 @@ val initial : Signal.t State.t
 
 (** One beat of the framer as a combinational function, for the formal check. *)
 module Step : sig
+  (** Header states have [skip] 20, 12 or 4; body states have [base = length - skip]. *)
   module I : sig
     type 'a t =
       { state : 'a State.t
