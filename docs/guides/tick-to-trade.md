@@ -71,15 +71,18 @@ with a 3.103 ns constraint:
 | K26 model, block RAM | 20 | 7148 | 4865 | 14.5 | 0 | -5.692 |
 | Parallel book comparisons | 20 | 7643 | 4815 | 14.5 | 0 | -3.386 |
 | Pipelined book update | 21 | 6434 | 5674 | 14.5 | 0 | -2.759 |
+| Early table address | 21 | 6443 | 5674 | 14.5 | 0 | -2.352 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
 estimate from 113.70 to 154.11 MHz. Pipelining the update reaches 170.59 MHz
-with one more cycle. The remaining critical path starts at an order-table
+with one more cycle. Selecting the RAM address from the event phase
+instead of the write decision reaches 183.32 MHz at the same latency.
+The remaining critical path starts at an order-table
 RAM output and ends at the new book pipeline register. These are routed
 estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records all four runs.
+records all five runs.
 
 ## What runs
 

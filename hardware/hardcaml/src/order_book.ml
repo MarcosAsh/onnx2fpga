@@ -154,8 +154,9 @@ module Make (Config : Config) = struct
            empty)
     in
     let%hw write_b = current.valid &: is Replace &: update.accepted in
+    let%hw writing_cycle = current.valid |: ~:ready in
     let port ~write ~address ~data ~read_address =
-      { Table.Port.address = mux2 write address read_address
+      { Table.Port.address = mux2 writing_cycle address read_address
       ; data = Entry.Of_signal.pack data
       ; enable = write |: event.valid
       ; write

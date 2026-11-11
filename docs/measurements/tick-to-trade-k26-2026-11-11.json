@@ -73,6 +73,24 @@
       "uram": 0,
       "variant": "pipelined_book",
       "latency_cycles": 21
+    },
+    {
+      "top": "tick_to_trade",
+      "part": "xck26-sfvc784-2LV-c",
+      "stage": "impl",
+      "generics": "",
+      "period_ns": 3.103,
+      "wns_ns": -2.352,
+      "fmax_mhz": 183.32,
+      "lut": 6443,
+      "ff": 5674,
+      "dsp": 9,
+      "ramb36": 13,
+      "ramb18": 3,
+      "bram36": 14.5,
+      "uram": 0,
+      "variant": "pipelined_book_early_address",
+      "latency_cycles": 21
     }
   ]
 }
