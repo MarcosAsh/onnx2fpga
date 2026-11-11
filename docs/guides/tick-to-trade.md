@@ -94,6 +94,7 @@ with a 3.103 ns constraint:
 | Narrow payload banks, early lookup | 22 | 7787 | 6778 | 13.5 | 0 | -0.569 |
 | Post-route refinement | 22 | 7787 | 6778 | 13.5 | 0 | -0.472 |
 | Early crossing, separate removal comparison | 22 | 8353 | 6741 | 13.5 | 0 | -0.348 |
+| Post-route refinement of early crossing | 22 | 8353 | 6741 | 13.5 | 0 | -0.299 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
@@ -104,7 +105,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records thirty-eight runs, including the intermediate memory layouts.
+records thirty-nine runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
@@ -149,7 +150,10 @@ shares separately from the subtraction reach 289.77 MHz at 22 cycles, or
 book update when events for the same symbol arrive two cycles apart. The
 minimum-gap tests cover rejected crosses and deletes that allow the next add.
 This revision uses 8353 LUTs and 6741 flip-flops, with the same DSP and BRAM
-counts. Setup slack remains -0.348 ns against the target.
+counts. Setup slack remains -0.348 ns against the target. Post-route
+refinement of this revision reaches 293.94 MHz, or 74.8 ns at 22 cycles,
+with unchanged resource counts. Setup slack is -0.299 ns and hold slack
+is positive at 0.029 ns.
 
 The table induction check covers a four-slot instance for arbitrary legal
 operation sequences, including pending flag writes, simultaneous reads and
