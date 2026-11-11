@@ -121,15 +121,18 @@ module Make (Config : Config) = struct
     let index = current.symbol in
     let bids = mux index (List.map sides ~f:fst) in
     let asks = mux index (List.map sides ~f:snd) in
+    let early_bid = wire 64 in
+    let early_offer = wire 64 in
     let crossing =
       Book_crossing.hierarchical
         scope
-        { ask
-        ; price = current.price
-        ; bid = Book_side.Level.of_word (sel_bottom bids ~width:64)
-        ; offer = Book_side.Level.of_word (sel_bottom asks ~width:64)
+        { ask = mux2 (first.kind ==:. Itch_parser.Kind.code Add) first.side first_a.side
+        ; price = first.price
+        ; bid = Book_side.Level.of_word early_bid
+        ; offer = Book_side.Level.of_word early_offer
         }
     in
+    let crosses = Clocking.reg_no_clear clocking crossing.crosses in
     let update book_levels ask =
       Side.Pipelined.hierarchical
         scope
@@ -144,7 +147,7 @@ module Make (Config : Config) = struct
                 ; shares = mux2 reduce executed table_a.shares
                 }
             ; insert =
-                { valid = adding |: replacing &: ~:(crossing.crosses)
+                { valid = adding |: replacing &: ~:crosses
                 ; price = current.price
                 ; shares = current.shares
                 }
@@ -249,6 +252,14 @@ module Make (Config : Config) = struct
       ; t_last = delayed current.t_last
       }
     in
+    let pending = updating &: (update_index ==: first.symbol) in
+    let read side =
+      mux
+        first.symbol
+        (List.map sides ~f:(fun levels -> sel_bottom (side levels) ~width:64))
+    in
+    early_bid <-- mux2 pending (sel_bottom book.bids ~width:64) (read fst);
+    early_offer <-- mux2 pending (sel_bottom book.asks ~width:64) (read snd);
     let registered = Snapshot.map book ~f:(Clocking.reg_no_clear clocking) in
     { O.book = { registered with valid = Clocking.reg clocking book.valid }; ready }
   ;;
