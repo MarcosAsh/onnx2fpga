@@ -878,6 +878,28 @@
       "physical_optimization": "AggressiveExplore",
       "routing": "Explore",
       "rtl_revision": "4b42fc5"
+    },
+    {
+      "top": "tick_to_trade",
+      "part": "xck26-sfvc784-2LV-c",
+      "stage": "impl",
+      "generics": "",
+      "period_ns": 3.103,
+      "wns_ns": -0.103,
+      "fmax_mhz": 311.92,
+      "lut": 8963,
+      "ff": 7258,
+      "dsp": 9,
+      "ramb36": 13,
+      "ramb18": 1,
+      "bram36": 13.5,
+      "uram": 0,
+      "variant": "early_levels_keep_refined",
+      "latency_cycles": 22,
+      "source_variant": "early_levels_keep",
+      "physical_optimization": "AggressiveExplore",
+      "routing": "Explore",
+      "rtl_revision": "4267fc1"
     }
   ]
 }
