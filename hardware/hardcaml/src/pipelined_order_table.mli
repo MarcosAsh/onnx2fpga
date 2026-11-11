@@ -34,11 +34,13 @@ module Make (_ : Config) : sig
     [@@deriving hardcaml]
   end
 
-  (** Payload bits are unspecified when the live bit is clear. *)
+  (** [_first] outputs arrive after one cycle; dead payloads are unspecified. *)
   module O : sig
     type 'a t =
       { qa : 'a
       ; qb : 'a
+      ; qa_first : 'a
+      ; qb_first : 'a
       }
     [@@deriving hardcaml]
   end

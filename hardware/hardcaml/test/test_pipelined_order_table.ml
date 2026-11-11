@@ -65,7 +65,9 @@ let%expect_test "forwarded reads agree with a flat memory" =
                ~expect:(canonical expected)
            in
            check o.qa (fst expected);
-           check o.qb (snd expected))
+           check o.qb (snd expected);
+           check o.qa_first (fst !pending);
+           check o.qb_first (snd !pending))
        in
        let initialize () =
          List.iter (List.range 0 4) ~f:(fun address ->

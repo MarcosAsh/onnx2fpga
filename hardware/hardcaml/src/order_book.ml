@@ -84,30 +84,33 @@ module Make (Config : Config) = struct
         mux2 (msb s) s (s +:. 1))
     in
     let%hw ready = msb sweep in
-    let delay value =
-      Clocking.reg_no_clear clocking (Clocking.reg_no_clear clocking value)
+    let event_reg value =
+      add_attribute
+        (Clocking.reg_no_clear clocking value)
+        Rtl_attribute.Vivado.Srl_style.register
     in
-    let current = Itch_parser.Event.map event ~f:delay in
-    let current =
-      { current with
-        valid = Clocking.reg clocking (Clocking.reg clocking (event.valid &: ready))
-      }
-    in
+    let first = Itch_parser.Event.map event ~f:event_reg in
+    let first = { first with valid = Clocking.reg clocking (event.valid &: ready) } in
+    let current = Itch_parser.Event.map first ~f:event_reg in
+    let current = { current with valid = Clocking.reg clocking first.valid } in
     let is kind = current.kind ==:. Itch_parser.Kind.code kind in
     let table_a = Entry.Of_signal.wires () in
     let table_b = Entry.Of_signal.wires () in
+    let first_a = Entry.Of_signal.wires () in
     let%hw same_slot = slot current.order ==: slot current.new_order in
     let%hw hit =
-      table_a.live
-      &: (table_a.tag ==: tag current.order)
-      &: (table_a.symbol ==: current.symbol)
+      Clocking.reg_no_clear
+        clocking
+        (first_a.live
+         &: (first_a.tag ==: tag first.order)
+         &: (first_a.symbol ==: first.symbol))
     in
     let quantity =
       Order_quantity.hierarchical
         scope
-        { held = table_a.shares; requested = current.shares }
+        { held = first_a.shares; requested = first.shares }
     in
-    let executed = quantity.executed in
+    let executed = Clocking.reg_no_clear clocking quantity.executed in
     let%hw reduce = is Execute |: is Cancel in
     let%hw ask = mux2 (is Add) current.side table_a.side in
     let%hw adding = is Add &: ~:(table_a.live) in
@@ -127,12 +130,12 @@ module Make (Config : Config) = struct
         ; offer = Book_side.Level.of_word (sel_bottom asks ~width:64)
         }
     in
-    let update =
+    let update book_levels ask =
       Side.Pipelined.hierarchical
         scope
         { clocking
         ; book =
-            { Side.I.levels = mux2 ask asks bids
+            { Side.I.levels = book_levels
             ; ask
             ; opposite = zero 64
             ; remove =
@@ -148,7 +151,10 @@ module Make (Config : Config) = struct
             }
         }
     in
-    let remaining = quantity.remaining in
+    let bid_update = update bids gnd in
+    let ask_update = update asks vdd in
+    let accepted = bid_update.accepted in
+    let remaining = Clocking.reg_no_clear clocking quantity.remaining in
     let added ~order ~side =
       { Entry.live = vdd
       ; tag = tag order
@@ -159,9 +165,9 @@ module Make (Config : Config) = struct
       }
     in
     let empty = Entry.map Entry.port_widths ~f:zero in
-    let%hw stored = is Add &: update.accepted in
+    let%hw stored = is Add &: accepted in
     let%hw changed = hit &: (reduce |: is Delete) in
-    let%hw freed = is Replace &: hit &: ~:(same_slot &: update.accepted) in
+    let%hw freed = is Replace &: hit &: ~:(same_slot &: accepted) in
     let%hw write_a = current.valid &: (stored |: changed |: freed) in
     let entry_a =
       Entry.Of_signal.mux2
@@ -178,7 +184,7 @@ module Make (Config : Config) = struct
               empty)
            table_a)
     in
-    let%hw write_b = current.valid &: is Replace &: update.accepted in
+    let%hw write_b = current.valid &: is Replace &: accepted in
     let port ~write ~address ~data =
       { Table.Write.address; data = Entry.Of_signal.pack data; enable = write }
     in
@@ -209,6 +215,7 @@ module Make (Config : Config) = struct
                    (added ~order:current.new_order ~side:table_a.side))
         }
     in
+    Entry.Of_signal.assign first_a (Entry.Of_signal.unpack table.qa_first);
     Entry.Of_signal.assign table_a (Entry.Of_signal.unpack table.qa);
     Entry.Of_signal.assign table_b (Entry.Of_signal.unpack table.qb);
     let delayed = Clocking.reg_no_clear clocking in
@@ -228,15 +235,15 @@ module Make (Config : Config) = struct
     in
     List.iteri sides ~f:(fun s (bid_levels, ask_levels) ->
       let enable side = updating &: (update_index ==:. s) &: (update_ask ==: side) in
-      bid_levels <-- Clocking.reg clocking ~enable:(enable gnd) update.updated;
-      ask_levels <-- Clocking.reg clocking ~enable:(enable vdd) update.updated);
+      bid_levels <-- Clocking.reg clocking ~enable:(enable gnd) bid_update.updated;
+      ask_levels <-- Clocking.reg clocking ~enable:(enable vdd) ask_update.updated);
     List.iteri flows ~f:(fun s f ->
       f <-- Clocking.reg clocking ~enable:(traded &: (update_index ==:. s)) flow_next);
     let book =
       { Snapshot.valid = updating
       ; symbol = update_index
-      ; bids = mux2 update_ask (delayed bids) update.updated
-      ; asks = mux2 update_ask update.updated (delayed asks)
+      ; bids = mux2 update_ask (delayed bids) bid_update.updated
+      ; asks = mux2 update_ask ask_update.updated (delayed asks)
       ; flow = mux2 traded flow_next flow
       ; t_first = delayed current.t_first
       ; t_last = delayed current.t_last

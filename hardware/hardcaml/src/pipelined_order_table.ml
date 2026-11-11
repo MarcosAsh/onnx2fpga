@@ -35,6 +35,8 @@ module Make (Config : Config) = struct
     type 'a t =
       { qa : 'a [@bits Config.data_bits]
       ; qb : 'a [@bits Config.data_bits]
+      ; qa_first : 'a [@bits Config.data_bits]
+      ; qb_first : 'a [@bits Config.data_bits]
       }
     [@@deriving hardcaml]
   end
@@ -45,7 +47,6 @@ module Make (Config : Config) = struct
       Signal.t I.t)
     =
     let spec = Reg_spec.create ~clock () in
-    let delay value = reg spec (reg spec value) in
     let%hw address = mux2 prefer_b write_b.address write_a.address in
     let%hw data = mux2 prefer_b write_b.data write_a.data in
     let%hw create_a = write_a.enable &: lsb write_a.data in
@@ -107,26 +108,30 @@ module Make (Config : Config) = struct
             (pending_deleted_enable &: (address ==: pending_deleted_address))
             pending_deleted_data
             next_deleted.(index));
-    let payload =
-      multiport_memory
-        ~name:"payload"
-        ~attributes:
-          [ Rtl_attribute.create
-              "ram_style"
-              ~applies_to:[ Memories ]
-              ~value:(String "block")
-          ]
-        (1 lsl Config.address_bits)
-        ~write_ports:
-          [| { Write_port.write_clock = clock
-             ; write_enable = payload_write &: ~:initialize
-             ; write_address = address
-             ; write_data = msbs data
-             }
-          |]
-        ~read_addresses:[| read_a; read_b |]
+    let payload_banks =
+      split_lsb ~exact:false ~part_width:9 (msbs data)
+      |> List.mapi ~f:(fun bank write_data ->
+        multiport_memory
+          ~name:("payload_" ^ Int.to_string bank)
+          ~attributes:
+            [ Rtl_attribute.Vivado.Ram_style.block
+            ; Rtl_attribute.Vivado.cascade_height 1
+            ]
+          (1 lsl Config.address_bits)
+          ~write_ports:
+            [| { Write_port.write_clock = clock
+               ; write_enable = payload_write &: ~:initialize
+               ; write_address = address
+               ; write_data
+               }
+            |]
+          ~read_addresses:[| read_a; read_b |])
     in
-    let forwarded = delay (msbs data) in
+    let payload =
+      Array.init 2 ~f:(fun port ->
+        concat_lsb (List.map payload_banks ~f:(fun bank -> bank.(port))))
+    in
+    let forwarded = reg spec (msbs data) in
     let read index read_address =
       let a = read_address ==: write_a.address in
       let b = read_address ==: write_b.address in
@@ -142,10 +147,14 @@ module Make (Config : Config) = struct
                 (lsb write_b.data)
                 (created.(index) ^: deleted.(index))))
       in
-      let bypass = delay (payload_write &: ~:initialize &: (read_address ==: address)) in
-      mux2 bypass forwarded (delay payload.(index)) @: delay live
+      let bypass =
+        reg spec (payload_write &: ~:initialize &: (read_address ==: address))
+      in
+      mux2 bypass forwarded (reg spec payload.(index)) @: reg spec live
     in
-    { O.qa = read 0 read_a; qb = read 1 read_b }
+    let qa_first = read 0 read_a in
+    let qb_first = read 1 read_b in
+    { O.qa = reg spec qa_first; qb = reg spec qb_first; qa_first; qb_first }
   ;;
 
   let hierarchical ?instance scope i =

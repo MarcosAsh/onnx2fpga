@@ -114,7 +114,10 @@ module Step = struct
       mux2 (count ==:. 0xffff) (zero 16) count
     in
     let%hw count_after = mux2 in_header header_count state.count in
-    let%hw high_here = in_length |: (boundary &: (count_after <>:. 0)) in
+    let%hw has_count =
+      in_header &: (header_count <>:. 0) |: (in_body &: (state.count <>:. 0))
+    in
+    let%hw high_here = in_length |: (boundary &: has_count) in
     let high_lane = mux2 in_length (zero 3) k in
     let%hw high_byte = mux2 in_length_low state.high (lane high_lane) in
     let%hw low_lane = mux2 in_length_low (zero 4) (uresize high_lane ~width:4 +:. 1) in

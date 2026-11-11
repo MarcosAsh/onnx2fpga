@@ -305,7 +305,7 @@ class PipelinedTableEquivalence(unittest.TestCase):
         path.write_text(json.dumps(config.as_json(DESIGN)))
         source = generate(path, "-unit", "pipelined_order_table").split("endmodule", 1)[0]
         source = source.replace("module pipelined_order_table (", "module check (")
-        source = source.replace("    qb\n);", "    qb,\n    trigger\n);")
+        source = source.replace("module check (", "module check (\n    trigger,")
         invariant = """
     output trigger;
     reg [%(top)d:0] reference [0:3];
@@ -359,13 +359,21 @@ class PipelinedTableEquivalence(unittest.TestCase):
             ? pending_deleted_data : deleted[index];
         assign mismatch[index] = initialized[index]
             && (((effective_created ^ effective_deleted) != reference[index][0])
-                || (reference[index][0] && payload[index] != reference[index][%(top)d:1]));
+                || (reference[index][0] && %(payload)s != reference[index][%(top)d:1]));
     end endgenerate
     assign trigger = legal_so_far && ((|mismatch)
         || (seen_a && (qa[0] != expected_a[0] || (expected_a[0] && qa != expected_a)))
-        || (seen_b && (qb[0] != expected_b[0] || (expected_b[0] && qb != expected_b))));
+        || (seen_b && (qb[0] != expected_b[0] || (expected_b[0] && qb != expected_b)))
+        || (first_seen_a && (qa_first[0] != first_a[0] || (first_a[0] && qa_first != first_a)))
+        || (first_seen_b && (qb_first[0] != first_b[0] || (first_b[0] && qb_first != first_b))));
 endmodule
-""" % {"top": 132 - config.order_bits}
+""" % {
+            "top": 132 - config.order_bits,
+            "payload": "{" + ", ".join(
+                f"payload_{bank}[index]"
+                for bank in reversed(range((132 - config.order_bits + 8) // 9))
+            ) + "}",
+        }
         (build / "check.v").write_text(source + invariant)
         script = ("read_verilog check.v; prep -flatten -top check; memory_map; opt; "
                   "sat -verify -tempinduct -seq 2 -maxsteps 6 -prove trigger 0")

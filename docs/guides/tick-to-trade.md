@@ -78,6 +78,7 @@ with a 3.103 ns constraint:
 | Stored framer offset | 21 | 6299 | 5777 | 13.5 | 0 | -1.910 |
 | Early payload writes | 21 | 17825 | 5977 | 0 | 0 | -1.564 |
 | Pipelined table, fixed header lanes | 22 | 7402 | 6104 | 13.5 | 0 | -1.110 |
+| Narrow payload banks, early lookup | 22 | 7787 | 6778 | 13.5 | 0 | -0.569 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
@@ -88,7 +89,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records nineteen runs, including the intermediate memory layouts.
+records twenty-seven runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
@@ -115,9 +116,18 @@ that header states have 20, 12 or 4 bytes left. The design uses 7402 LUTs and
 13.5 block-RAM equivalents. At the routed frequency estimate, 22 cycles take
 92.7 ns, compared with 98.0 ns for the 21-cycle, 214.27 MHz revision.
 
+Payload banks of at most nine bits reach 272.33 MHz at the same 22-cycle
+latency, or 80.8 ns at the routed frequency estimate. The banks limit BRAM
+cascading. Entry matching and quantity reduction use the first read stage;
+bid and ask updates run in parallel. Removal shares its subtraction with
+the empty-level check, and event delays stay in flip-flops. This revision
+uses 7787 LUTs, 6778 flip-flops and 13.5 block-RAM equivalents. Its worst
+slack remains -0.569 ns against the 322.265625 MHz target.
+
 The table induction check covers a four-slot instance for arbitrary legal
 operation sequences, including pending flag writes, simultaneous reads and
-writes, and initialization. Extra payload writes preserve live entries.
+writes, and initialization. It checks both read stages and every payload bank.
+Extra payload writes preserve live entries.
 A combinational proof checks crossing comparisons for all inputs. The
 maximum-rate book tests cover rejected same-slot replacements and occupied
 targets. The 100000-message K26 replay still matches every tracked message.

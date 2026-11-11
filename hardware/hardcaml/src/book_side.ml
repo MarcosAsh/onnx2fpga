@@ -70,21 +70,20 @@ module Make (Config : Config) = struct
     let found =
       List.map levels ~f:(fun l -> change.valid &: live l &: (l.price ==: change.price))
     in
+    let differences = List.map levels ~f:(fun l -> ue l.shares -: ue change.shares) in
     let emptied =
-      List.map2_exn found levels ~f:(fun found l -> found &: (change.shares >=: l.shares))
+      List.map2_exn found differences ~f:(fun found difference ->
+        found &: (msb difference |: (lsbs difference ==:. 0)))
     in
     let shifted = List.tl_exn levels @ [ Level.empty ] in
     let gone = prefix_or emptied in
     let updated =
       List.map3_exn
-        (List.zip_exn levels shifted)
+        (List.zip_exn (List.zip_exn levels shifted) differences)
         found
         gone
-        ~f:(fun (level, next) found gone ->
-          pick
-            gone
-            next
-            (pick found { level with shares = level.shares -: change.shares } level))
+        ~f:(fun ((level, next), difference) found gone ->
+          pick gone next (pick found { level with shares = lsbs difference } level))
     in
     updated, gone
   ;;
