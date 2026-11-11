@@ -8,6 +8,10 @@ on:
     # Weekly, to catch flakiness that a single run would not.
     - cron: "0 6 * * 1"
 
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+
 env:
   PYTHONPATH: compiler:tests:examples
 
