@@ -43,6 +43,7 @@ proc report_utilization {args} {
         set handle [open $path w]
         puts $handle "| Slice LUTs* | 412 | 0 | 53200 | 0.77 |"
         puts $handle "| Slice Registers | 288 | 0 | 106400 | 0.27 |"
+        puts $handle "| DSPs | 6 | 0 | 220 | 2.73 |"
         close $handle
     }
 }

@@ -77,6 +77,13 @@ class SynthScriptTest(unittest.TestCase):
                 measured = SynthesisResult.load(out / "summary.json").measured
                 self.assertEqual((measured.lut, measured.ff), (860, 694))
 
+    def test_dsp_utilization(self):
+        out, completed, _ = run_stub("dsp", implement=True,
+                                     report=ROOT / "tests" / "k26_brevitas_utilization.rpt")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        measured = SynthesisResult.load(out / "summary.json").measured
+        self.assertEqual((measured.lut, measured.ff, measured.dsp), (6526, 3142, 47))
+
     def test_missing_utilization(self):
         report = Fixtures.build_dir("missing_utilization") / "report.rpt"
         report.write_text("| CLB LUTs* | 860 | 0 | 117120 | 0.73 |\n")

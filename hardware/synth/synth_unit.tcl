@@ -68,7 +68,7 @@ set utilization [read $handle]
 close $handle
 set lut [report_count $utilization {"CLB LUTs" "Slice LUTs"}]
 set ff  [report_count $utilization {"CLB Registers" "Slice Registers"}]
-set dsp    [count_ref "DSP*"]
+set dsp    [report_count $utilization {DSPs DSP48E1 DSP48E2}]
 set ramb36 [count_ref "RAMB36*"]
 set ramb18 [count_ref "RAMB18*"]
 set uram   [count_ref "URAM*"]
