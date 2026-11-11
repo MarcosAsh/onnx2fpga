@@ -64,12 +64,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install "numpy>=1.20"
+      - run: pip install "numpy>=1.20" "onnxruntime==1.31.1"
       - name: install verilator
         run: |
           sudo apt-get update
           sudo apt-get install -y verilator
       - run: make models
+      - name: corpus fixtures against ONNX Runtime
+        run: |
+          python -c "import onnxruntime; print(onnxruntime.__version__)"
+          python -m unittest test_corpus.Corpus.test_fixtures_match_onnxruntime -v
       - name: quantized import, in simulation
         # Also runs in the unit job, but its simulation half skips there without verilator.
         run: python -m unittest discover -s tests -p "test_quantized_import.py" -v
