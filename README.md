@@ -22,7 +22,11 @@ Some numbers from simulation:
 |---|---|
 | MLP 32-64-16-10, int8, fixed mode | 9 cycles, one input per cycle |
 | 100-tree XGBoost ensemble | 6 cycles, 18.6 ns |
-| ITCH message to OUCH order, tick-to-trade stage A | 14 cycles, 43.4 ns |
+| K26 ITCH message to OUCH order, tick-to-trade stage A | 21 cycles |
+
+The K26 tick-to-trade pipeline has a 214.27 MHz out-of-context routed estimate
+in Vivado 2026.1. It does not yet meet the 322.265625 MHz target; see the
+[timing measurements](docs/guides/tick-to-trade.md).
 
 The example MLP also runs on an Icepi Zero (Lattice ECP5) built with yosys and
 nextpnr, bit exact against the integer reference. K26 model-only
