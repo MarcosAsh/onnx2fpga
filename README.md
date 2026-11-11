@@ -25,8 +25,9 @@ Some numbers from simulation:
 | ITCH message to OUCH order, tick-to-trade stage A | 14 cycles, 43.4 ns |
 
 The example MLP also runs on an Icepi Zero (Lattice ECP5) built with yosys and
-nextpnr, bit exact against the integer reference. The Kria builds have not been
-through Vivado or on a board yet.
+nextpnr, bit exact against the integer reference. K26 model-only
+[Vivado measurements](docs/guides/k26-measurements.md) cover the 22-model
+corpus. The full Kria board builds have not been validated yet.
 
 ## Running it
 

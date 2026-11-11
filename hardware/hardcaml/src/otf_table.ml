@@ -60,7 +60,12 @@ module Make (Config : Config) = struct
         (split_lsb ~part_width:in_bits i.x.value)
         lane_table
         ~f:(fun code table ->
-          Clocking.reg_no_clear i.clocking (mux (code ^: sign) entries.(table)))
+          let lookup =
+            add_attribute
+              (mux (code ^: sign) entries.(table))
+              (Rtl_attribute.create "rom_style" ~value:(String "distributed"))
+          in
+          Clocking.reg_no_clear i.clocking lookup)
     in
     let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
     { O.y = { valid; value = concat_lsb y } }

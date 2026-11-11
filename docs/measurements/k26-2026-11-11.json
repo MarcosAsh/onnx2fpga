@@ -1,0 +1,635 @@
+{
+  "tool": "Vivado 2026.1",
+  "rtl_revision": "dc152d0",
+  "part": "xck26-sfvc784-2LV-c",
+  "period_ns": 3.103,
+  "mode": "out_of_context",
+  "results": [
+    {
+      "model": "brevitas_mlp",
+      "cycles": 18,
+      "predicted": {
+        "lut": 9659,
+        "ff": 8575,
+        "dsp": 49,
+        "fmax_mhz": 333.93441528083883
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.111,
+        "fmax_mhz": 334.22,
+        "lut": 6526,
+        "ff": 3142,
+        "dsp": 47,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "forest_binary",
+      "cycles": 4,
+      "predicted": {
+        "lut": 747.46,
+        "ff": 386,
+        "dsp": 0,
+        "fmax_mhz": 464.8136097424932
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 1.11,
+        "fmax_mhz": 501.76,
+        "lut": 740,
+        "ff": 353,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "forest_multiclass",
+      "cycles": 6,
+      "predicted": {
+        "lut": 2282.88,
+        "ff": 936,
+        "dsp": 0,
+        "fmax_mhz": 460.82949308755764
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.681,
+        "fmax_mhz": 412.88,
+        "lut": 1249,
+        "ff": 847,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "lgbm_multiclass",
+      "cycles": 7,
+      "predicted": {
+        "lut": 2690.4,
+        "ff": 2061,
+        "dsp": 0,
+        "fmax_mhz": 413.5649296939619
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.922,
+        "fmax_mhz": 458.51,
+        "lut": 1888,
+        "ff": 1760,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "lgbm_small",
+      "cycles": 5,
+      "predicted": {
+        "lut": 920.8,
+        "ff": 737,
+        "dsp": 0,
+        "fmax_mhz": 413.5649296939619
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 1.058,
+        "fmax_mhz": 489.0,
+        "lut": 751,
+        "ff": 690,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "linear_regression",
+      "cycles": 6,
+      "predicted": {
+        "lut": 360,
+        "ff": 254,
+        "dsp": 1,
+        "fmax_mhz": 472.9921483303377
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.741,
+        "fmax_mhz": 423.37,
+        "lut": 253,
+        "ff": 164,
+        "dsp": 1,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "logistic_binary",
+      "cycles": 5,
+      "predicted": {
+        "lut": 344,
+        "ff": 195,
+        "dsp": 1,
+        "fmax_mhz": 472.9921483303377
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 1.347,
+        "fmax_mhz": 569.48,
+        "lut": 235,
+        "ff": 189,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "logistic_multiclass",
+      "cycles": 7,
+      "predicted": {
+        "lut": 862,
+        "ff": 701,
+        "dsp": 3,
+        "fmax_mhz": 325.1821019771072
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.466,
+        "fmax_mhz": 379.22,
+        "lut": 569,
+        "ff": 370,
+        "dsp": 3,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "mlp_regressor",
+      "cycles": 13,
+      "predicted": {
+        "lut": 4832,
+        "ff": 4316,
+        "dsp": 17,
+        "fmax_mhz": 380.4017041996348
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.378,
+        "fmax_mhz": 366.97,
+        "lut": 3084,
+        "ff": 2355,
+        "dsp": 17,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "mlp_sigmoid",
+      "cycles": 14,
+      "predicted": {
+        "lut": 5054,
+        "ff": 4236,
+        "dsp": 17,
+        "fmax_mhz": 380.4017041996348
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.097,
+        "fmax_mhz": 332.67,
+        "lut": 2975,
+        "ff": 2166,
+        "dsp": 17,
+        "ramb36": 0,
+        "ramb18": 8,
+        "bram36": 4.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "normalizer_logistic",
+      "cycles": 16,
+      "predicted": {
+        "lut": 3360,
+        "ff": 3070,
+        "dsp": 11,
+        "fmax_mhz": 325.1821019771072
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.365,
+        "fmax_mhz": 365.23,
+        "lut": 1021,
+        "ff": 635,
+        "dsp": 11,
+        "ramb36": 0,
+        "ramb18": 9,
+        "bram36": 4.5,
+        "uram": 0
+      }
+    },
+    {
+      "model": "ort_qdq_mlp",
+      "cycles": 13,
+      "predicted": {
+        "lut": 4495,
+        "ff": 4091,
+        "dsp": 17,
+        "fmax_mhz": 383.11240517967974
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.195,
+        "fmax_mhz": 343.88,
+        "lut": 3639,
+        "ff": 2174,
+        "dsp": 17,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "ort_qoperator_gemm",
+      "cycles": 22,
+      "predicted": {
+        "lut": 7536,
+        "ff": 5873,
+        "dsp": 22,
+        "fmax_mhz": 337.4274530975841
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": -0.106,
+        "fmax_mhz": 311.62,
+        "lut": 5459,
+        "ff": 3387,
+        "dsp": 22,
+        "ramb36": 0,
+        "ramb18": 8,
+        "bram36": 4.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "ort_qoperator_mlp",
+      "cycles": 13,
+      "predicted": {
+        "lut": 4495,
+        "ff": 4091,
+        "dsp": 17,
+        "fmax_mhz": 383.11240517967974
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.36,
+        "fmax_mhz": 364.56,
+        "lut": 3637,
+        "ff": 2174,
+        "dsp": 17,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "qonnx_mlp",
+      "cycles": 19,
+      "predicted": {
+        "lut": 9912,
+        "ff": 8740,
+        "dsp": 49,
+        "fmax_mhz": 333.93441528083883
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.185,
+        "fmax_mhz": 342.7,
+        "lut": 6858,
+        "ff": 3345,
+        "dsp": 49,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "ridge",
+      "cycles": 6,
+      "predicted": {
+        "lut": 376,
+        "ff": 257,
+        "dsp": 1,
+        "fmax_mhz": 472.9921483303377
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.61,
+        "fmax_mhz": 401.12,
+        "lut": 261,
+        "ff": 168,
+        "dsp": 1,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "scaler_linear",
+      "cycles": 6,
+      "predicted": {
+        "lut": 344,
+        "ff": 255,
+        "dsp": 1,
+        "fmax_mhz": 472.9921483303377
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.953,
+        "fmax_mhz": 465.12,
+        "lut": 237,
+        "ff": 168,
+        "dsp": 1,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "scaler_logistic",
+      "cycles": 5,
+      "predicted": {
+        "lut": 344,
+        "ff": 197,
+        "dsp": 1,
+        "fmax_mhz": 472.9921483303377
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 1.189,
+        "fmax_mhz": 522.47,
+        "lut": 216,
+        "ff": 195,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "torch_bn_mlp",
+      "cycles": 13,
+      "predicted": {
+        "lut": 4654,
+        "ff": 4250,
+        "dsp": 17,
+        "fmax_mhz": 380.4017041996348
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.55,
+        "fmax_mhz": 391.7,
+        "lut": 3070,
+        "ff": 2245,
+        "dsp": 17,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "xgb_multiclass",
+      "cycles": 7,
+      "predicted": {
+        "lut": 2788.8900000000003,
+        "ff": 2222,
+        "dsp": 0,
+        "fmax_mhz": 460.82949308755764
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.535,
+        "fmax_mhz": 389.41,
+        "lut": 2058,
+        "ff": 2019,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "xgb_small",
+      "cycles": 5,
+      "predicted": {
+        "lut": 926.05,
+        "ff": 758,
+        "dsp": 0,
+        "fmax_mhz": 460.82949308755764
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.728,
+        "fmax_mhz": 421.05,
+        "lut": 814,
+        "ff": 694,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "xgb_small_v5",
+      "cycles": 5,
+      "predicted": {
+        "lut": 926.05,
+        "ff": 758,
+        "dsp": 0,
+        "fmax_mhz": 460.82949308755764
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.824,
+        "fmax_mhz": 438.79,
+        "lut": 804,
+        "ff": 695,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    }
+  ],
+  "distributed_table_results": [
+    {
+      "model": "ort_qoperator_gemm",
+      "cycles": 22,
+      "predicted": {
+        "lut": 7536,
+        "ff": 5873,
+        "dsp": 22,
+        "fmax_mhz": 337.4274530975841
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.294,
+        "fmax_mhz": 356.0,
+        "lut": 5838,
+        "ff": 3533,
+        "dsp": 22,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    },
+    {
+      "model": "mlp_sigmoid",
+      "cycles": 14,
+      "predicted": {
+        "lut": 5054,
+        "ff": 4236,
+        "dsp": 17,
+        "fmax_mhz": 380.4017041996348
+      },
+      "measured": {
+        "top": "otf_top",
+        "part": "xck26-sfvc784-2LV-c",
+        "stage": "impl",
+        "generics": "",
+        "period_ns": 3.103,
+        "wns_ns": 0.153,
+        "fmax_mhz": 338.98,
+        "lut": 3357,
+        "ff": 2285,
+        "dsp": 17,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      }
+    }
+  ]
+}
