@@ -1,0 +1,46 @@
+{
+  "tool": "Vivado 2026.1",
+  "board": "kr260",
+  "part": "xck26-sfvc784-2LV-c",
+  "scope": "Full PS, SmartConnect and inference shell implementation; no physical board validation.",
+  "command": "python3 tools/build_kr260.py --model tests/fixtures/xgb_regressor.onnx --samples /tmp/onnx2fpga-tree-samples.npy --out build/kr260_tree_validated",
+  "model": {
+    "source": "tests/fixtures/xgb_regressor.onnx",
+    "trees": 100,
+    "depth": 4,
+    "features": 8,
+    "samples_source": "tests/fixtures/trees_expected.npz",
+    "samples_key": "x",
+    "calibration_vectors": 256,
+    "simulation_vectors": 16,
+    "simulation_bit_exact": true,
+    "latency_cycles": 6
+  },
+  "clock_mhz": 322.265625,
+  "ps_clock_mhz": 100.0,
+  "setup_slack_ns": 0.473,
+  "hold_slack_ns": 0.024,
+  "pulse_width_slack_ns": 0.052,
+  "failing_endpoints": {
+    "setup": 0,
+    "hold": 0,
+    "pulse_width": 0
+  },
+  "resources": {
+    "lut": 6489,
+    "ff": 4609,
+    "dsp": 0,
+    "bram36": 0
+  },
+  "critical_methodology_violations": 0,
+  "sha256": {
+    "model.onnx": "44220c62eb82702a572ceeffa85b90534dadd3444d80d9711b6e4f39bb689b1a",
+    "kr260/kria_shell.v": "9f74c9369d19a0f1fc12d9519fdc23793d488eeba982b183e83e5e157e638a2e",
+    "kr260/kr260.bit": "696e7fdd983a5d62910950805092874cbfc53cb42c5cb3480b8f4bafb87e3e2d",
+    "kr260/kr260.bin": "08e303ab227bee87246c27e5a0fbf3b3121256ca30891a5ce1317d201cfbbfe5",
+    "kr260/kr260.xsa": "395858aa3d993ed00c439c6dade816452fcacbe32df04a9d9efc992f58509526",
+    "kr260/timing_summary.rpt": "4cf5e720f9c9ac0d174b1c4b591a51539cc84a61d42b306fd031b78f371cb6bc",
+    "kr260/utilization.rpt": "239e979adcf66cff3279389c6b4850829b9cd0fe9d8c86f6bcd558ea749e0250",
+    "kr260/methodology.rpt": "d04556ea38f0838e3c033df4191c427f1670f3c732efc46e9bbd12c44036de78"
+  }
+}

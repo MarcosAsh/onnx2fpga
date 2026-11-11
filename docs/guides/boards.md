@@ -100,12 +100,34 @@ shell through Vivado. `--generate-only` performs simulation and writes the
 project without starting Vivado. `--out` selects the build directory.
 The default is `build/kr260_smoke`.
 
+To build your own model, pass `--model model.onnx --samples samples.npy`.
+The sample array contains a batch of model inputs. The compiler uses it for
+calibration and checks up to 16 samples in simulation before starting
+Vivado. Supply both options together and use `--out` to keep separate builds.
+
 The full build on `xck26-sfvc784-2LV-c` uses 1530 LUTs, 1760 flip-flops and
 9 DSPs, with no block RAM. Its routed clock is 322.266 MHz, with 0.561 ns
 setup slack, 0.013 ns hold slack and 0.052 ns pulse-width slack. These are
 Vivado results for the small inference example, not the tick-to-trade design
 or measurements from a board. The [measurement record](../measurements/kr260-mlp-2026-11-11.json)
 includes the model seed and hashes of the reports and build artifacts.
+
+The 100-tree, depth-4 XGBoost regressor also passes the full build. Its
+6-cycle pipeline uses 6489 LUTs and 4609 flip-flops, with no DSPs or block
+RAM. At the same clock, setup slack is 0.473 ns, hold slack is 0.024 ns and
+pulse-width slack is 0.052 ns. See the
+[tree measurement record](../measurements/kr260-trees-2026-11-11.json).
+To reproduce it:
+
+```sh
+python3 - <<'PY'
+import numpy as np
+with np.load('tests/fixtures/trees_expected.npz') as data:
+    np.save('/tmp/onnx2fpga-tree-samples.npy', data['x'])
+PY
+python3 tools/build_kr260.py --model tests/fixtures/xgb_regressor.onnx \
+  --samples /tmp/onnx2fpga-tree-samples.npy --out build/kr260_tree_validated
+```
 
 The PS uses IOPLL for nominal 100 MHz `pl_clk0`. Vivado derives `otf_clk`
 through the MMCM, preserving the clock relationship and jitter. The build
