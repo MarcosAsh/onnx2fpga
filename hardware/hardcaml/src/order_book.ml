@@ -157,7 +157,11 @@ module Make (Config : Config) = struct
     let bid_update = update bids gnd in
     let ask_update = update asks vdd in
     let accepted = bid_update.accepted in
-    let remaining = Clocking.reg_no_clear clocking quantity.remaining in
+    let remaining =
+      add_attribute
+        (Clocking.reg_no_clear clocking quantity.remaining)
+        (Rtl_attribute.Vivado.extract_reset false)
+    in
     let added ~order ~side =
       { Entry.live = vdd
       ; tag = tag order

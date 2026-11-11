@@ -24,7 +24,7 @@ Some numbers from simulation:
 | 100-tree XGBoost ensemble | 6 cycles, 18.6 ns |
 | K26 ITCH message to OUCH order, tick-to-trade stage A | 22 cycles |
 
-The K26 tick-to-trade pipeline has a 314.66 MHz out-of-context routed estimate
+The K26 tick-to-trade pipeline has a 314.86 MHz out-of-context routed estimate
 in Vivado 2026.1. It does not yet meet the 322.265625 MHz target; see the
 [timing measurements](docs/guides/tick-to-trade.md).
 

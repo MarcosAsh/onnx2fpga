@@ -98,6 +98,7 @@ with a 3.103 ns constraint:
 | Early book selection, preserved subtraction | 22 | 8963 | 7258 | 13.5 | 0 | -0.113 |
 | Post-route refinement of early book selection | 22 | 8963 | 7258 | 13.5 | 0 | -0.103 |
 | Second refinement of early book selection | 22 | 8963 | 7258 | 13.5 | 0 | -0.075 |
+| Remaining-share data mux, two refinements | 22 | 8976 | 7253 | 13.5 | 0 | -0.073 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
@@ -108,7 +109,7 @@ Moving the book register before removal reaches 197.98 MHz. At that stage,
 the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records fifty-two runs, including the intermediate memory layouts.
+records fifty-five runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
@@ -171,6 +172,12 @@ Setup slack is -0.103 ns across 67 failing endpoints; hold slack stays
 positive at 0.020 ns. A second refinement reaches 314.66 MHz, or 69.9 ns
 at 22 cycles, with -0.075 ns setup slack and 38 failing endpoints. A third
 pass gives the same frequency and resource counts.
+
+Disabling reset extraction on the remaining-share register reaches 314.86 MHz
+after two refinements, at the same 22 cycles and 69.9 ns. The third pass gives
+the same result. This revision uses 8976 LUTs and 7253 flip-flops. Setup slack
+is -0.073 ns and hold slack is positive at 0.012 ns; the worst path ends at a
+book-side level register. The 100000-message replay and formal checks pass.
 
 The table induction check covers a four-slot instance for arbitrary legal
 operation sequences, including pending flag writes, simultaneous reads and
