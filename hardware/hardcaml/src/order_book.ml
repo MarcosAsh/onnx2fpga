@@ -37,7 +37,7 @@ module Make (Config : Config) = struct
     [@@deriving hardcaml]
   end
 
-  module Table = Ram.Dual_port.Make (struct
+  module Table = Order_table.Make (struct
       let address_bits = order_bits
       let data_bits = Entry.sum_of_port_widths
     end)
@@ -108,6 +108,15 @@ module Make (Config : Config) = struct
     let index = current.symbol in
     let bids = mux index (List.map sides ~f:fst) in
     let asks = mux index (List.map sides ~f:snd) in
+    let crossing =
+      Book_crossing.hierarchical
+        scope
+        { ask
+        ; price = current.price
+        ; bid = Book_side.Level.of_word (sel_bottom bids ~width:64)
+        ; offer = Book_side.Level.of_word (sel_bottom asks ~width:64)
+        }
+    in
     let update =
       Side.Pipelined.hierarchical
         scope
@@ -115,14 +124,14 @@ module Make (Config : Config) = struct
         ; book =
             { Side.I.levels = mux2 ask asks bids
             ; ask
-            ; opposite = sel_bottom (mux2 ask bids asks) ~width:64
+            ; opposite = zero 64
             ; remove =
                 { valid = hit &: ~:(is Add)
                 ; price = table_a.price
                 ; shares = mux2 reduce executed table_a.shares
                 }
             ; insert =
-                { valid = adding |: replacing
+                { valid = adding |: replacing &: ~:(crossing.crosses)
                 ; price = current.price
                 ; shares = current.shares
                 }
@@ -164,15 +173,12 @@ module Make (Config : Config) = struct
     in
     let table =
       Table.hierarchical
-        ~memory_attributes:
-          [ Rtl_attribute.create
-              "ram_style"
-              ~applies_to:[ Memories ]
-              ~value:(String "block")
-          ]
-        ~name:"order_table"
         scope
         { clock = clocking.clock
+        ; initialize = ~:ready
+        ; prefer_b = is Replace
+        ; payload_write =
+            current.valid &: (adding |: replacing |: (hit &: reduce &: (remaining <>:. 0)))
         ; port_a =
             port
               ~write:(write_a |: ~:ready)

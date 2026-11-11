@@ -177,6 +177,102 @@ class FeatureEquivalence(unittest.TestCase):
         self.assertIn("SUCCESS", result.stdout)
 
 
+@unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
+class CrossingEquivalence(unittest.TestCase):
+    def test_crossing(self):
+        build = Fixtures.build_dir("crossing_equivalence")
+        config = build / "config.json"
+        config.write_text(json.dumps(Config().as_json(DESIGN)))
+        (build / "dut.v").write_text(generate(config, "-unit", "book_crossing"))
+        (build / "check.v").write_text("""
+module check (
+    input ask, input [31:0] price, bid_price, bid_shares, offer_price, offer_shares,
+    output trigger
+);
+    wire crosses;
+    dut optimized (.ask(ask), .price(price), .bid$price(bid_price), .bid$shares(bid_shares),
+                   .offer$price(offer_price), .offer$shares(offer_shares), .crosses(crosses));
+    wire [31:0] opposite_price = ask ? bid_price : offer_price;
+    wire [31:0] opposite_shares = ask ? bid_shares : offer_shares;
+    wire reference = opposite_shares != 0
+        && (ask ? price <= opposite_price : price >= opposite_price);
+    assign trigger = crosses != reference;
+endmodule
+""")
+        script = ("read_verilog dut.v check.v; prep -flatten -top check; "
+                  "sat -verify -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("SUCCESS", result.stdout)
+
+
+@unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
+class TableEquivalence(unittest.TestCase):
+    def test_table_induction(self):
+        build = Fixtures.build_dir("order_table_equivalence")
+        config = Config(order_bits=2)
+        path = build / "config.json"
+        path.write_text(json.dumps(config.as_json(DESIGN)))
+        source = generate(path, "-unit", "order_table").split("endmodule", 1)[0]
+        source = source.replace("module order_table (", "module check (")
+        source = source.replace("    qb\n);", "    qb,\n    trigger\n);")
+        invariant = """
+    output trigger;
+    reg [%(top)d:0] reference [0:3];
+    reg [3:0] initialized = 0;
+    reg legal_so_far = 1;
+    wire wa = port_a$enable && port_a$write;
+    wire wb = port_b$enable && port_b$write;
+    wire creates = (wa && port_a$data[0]) || (wb && port_b$data[0]);
+    wire [1:0] target = prefer_b ? port_b$address : port_a$address;
+    wire target_deleted = wa && !port_a$data[0] && port_a$address == target;
+    wire legal = initialize || ((!wb || (port_b$data[0] && prefer_b))
+        && (!(wa && port_a$data[0]) || !prefer_b)
+        && (!creates || payload_write)
+        && (!payload_write || creates || !reference[target][0] || target_deleted)
+        && !(wa && wb && port_a$address == port_b$address));
+    reg [%(top)d:0] expected_a, expected_b;
+    reg seen_a = 0, seen_b = 0;
+    always @(posedge clock) begin
+        legal_so_far <= legal_so_far && legal;
+        if (initialize) begin
+            reference[port_a$address] <= 0;
+            initialized[port_a$address] <= 1;
+        end else begin
+            if (wa) reference[port_a$address] <= port_a$data;
+            if (wb) reference[port_b$address] <= port_b$data;
+        end
+        if (port_a$enable && !port_a$write) begin
+            expected_a <= reference[port_a$address];
+            seen_a <= initialized[port_a$address];
+        end
+        if (port_b$enable && !port_b$write) begin
+            expected_b <= reference[port_b$address];
+            seen_b <= initialized[port_b$address];
+        end
+    end
+    wire [3:0] mismatch;
+    genvar index;
+    generate for (index=0; index<4; index=index+1) begin
+        assign mismatch[index] = initialized[index]
+            && (((created[index] ^ deleted[index]) != reference[index][0])
+                || (reference[index][0] && payload[index] != reference[index][%(top)d:1]));
+    end endgenerate
+    assign trigger = legal_so_far && ((|mismatch)
+        || (seen_a && (qa[0] != expected_a[0] || (expected_a[0] && qa != expected_a)))
+        || (seen_b && (qb[0] != expected_b[0] || (expected_b[0] && qb != expected_b))));
+endmodule
+""" % {"top": 132 - config.order_bits}
+        (build / "check.v").write_text(source + invariant)
+        script = ("read_verilog check.v; prep -flatten -top check; memory_map; opt; "
+                  "sat -verify -tempinduct -seq 2 -maxsteps 6 -prove trigger 0")
+        result = subprocess.run([IcepiZero.tool("yosys"), "-Q", "-T", "-p", script],
+                                cwd=build, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr)
+        self.assertIn("Induction step proven: SUCCESS", result.stdout)
+
+
 @unittest.skipIf(HARDCAML, HARDCAML)
 @unittest.skipIf(SBY is None, "sby not found")
 class Proofs(unittest.TestCase):

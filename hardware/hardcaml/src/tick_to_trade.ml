@@ -273,6 +273,18 @@ let verilog ?unit params =
       in
       let module C = Circuit.With_interface (Extract.I) (Extract.O) in
       C.create_exn ~name:"dut" (Extract.hierarchical scope)
+    | Some "book_crossing" ->
+      let module C = Circuit.With_interface (Book_crossing.I) (Book_crossing.O) in
+      C.create_exn ~name:"dut" (Book_crossing.hierarchical scope)
+    | Some "order_table" ->
+      let module Table =
+        Order_table.Make (struct
+          let address_bits = params.Params.order_bits
+          let data_bits = 64 - params.order_bits + 1 + 3 + 1 + 32 + 32
+        end)
+      in
+      let module C = Circuit.With_interface (Table.I) (Table.O) in
+      C.create_exn ~name:"dut" (Table.hierarchical scope)
     | Some unit -> raise_s [%message "tick_to_trade: no unit called" unit]
   in
   Rtl.create ~database:(Scope.circuit_database scope) Verilog [ circuit ]

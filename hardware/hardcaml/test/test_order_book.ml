@@ -131,3 +131,39 @@ let%expect_test "orders through the table and the levels" =
     ((kind Add) (order 6) (bids ()) (asks ((7 5))) (flow 0))
     |}]
 ;;
+
+let%expect_test "rejected writes preserve live payloads" =
+  run
+    [ event Add 1 ~shares:100 ~price:10
+    ; event Add 2 ~side:'S' ~shares:100 ~price:20
+    ; event Add 9 ~shares:70 ~price:11
+    ; event Execute 1 ~shares:10
+    ; event Replace 1 ~new_order:9 ~shares:40 ~price:20
+    ; event Execute 9 ~shares:10
+    ; event Add 17 ~shares:50 ~price:11
+    ; event Replace 17 ~new_order:2 ~shares:60 ~price:12
+    ; event Execute 2 ~shares:10
+    ; event Add 25 ~shares:30 ~price:12
+    ; event Replace 25 ~new_order:3 ~shares:60 ~price:20
+    ; event Execute 3 ~shares:10
+    ; event Add 11 ~shares:40 ~price:13
+    ; event Execute 11 ~shares:5
+    ];
+  [%expect
+    {|
+    ((kind Add) (order 1) (bids ((10 100))) (asks ()) (flow 0))
+    ((kind Add) (order 2) (bids ((10 100))) (asks ((20 100))) (flow 0))
+    ((kind Add) (order 9) (bids ((10 100))) (asks ((20 100))) (flow 0))
+    ((kind Execute) (order 1) (bids ((10 90))) (asks ((20 100))) (flow -10))
+    ((kind Replace) (order 1) (bids ()) (asks ((20 100))) (flow -10))
+    ((kind Execute) (order 9) (bids ()) (asks ((20 100))) (flow -10))
+    ((kind Add) (order 17) (bids ((11 50))) (asks ((20 100))) (flow -10))
+    ((kind Replace) (order 17) (bids ()) (asks ((20 100))) (flow -10))
+    ((kind Execute) (order 2) (bids ()) (asks ((20 90))) (flow 2))
+    ((kind Add) (order 25) (bids ((12 30))) (asks ((20 90))) (flow 2))
+    ((kind Replace) (order 25) (bids ()) (asks ((20 90))) (flow 2))
+    ((kind Execute) (order 3) (bids ()) (asks ((20 90))) (flow 2))
+    ((kind Add) (order 11) (bids ((13 40))) (asks ((20 90))) (flow 2))
+    ((kind Execute) (order 11) (bids ((13 35))) (asks ((20 90))) (flow -3))
+    |}]
+;;

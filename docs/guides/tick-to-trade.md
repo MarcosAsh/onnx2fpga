@@ -52,8 +52,10 @@ OTF_PERIOD=3.103 OTF_CLOCK=clock OTF_IMPL=1 OTF_OUT=vivado \
   vivado -mode batch -nojournal -nolog -source ../../hardware/synth/synth_unit.tcl
 ```
 
-The order table explicitly requests block RAM. The book compares insertion
-prices before compacting removed levels, then moves those comparison bits
+The order table uses distributed RAM. A single writer stores payloads, and
+separate creation and deletion flags track whether each slot is live.
+The book compares insertion prices before compacting removed levels,
+then moves those comparison bits
 with the levels. `tests/test_tick_to_trade.py` proves this update equivalent
 to the four-level RTL from revision `5244d34` for all inputs, using
 `tests/fixtures/book_side_baseline.v`. The existing invariant proofs and
@@ -75,21 +77,22 @@ with a 3.103 ns constraint:
 | Earlier book register | 21 | 6565 | 5739 | 14.5 | 0 | -1.948 |
 | Parallel feature normalization | 21 | 6701 | 5763 | 13.5 | 0 | -2.052 |
 | Stored framer offset | 21 | 6299 | 5777 | 13.5 | 0 | -1.910 |
+| Early payload writes | 21 | 17825 | 5977 | 0 | 0 | -1.564 |
 
 The first change includes both the model pipeline and the RAM mapping.
 Reordering the book comparisons alone improves the timing-derived frequency
 estimate from 113.70 to 154.11 MHz. Pipelining the update reaches 170.59 MHz
 with one more cycle. Selecting the RAM address from the event phase
 instead of the write decision reaches 183.32 MHz at the same latency.
-Moving the book register before removal reaches 197.98 MHz. The remaining
-critical path starts at an order-table RAM output and ends at its write enable.
+Moving the book register before removal reaches 197.98 MHz. At that stage,
+the critical path runs from an order-table RAM output to its write enable.
 These are routed estimates, without board I/O constraints or a physical board measurement.
 The [measurement data](../measurements/tick-to-trade-k26-2026-11-11.json)
-records all eight runs.
+records twelve runs, including the intermediate memory layouts.
 
 Feature normalization selects the four-bit window directly and keeps the
 imbalance lookup in distributed ROM. Its stage slack improves from -1.127
-ns to -0.415 ns; the table-write path still limits the full design.
+ns to -0.415 ns in that revision.
 `tests/fixtures/features_baseline.v` holds the four-level feature RTL from `402ec54`.
 The sequential equivalence check covers all inputs, outputs and the
 three-cycle latency.
@@ -98,6 +101,18 @@ The framer stores its byte offset instead of subtracting the remaining
 length on every beat. Its proof checks that the offset stays equal to
 `length - skip` during the body and that framing still matches the serial
 reference. Together these changes reach 199.48 MHz at the same latency.
+
+Early payload writes reach 214.27 MHz with the same 21-cycle latency, using
+17825 LUTs and no block RAM. The wide payload write no longer waits for
+price acceptance. Rejected writes may change an empty slot's payload;
+the live flags still follow acceptance. Both crossing comparisons run
+before side selection. The critical path is now in the book update logic.
+
+The table induction check covers a four-slot instance for arbitrary legal
+operation sequences, including speculative writes and initialization.
+A combinational proof checks crossing comparisons for all inputs. The
+maximum-rate book tests cover rejected same-slot replacements and occupied
+targets. The 100000-message K26 replay still matches every tracked message.
 
 ## What runs
 
