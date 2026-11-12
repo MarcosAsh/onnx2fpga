@@ -162,6 +162,17 @@ class SynthScriptTest(unittest.TestCase):
         synth = next(c for c in calls if c.startswith("synth_design"))
         self.assertNotIn("-generic", synth)
 
+    def test_clock_name_is_literal(self):
+        clock = 'clocking$clock'
+        out, completed, _ = run_stub("literal_clock", generics="", clock=clock)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        script = ('proc get_ports {name} { return $name }\n'
+                  'proc create_clock {args} { puts [lindex $args end] }\n'
+                  + (out / "clock.xdc").read_text())
+        result = subprocess.run(['tclsh'], input=script, capture_output=True, text=True)
+        self.assertEqual(result.stderr, '')
+        self.assertEqual(result.stdout.strip(), clock)
+
 
 if __name__ == "__main__":
     unittest.main()

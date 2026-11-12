@@ -45,7 +45,7 @@ if {$checkpoint ne ""} {
 
     set xdc [file join $outdir clock.xdc]
     set handle [open $xdc w]
-    puts $handle "create_clock -name clk -period $period \[get_ports $clock\]"
+    puts $handle "create_clock -name clk -period $period \[get_ports [list $clock]\]"
     close $handle
     read_xdc -mode out_of_context $xdc
 
