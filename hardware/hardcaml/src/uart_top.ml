@@ -25,8 +25,6 @@ module Make (Config : Config) = struct
       let tx_depth = tx_depth
     end)
 
-  module Accelerator = Top.Make (Config)
-
   module I = struct
     type 'a t =
       { clocking : 'a Clocking.t
@@ -62,19 +60,37 @@ module Make (Config : Config) = struct
         ; tx = { ready = tx_ready }
         }
     in
-    let accelerator =
-      Accelerator.hierarchical
-        scope
-        { clk = i.clocking.clock
-        ; rst_n = ~:run_clear
-        ; s_tdata = bridge.accel_in.data
-        ; s_tvalid = bridge.accel_in.valid
-        ; m_tready = bridge.accel_out.ready
-        }
-    in
-    accel_ready <-- accelerator.s_tready;
-    accel_data <-- accelerator.m_tdata;
-    accel_valid <-- accelerator.m_tvalid;
+    (match design.mode with
+     | Streaming ->
+       let module Accelerator = Top.Make (Config) in
+       let accelerator =
+         Accelerator.hierarchical
+           scope
+           { clk = i.clocking.clock
+           ; rst_n = ~:run_clear
+           ; s_tdata = bridge.accel_in.data
+           ; s_tvalid = bridge.accel_in.valid
+           ; m_tready = bridge.accel_out.ready
+           }
+       in
+       accel_ready <-- accelerator.s_tready;
+       accel_data <-- accelerator.m_tdata;
+       accel_valid <-- accelerator.m_tvalid
+     | Fixed _ ->
+       let module Accelerator = Fixed_stream.Make (Config) in
+       let accelerator =
+         Accelerator.hierarchical
+           scope
+           { clk = i.clocking.clock
+           ; rst_n = ~:run_clear
+           ; s_tdata = bridge.accel_in.data
+           ; s_tvalid = bridge.accel_in.valid
+           ; m_tready = bridge.accel_out.ready
+           }
+       in
+       accel_ready <-- accelerator.s_tready;
+       accel_data <-- accelerator.m_tdata;
+       accel_valid <-- accelerator.m_tvalid);
     let tx =
       Tx.hierarchical
         scope

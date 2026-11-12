@@ -118,3 +118,43 @@ let%expect_test "a low stop bit raises error until the next break" =
      (cleared ((received (7 8)) (framing_errors 0) (error false))))
     |}]
 ;;
+
+module Fixed = Uart_top.Make (struct
+    let design = Design.of_string (Fixed_fixture.description ~latency:6)
+    let clocks_per_bit = clocks_per_bit
+    let rx_depth = 64
+    let tx_depth = 64
+  end)
+
+module Fixed_harness = Hardcaml_test_harness.Lws_harness.Make (Fixed.I) (Fixed.O)
+
+let%test_unit "fixed predictions survive serial framing and break recovery" =
+  let rng = Random.State.make [| 31 |] in
+  let frames = List.init 32 ~f:(fun _ -> Model.random_ints rng ~bits:8 2) in
+  let bytes frames = List.concat_map frames ~f:(List.map ~f:(fun x -> x land 255)) in
+  let expected = bytes (List.map frames ~f:Fixed_fixture.model) in
+  List.iter [ -0.02; 0.; 0.02 ] ~f:(fun error ->
+    Fixed_harness.run
+      ~random_initial_state:`All
+      ~create:Fixed.hierarchical
+      (fun (h @ local) ~inputs ~outputs ->
+         let o = Before_and_after_edge.before_edge outputs in
+         inputs.rxd := Bits.vdd;
+         Stream_bench.clear h inputs.clocking.clear;
+         let host_clocks = Float.of_int clocks_per_bit *. (1. +. error) in
+         let receiver = Uart_model.Receiver.create ~clocks_per_bit:host_clocks in
+         let line = Uart_model.line ~clocks_per_bit:host_clocks in
+         let levels =
+           line [ 0xee ]
+           @ host_break
+           @ line (bytes frames)
+           @ Uart_model.idle (400 * clocks_per_bit)
+         in
+         List.iter levels ~f:(fun level ->
+           inputs.rxd := Bits.of_bool level;
+           Lws.cycle h;
+           Uart_model.Receiver.step receiver (Bits.to_bool !(o.txd)));
+         [%test_result: int list] (Uart_model.Receiver.received receiver) ~expect:expected;
+         [%test_result: int] (Uart_model.Receiver.framing_errors receiver) ~expect:0;
+         [%test_result: bool] (Bits.to_bool !(o.error)) ~expect:false))
+;;

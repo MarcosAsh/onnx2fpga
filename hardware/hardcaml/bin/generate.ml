@@ -68,6 +68,22 @@ let icepi_command =
         print_string (Icepi_top.verilog ~design ~mhz ~baud ~rx_depth ~tx_depth)]
 ;;
 
+let arty_command =
+  Command.basic
+    ~summary:"Verilog for an Arty A7 UART accelerator at 100 MHz"
+    [%map_open.Command
+      let path = anon ("DESIGN_JSON" %: string)
+      and baud = flag "baud" (optional_with_default 1_000_000 int) ~doc:"BAUD serial rate"
+      and rx_depth =
+        flag "rx-depth" (optional_with_default 2048 int) ~doc:"BYTES input buffer"
+      and tx_depth =
+        flag "tx-depth" (optional_with_default 2048 int) ~doc:"BYTES output buffer"
+      in
+      fun () ->
+        let design = Design.of_string (In_channel.read_all path) in
+        print_string (Arty_top.verilog ~design ~baud ~rx_depth ~tx_depth)]
+;;
+
 let kria_command =
   Command.basic
     ~summary:
@@ -118,6 +134,7 @@ let () =
        [ "design", design_command
        ; "units", units_command
        ; "icepi", icepi_command
+       ; "arty", arty_command
        ; "kria", kria_command
        ; "kria-regs", kria_regs_command
        ; "tick-to-trade", tick_to_trade_command
