@@ -33,7 +33,7 @@ when the generated RTL exactly matches the integer reference model.
 | K26 / KV260 | Shares the K26 device model | Project generator and stub tests; a real full build remains unverified | Pending |
 | ECP5-25K / Icepi Zero | Compiler, simulation and open-tool builds | Implemented | [Recorded MLP test](../getting-started.md#what-to-expect) |
 | VU9P, VU47P, ZU7EV, Zynq-7020 | Device profiles; evidence varies by model | No corresponding board integration in the board registry | Unverified here |
-| Artix-7 35T / 100T | Device profiles `a7_35t` and `a7_100t`; validation in progress | Arty A7 integration pending | Pending |
+| Artix-7 35T / 100T | [Three models routed on each part](artix-measurements.md) | Arty A7 MLP and tree builds pass at 100 MHz | Pending |
 
 A device profile supplies budgets and estimation parameters. It does not
 establish that a board can be programmed or that a model meets timing.

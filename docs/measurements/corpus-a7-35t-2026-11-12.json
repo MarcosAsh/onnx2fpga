@@ -1,0 +1,562 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-12T00:21:58.000197+00:00",
+    "revision": "d0206b3cc9df091a1b256c76b760590ce77d8b5b",
+    "worktree_status": "",
+    "reporter_sha256": "9d1fdf66542ad50ac62b21bd3802e219d4c7af8b9d5e4a63bd83e74d4e727da1",
+    "fixture_generator_sha256": "5fad863b583c0f0685c2724a26f0eccdac17b08efb97e60685d83d82a916b1d3",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.14.4",
+      "numpy": "2.3.5",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox",
+      "vivado": "vivado v2026.1 (64-bit)\nTool Version Limit: 2026.06\nSW Build 6511674 on Tue Jun 16 11:01:26 MDT 2026\nIP Build 6504888 on Tue Jun 09 09:05:25 MDT 2026\nSharedData Build 6501428 on Mon Jun 08 17:34:18 MDT 2026\nCopyright 1986-2022 Xilinx, Inc. All Rights Reserved.\nCopyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved."
+    }
+  },
+  "configuration": {
+    "device": "a7_35t",
+    "mode": "fixed",
+    "clock_mhz": null,
+    "frames": 256,
+    "implement": true,
+    "inspect_only": false,
+    "models": [
+      "linear_regression",
+      "mlp_regressor",
+      "xgb_small"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "linear_regression",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "a8a0f2aa7540e624c8357f6a8cb3b928132a87f1d10ec53a6dcebbf687604145",
+      "onnx": {
+        "producer": "skl2onnx",
+        "producer_version": "1.20.0",
+        "ir_version": 9,
+        "opsets": {
+          "ai.onnx.ml": 1,
+          "": 22
+        },
+        "inputs": [
+          {
+            "name": "X",
+            "shape": [
+              1,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "ai.onnx.ml",
+            "op_type": "LinearRegressor",
+            "attributes": [
+              "coefficients",
+              "intercepts"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "a7_35t",
+        "mode": "fixed",
+        "findings": [
+          {
+            "severity": "warning",
+            "code": "batch_shape",
+            "message": "input 'X' uses batch size 1 during import",
+            "node_index": null,
+            "node": null,
+            "op_type": null,
+            "domain": null,
+            "opset": null
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "311891bea957dcaa941a7f7a8e836539548df2f324038b6aaf9832cb192a98fc",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 360,
+          "ff": 131,
+          "dsp": 1,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": 3,
+        "initiation_interval_cycles": 1,
+        "clock_assumption_mhz": 100.0,
+        "latency_ns_at_assumed_clock": 30.0,
+        "frames_per_second_at_assumed_clock": 100000000.0,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "817184069fe1137414a0eea793756386982245b4c5ae3a356f4bc48a99c6b8b8"
+      },
+      "manifest_sha256": "8ed270242c37d4d37b12f03b29e1db94bd608dd196c82495e93a94b8efced2d8",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.03636227791284359,
+        "max_absolute_error": 0.12963873989326302,
+        "reference_std": 1.9288100069484873,
+        "normalized_mae": 0.018852182320627454,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "top": "otf_top",
+          "part": "xc7a35ticsg324-1L",
+          "stage": "impl",
+          "generics": "",
+          "period_ns": 10.0,
+          "wns_ns": 1.104,
+          "fmax_mhz": 112.41,
+          "lut": 264,
+          "ff": 117,
+          "dsp": 1,
+          "ramb36": 0,
+          "ramb18": 0,
+          "bram36": 0.0,
+          "uram": 0
+        },
+        "timing": {
+          "scope": "internal paths; board I/O unassessed",
+          "checks": {
+            "no_clock": 0,
+            "unconstrained_internal_endpoints": 0,
+            "multiple_clock": 0,
+            "generated_clocks": 0,
+            "loops": 0,
+            "latch_loops": 0
+          },
+          "setup": {
+            "worst_slack_ns": 1.104,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 47
+          },
+          "hold": {
+            "worst_slack_ns": 0.163,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 47
+          },
+          "pulse_width": {
+            "worst_slack_ns": 4.5,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 117
+          },
+          "passed": true
+        },
+        "script_sha256": "64074cc7298d22ba4effb6991adf55d3869bc854efad3318b30e2fba576efd58",
+        "artifacts_sha256": {
+          "summary.json": "56021457a19fdba2e47fdbb8a2ae7c0e75f6de3db508b0b5bbd0a1b411df7fd3",
+          "timing_impl.rpt": "8b1eab538530006516c563299d77d406ee7357884fed3316e8ca60dc19fc7dc7",
+          "utilization_impl.rpt": "b4261a735c2eaf39e98ffb0ec965aa596368567eac3a4931de359c79d6cad3a8",
+          "routed.dcp": "332a1ddbe14b70ac0b4f4557aeed47e00ede9f3cd20b33aad0b351597bd11cba"
+        }
+      }
+    },
+    {
+      "model": "mlp_regressor",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "c6fedbc42020b906bd3ab6367ad9a84ddff13d4c5214496919b4fca2d3d7a650",
+      "onnx": {
+        "producer": "skl2onnx",
+        "producer_version": "1.20.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 21
+        },
+        "inputs": [
+          {
+            "name": "X",
+            "shape": [
+              1,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Cast",
+            "attributes": [
+              "to"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "MatMul",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Add",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "MatMul",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Add",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Reshape",
+            "attributes": []
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "a7_35t",
+        "mode": "fixed",
+        "findings": [
+          {
+            "severity": "warning",
+            "code": "batch_shape",
+            "message": "input 'X' uses batch size 1 during import",
+            "node_index": null,
+            "node": null,
+            "op_type": null,
+            "domain": null,
+            "opset": null
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "6fc3ceaaaa85b29ad7325d2983e43d5b6d202811174c5d19f2dac655b7205d74",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 4832,
+          "ff": 1964,
+          "dsp": 17,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": 6,
+        "initiation_interval_cycles": 1,
+        "clock_assumption_mhz": 100.0,
+        "latency_ns_at_assumed_clock": 60.0,
+        "frames_per_second_at_assumed_clock": 100000000.0,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "16fd12269cca51b3c809a3328e5e71b7c0b68ade6f004844951ac83edda5d5a0"
+      },
+      "manifest_sha256": "ed0a727f575e418e5f5d3c95368eee731cc6c7ac963f60588aed46097d162c5c",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.03706261121067782,
+        "max_absolute_error": 0.14760996115264713,
+        "reference_std": 1.9308980501517343,
+        "normalized_mae": 0.01919449408929972,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "top": "otf_top",
+          "part": "xc7a35ticsg324-1L",
+          "stage": "impl",
+          "generics": "",
+          "period_ns": 10.0,
+          "wns_ns": 0.022,
+          "fmax_mhz": 100.22,
+          "lut": 3120,
+          "ff": 1608,
+          "dsp": 17,
+          "ramb36": 0,
+          "ramb18": 0,
+          "bram36": 0.0,
+          "uram": 0
+        },
+        "timing": {
+          "scope": "internal paths; board I/O unassessed",
+          "checks": {
+            "no_clock": 0,
+            "unconstrained_internal_endpoints": 0,
+            "multiple_clock": 0,
+            "generated_clocks": 0,
+            "loops": 0,
+            "latch_loops": 0
+          },
+          "setup": {
+            "worst_slack_ns": 0.022,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 836
+          },
+          "hold": {
+            "worst_slack_ns": 0.163,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 836
+          },
+          "pulse_width": {
+            "worst_slack_ns": 4.5,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 1608
+          },
+          "passed": true
+        },
+        "script_sha256": "64074cc7298d22ba4effb6991adf55d3869bc854efad3318b30e2fba576efd58",
+        "artifacts_sha256": {
+          "summary.json": "03c93cf385d7f953fa1a8379b026ab00614bc51be0be4a4538f6a07ff7e2746b",
+          "timing_impl.rpt": "2044058be2a3f467526c8da723dd881997e20ecd2d58fdf33c9b3f3f77d6eac5",
+          "utilization_impl.rpt": "92c06dd3259e997010afd869ab6e75e7b7fa40ba41f17f9a89418087abbb9009",
+          "routed.dcp": "f6b30e83db6997909a1316c86f3b0d99732e8365dae524d273d61b57c9ecd3f2"
+        }
+      }
+    },
+    {
+      "model": "xgb_small",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "dbd03c0a4ad5ea6a8377f7019121bfa049143a5b864070cf4e6f746d941ae93f",
+      "onnx": {
+        "producer": "OnnxMLTools",
+        "producer_version": "1.16.0",
+        "ir_version": 8,
+        "opsets": {
+          "ai.onnx.ml": 1
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "ai.onnx.ml",
+            "op_type": "TreeEnsembleRegressor",
+            "attributes": [
+              "base_values",
+              "n_targets",
+              "nodes_falsenodeids",
+              "nodes_featureids",
+              "nodes_missing_value_tracks_true",
+              "nodes_modes",
+              "nodes_nodeids",
+              "nodes_treeids",
+              "nodes_truenodeids",
+              "nodes_values",
+              "post_transform",
+              "target_ids",
+              "target_nodeids",
+              "target_treeids",
+              "target_weights"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "a7_35t",
+        "mode": "fixed",
+        "findings": [
+          {
+            "severity": "warning",
+            "code": "batch_shape",
+            "message": "input 'x' uses batch size 1 during import",
+            "node_index": null,
+            "node": null,
+            "op_type": null,
+            "domain": null,
+            "opset": null
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "2863135f7d257237901279891ad6a4cf7eea04a07ed31f22566b5aa4dd0b085e",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 926.0,
+          "ff": 758,
+          "dsp": 0,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": 5,
+        "initiation_interval_cycles": 1,
+        "clock_assumption_mhz": 100.0,
+        "latency_ns_at_assumed_clock": 50.0,
+        "frames_per_second_at_assumed_clock": 100000000.0,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "c3506a67210ca615c32197234a1a1eb913f4fd990fb1473e6de39329ec3fabd3"
+      },
+      "manifest_sha256": "c6e3b889d356ea08506f6d43cd5d66c323bdad2e63c22e5777b877ec995edc42",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.004231182874014065,
+        "max_absolute_error": 0.37526477057347307,
+        "reference_std": 1.7014112301283038,
+        "normalized_mae": 0.0024868666663819955,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "top": "otf_top",
+          "part": "xc7a35ticsg324-1L",
+          "stage": "impl",
+          "generics": "",
+          "period_ns": 10.0,
+          "wns_ns": 5.243,
+          "fmax_mhz": 210.22,
+          "lut": 813,
+          "ff": 694,
+          "dsp": 0,
+          "ramb36": 0,
+          "ramb18": 0,
+          "bram36": 0.0,
+          "uram": 0
+        },
+        "timing": {
+          "scope": "internal paths; board I/O unassessed",
+          "checks": {
+            "no_clock": 0,
+            "unconstrained_internal_endpoints": 0,
+            "multiple_clock": 0,
+            "generated_clocks": 0,
+            "loops": 0,
+            "latch_loops": 0
+          },
+          "setup": {
+            "worst_slack_ns": 5.243,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 666
+          },
+          "hold": {
+            "worst_slack_ns": 0.147,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 666
+          },
+          "pulse_width": {
+            "worst_slack_ns": 4.5,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 694
+          },
+          "passed": true
+        },
+        "script_sha256": "64074cc7298d22ba4effb6991adf55d3869bc854efad3318b30e2fba576efd58",
+        "artifacts_sha256": {
+          "summary.json": "fca20898efe2c3831ed8b2ec849e73b11dabf612f9a409c9a173bc981a11491a",
+          "timing_impl.rpt": "1046520bdb49548f23521efcad57236e88dc06cf6187ea338f2e8e040134525d",
+          "utilization_impl.rpt": "7500cf9848fd6b7097e01071c68a3427a8f4e780d7138ee592470d152c2e765a",
+          "routed.dcp": "e8503e336cddea0d944f87ae2afa9bfbc568a640b00e0703b8d5aa47f23ba479"
+        }
+      }
+    }
+  ]
+}

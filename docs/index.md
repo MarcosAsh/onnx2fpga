@@ -49,6 +49,7 @@ guides/folding
 guides/quantization
 guides/boards
 guides/k26-measurements
+guides/artix-measurements
 guides/backends
 guides/custom-layers
 guides/tick-to-trade
