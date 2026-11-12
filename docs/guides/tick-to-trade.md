@@ -19,8 +19,8 @@ seconds:
 ```
 100000 messages in 4934 packets, 410437 beats; 65151 tracked messages, all identical
 orders: 6627 buy, 6942 sell; 471 adds dropped on a full slot, 2570 levels forgotten
-last byte to decision: 15 cycles, 46.5 ns at 322.27 MHz target, every message (moldudp64 1, itch_parser 1, order_book 3, features 3, model 6, decision 1)
-first byte to decision: min 17, median 19, p99 20, max 20 cycles
+last byte to decision: 17 cycles, 52.8 ns at 322.27 MHz target, every message (moldudp64 1, itch_parser 1, order_book 5, features 3, model 6, decision 1)
+first byte to decision: min 19, median 21, p99 22, max 22 cycles
 ```
 
 `--seed` picks another day, `--gap 30` leaves 30 percent of cycles idle
@@ -38,11 +38,20 @@ PYTHONPATH=compiler python3 -m onnx2fpga.trading.replay \
   --device k26 --clock-mhz 322.265625 --messages 100000 --out build/tick_k26
 ```
 
-The model takes 12 cycles and the full path takes 22. The 100000-message
-replay matches all 65151 tracked messages, including the book, features and
-orders. The printed nanoseconds use the requested clock, not a measured
-clock. The out-of-context implementation meets 322.265625 MHz after the
-replication and refinement steps below. Board timing remains unvalidated.
+The model takes 12 cycles and the full path takes 23. Printed nanoseconds
+use the requested clock.
+
+The full KR260 DDR replay build meets 322.265625 MHz with one AAPL symbol,
+32,768 XOR-indexed order slots and UltraRAM payloads. Its 23-cycle path takes
+71.4 ns at that clock, with a book event interval of two cycles. The
+[recorded replay and board result](../measurements/kr260-ddr-aapl-2026-11-12.json)
+includes the source and artifact hashes, build receipt and reproduction commands.
+The full design uses 17,697 LUTs, 8,847 registers, 9 DSPs and 16 UltraRAMs,
+with no block RAM. Setup and hold slack are both +0.015 ns; pulse-width slack
+is +0.052 ns, with zero failing endpoints and no critical methodology violations.
+Physical DDR access, board operation and network latency remain untested.
+
+The out-of-context results below describe earlier pipeline revisions.
 
 For out-of-context place and route, run from the generated directory:
 
@@ -66,10 +75,15 @@ The script checks the checkpoint's part and clock period, runs aggressive
 physical optimization, then reroutes with the Explore directive. Reports and
 the refined checkpoint go to `vivado_refined`.
 
-The order table stores payloads in block RAM and live-state flags in
-distributed RAM. Reads take two cycles. Forwarding makes simultaneous writes
-and pending flag updates visible to reads. The book accepts one event every
-two cycles and produces its snapshot after four cycles.
+The order table stores payloads in block RAM by default. Set
+`Config(order_memory="ultra")` or pass `--order-memory ultra` to
+`tools/replay_ddr.py` to use UltraRAM on a device that supports it.
+Configurations without `order_memory` keep the block RAM default.
+Live-state flags use distributed RAM in both modes.
+
+Table reads take three cycles and include writes during the first two.
+The book accepts one event every two cycles and produces its snapshot
+after five cycles.
 
 The book compares insertion prices before compacting removed levels, then
 moves those comparison bits with the levels. A register separates removal
@@ -77,7 +91,7 @@ from insertion. `tests/test_tick_to_trade.py` proves the result equals the
 four-level RTL from revision `5244d34`, delayed one cycle, for all inputs.
 The reference is in `tests/fixtures/book_side_baseline.v`.
 
-Vivado 2026.1 out-of-context routed results on `xck26-sfvc784-2LV-c`,
+Historical Vivado 2026.1 out-of-context routed results on `xck26-sfvc784-2LV-c`,
 with a 3.103 ns constraint:
 
 | Variant | Cycles | LUTs | Registers | BRAM36 equivalents | URAMs | Setup slack (ns) |
@@ -222,7 +236,8 @@ report. Replication is opt-in and leaves the RTL and pipeline latency unchanged.
 
 The table induction check covers a four-slot instance for arbitrary legal
 operation sequences, including pending flag writes, simultaneous reads and
-writes, and initialization. It checks both read stages and every payload bank.
+writes, and initialization. It checks both read outputs and every payload
+bank in block RAM and UltraRAM modes.
 Extra payload writes preserve live entries.
 A combinational proof checks crossing comparisons for all inputs. The
 maximum-rate book tests cover rejected same-slot replacements and occupied
@@ -260,8 +275,8 @@ hardware/hardcaml/_build/default/bin/generate.exe tick-to-trade tick_to_trade.js
 |---|---|---|
 | `clock`, `clear` | 1 | One clock domain; `clear` is synchronous. |
 | `data`, `keep`, `valid`, `last` | 64, 8, 1, 1 | UDP payload bytes, byte 0 in the low bits. |
-| `ready` | 1 | Low for 4096 cycles after a clear while the order table empties. |
-| `book_*` | | The updated symbol's book, three cycles after each tracked message. |
+| `ready` | 1 | Low for `2 ** order_bits` cycles after a clear while the order table empties; 4096 by default. |
+| `book_*` | | The updated symbol's book. Latency is the sum of the framer, parser and book stages. |
 | `features_valid`, `features` | 1, 32 | Spread, top imbalance, depth imbalance, trade flow, as int8. |
 | `decision_valid`, `action`, `prediction` | 1, 2, 8 | One per tracked message: hold, buy or sell. |
 | `order_valid`, `order` | 1, 376 | A 47 byte OUCH 5.0 Enter Order when the action is not hold. |

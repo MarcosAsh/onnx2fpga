@@ -3,11 +3,12 @@
 Status: partial. Fabric DDR replay through the trading pipeline matches the
 software model on every book update, feature vector and decision for 100,000
 synthetic messages and all 1,519,865 available AAPL messages in a recorded sample.
-The K26 pipeline takes 22 cycles from a
+The K26 pipeline takes 23 cycles from a
 message's last byte to its decision; the original unpipelined design takes 14.
 Unit proofs cover selected invariants; replay checks each bounded book snapshot.
-Host DMA ownership and recovery pass simulation. A validated routed Kria trading
-build, physical deployment and all of stage B remain unfinished. The recorded
+Host DMA ownership and recovery pass simulation. The full KR260 trading build
+meets 322.265625 MHz with the recorded sample's 32K order table. Physical
+deployment and all of stage B remain unfinished. The recorded
 source ends without a session terminator, so its completeness is unverified.
 
 ## Goal
@@ -58,13 +59,14 @@ PYTHONPATH=compiler:. python3 tools/replay_ddr.py --out build/ddr_trading_100k
 The report records input/model/RTL hashes, source hashes, simulated cycle counts
 and comparison results. The AXI memory model stalls address and data channels;
 it does not model physical DDR bandwidth or a Linux DMA allocation. The KR260
-project connects the reader to the PS HP0 port; its routed result and physical
-operation still need validation.
+project connects the reader to the PS HP0 port. The recorded AAPL configuration
+below passes the full timing and methodology checks; physical operation still
+needs validation.
 
-The [100,000-message record](../measurements/ddr-trading-2026-11-12.json) covers
+The [100,000-message record](../measurements/ddr-trading-23-cycle-2026-11-12.json) covers
 410,694 DDR records and 65,267 decisions per run. Four runs include restart,
 with 0% and 65% randomized stalls. All match the software model and retain the
-22-cycle last-byte-to-decision latency.
+23-cycle last-byte-to-decision latency.
 
 ### KR260 replay control
 
@@ -180,9 +182,9 @@ than a level holds empties it. With 4096 slots the 100000 message replay drops
 loses fewer, and the software model makes the same choices, so the comparison
 stays exact.
 
-The table is a true dual port RAM. Port A reads the order an event names and
-port B the new reference of a replace, in the cycle the event arrives; the next
-cycle the levels update and the ports write back. That needs events at least
+The table reads the order an event names and the new reference of a replace
+in parallel. Pending writes are forwarded through the read pipeline before
+the book updates the levels and writes back. Events must arrive at least
 two cycles apart, and the framer guarantees it: the shortest tracked message,
 a delete, is 19 bytes, and with its length field takes more than two beats.
 The proof below checks that a message of 15 bytes or more never completes on
@@ -192,8 +194,8 @@ Executions also feed a per symbol trade flow: a signed sum of executed shares,
 each capped at 65535, positive when a resting sell order traded, that loses an
 eighth of itself on every execution. It fits in 20 bits without saturating.
 
-After a clear the book spends 4096 cycles writing every slot empty and holds
-`ready` low until it is done.
+After a clear the book holds `ready` low while it empties every slot. This takes
+`2 ** order_bits` cycles, or 4096 with the default configuration.
 
 ### Features
 
@@ -313,7 +315,9 @@ To replay recorded data, supply an uncompressed or gzip-compressed
 PYTHONPATH=compiler:. python3 tools/replay_ddr.py \
   --itch build/itch_samples/12302019.NASDAQ_ITCH50.gz \
   --allow-eof --symbol AAPL --messages 2000000 \
-  --order-bits 15 --order-hash xor --out build/ddr_recorded_aapl
+  --order-bits 15 --order-hash xor --order-memory ultra \
+  --out build/ddr_recorded_aapl_final
+python3 tools/build_ddr_kr260.py build/ddr_recorded_aapl_final --jobs 2
 ```
 
 The reader finds the symbol's stock locate in its directory entry, retains its
@@ -331,7 +335,19 @@ The software comparison uses the same bounded order table and price levels as
 the hardware. Reports include table collisions and forgotten price levels;
 agreement with this model does not establish a complete exchange order book.
 
-The [recorded AAPL result](../measurements/ddr-recorded-aapl-2026-11-12.json)
+The [23-cycle replay and full KR260 build](../measurements/kr260-ddr-aapl-2026-11-12.json)
+uses the command above. Four runs cover zero/65 percent stalls and restart,
+comparing every book snapshot, feature vector and decision with the bounded
+software model. The build includes the PS, SmartConnect and DDR trading shell.
+The record binds the replay to the board manifest and the resulting bitstream,
+binary and XSA through SHA-256 hashes. It does not establish physical DDR
+bandwidth or wire-to-wire latency.
+
+To prepare the build for Linux, follow the
+[firmware packaging steps](../guides/boards.md#prepare-a-linux-firmware-package)
+with `build/ddr_recorded_aapl_final` as the build directory.
+
+The earlier [recorded AAPL result](../measurements/ddr-recorded-aapl-2026-11-12.json)
 uses all 1,519,865 AAPL messages found after scanning 268,744,780 source records
 in Nasdaq's 30 December 2019 sample. It covers 6,005,842 DDR records and
 1,512,179 decisions per run. All four runs,

@@ -1,0 +1,292 @@
+{
+  "tool": "Vivado 2026.1",
+  "board": "kr260",
+  "part": "xck26-sfvc784-2LV-c",
+  "scope": "Full PS, SmartConnect and DDR trading implementation; no physical board validation.",
+  "source_url": "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_ITCH50.gz",
+  "commands": [
+    "PYTHONPATH=compiler:. python3 tools/replay_ddr.py --itch build/itch_samples/12302019.NASDAQ_ITCH50.gz --allow-eof --symbol AAPL --messages 2000000 --order-bits 15 --order-hash xor --order-memory ultra --out build/ddr_recorded_aapl_final",
+    "python3 tools/build_ddr_kr260.py build/ddr_recorded_aapl_final --jobs 2",
+    "python3 tools/package_kria.py build/ddr_recorded_aapl_final build/firmware_ddr_final --name onnx2fpga-trading"
+  ],
+  "source_revision": "7949be7dfab54b291f6e8e9e3c7a4a014264bf40",
+  "physical_validation": "not_run",
+  "clock_mhz": 322.265625,
+  "ps_clock_mhz": 100.0,
+  "latency_cycles": 23,
+  "latency_ns": 71.36969696969697,
+  "book_event_interval_cycles": 2,
+  "timing": {
+    "scope": "internal paths; board I/O unassessed",
+    "checks": {
+      "no_clock": 0,
+      "unconstrained_internal_endpoints": 0,
+      "multiple_clock": 0,
+      "generated_clocks": 0,
+      "loops": 0,
+      "latch_loops": 0
+    },
+    "setup": {
+      "worst_slack_ns": 0.015,
+      "total_negative_slack_ns": 0.0,
+      "failing_endpoints": 0,
+      "endpoints": 91229
+    },
+    "hold": {
+      "worst_slack_ns": 0.015,
+      "total_negative_slack_ns": 0.0,
+      "failing_endpoints": 0,
+      "endpoints": 91229
+    },
+    "pulse_width": {
+      "worst_slack_ns": 0.052,
+      "total_negative_slack_ns": 0.0,
+      "failing_endpoints": 0,
+      "endpoints": 16437
+    },
+    "passed": true,
+    "report_design_state": "Physopt postRoute"
+  },
+  "resources": {
+    "lut": 17697.0,
+    "ff": 8847.0,
+    "dsp": 9.0,
+    "bram36": 0.0,
+    "uram": 16.0
+  },
+  "critical_methodology_violations": 0,
+  "replay": {
+    "status": "passed",
+    "scope": "Verilator AXI memory model; no physical DDR or board",
+    "messages_requested": 2000000,
+    "seed": 71,
+    "target_clock_mhz": 322.265625,
+    "order_memory": "ultra",
+    "runs": [
+      {
+        "stall_percent": 0,
+        "restart": false,
+        "cycles": 6789372,
+        "decisions": 1512179,
+        "bit_exact": true
+      },
+      {
+        "stall_percent": 0,
+        "restart": true,
+        "cycles": 6789372,
+        "decisions": 1512179,
+        "bit_exact": true
+      },
+      {
+        "stall_percent": 65,
+        "restart": false,
+        "cycles": 18647619,
+        "decisions": 1512179,
+        "bit_exact": true
+      },
+      {
+        "stall_percent": 65,
+        "restart": true,
+        "cycles": 18636733,
+        "decisions": 1512179,
+        "bit_exact": true
+      }
+    ],
+    "source_sha256": {
+      "runtime/sim/ddr_tick_harness.cpp": "43e5724e8dfecbb9ff9b2ed37946700b06ea9f2d76cc5a5a62579845875983de",
+      "hardware/hardcaml/src/ddr_trading.ml": "c2eb851b647b1b226f6c6d0215c63f78d2dd32ff720fad48aa6d130117d0ea41",
+      "hardware/hardcaml/src/ddr_replay.ml": "41d86521ac4e09509f9b9a9e159bc46e2f6bd9f75b57c8271b12743cb3195854",
+      "tools/replay_ddr.py": "174d58e12fac13c125edf8f1de2fed27c9306ab2d411543aa4b43a2669f854c5",
+      "hardware/hardcaml/src/pipelined_order_table.ml": "4763c4aab12b25e3b24dffa131d35a8b205068b9ecd2e8093f371114ca515449",
+      "hardware/hardcaml/src/order_book.ml": "ae67898a50f6a27b22adce301d36e1f51832fcc8206b9d0de9e009a316aab7db",
+      "hardware/hardcaml/src/order_quantity.ml": "c3bd76f05c64018c520779de125c3e5eb8b7c200ed842d56fed07d5856c52bf4",
+      "hardware/hardcaml/src/book_side.ml": "07b9903a6a39510c58cbd8ded3a7ba7cb3bc2c10c83832f71c9386717f70760f",
+      "hardware/hardcaml/src/tick_to_trade.ml": "cd7385c54f15b0b5f345602ce2878a3992c67c5becd900a50c93c9f27c7d45ac",
+      "compiler/onnx2fpga/trading/reference.py": "ed84319c90e6d0a7188938ed1f2b9cae1a3786a15d61e578baddfaf6416df638",
+      "compiler/onnx2fpga/trading/recorded.py": "719c2cba8c3c6340712988a4d0f14ac8942d71b2085cf3345e59ef031b620958",
+      "compiler/onnx2fpga/trading/itch.py": "72ba04fa92adb2ecc61d1243a68aa307440eff2f21ccc9fe85f8d2ac8b6ae548",
+      "compiler/onnx2fpga/trading/replay.py": "bd69ad93089c1e282603da3c74cec9106ea561b2bf4146aa8162d42b5bc3f3ec",
+      "compiler/onnx2fpga/trading/ddr_replay.py": "e1d7fb4255d63c5336961294e4e2ab0f4f5be54a2a8b7522e86ab2950a1d24b6"
+    },
+    "recorded_source": {
+      "symbol": "AAPL",
+      "locate": 13,
+      "source_messages_scanned": 268744780,
+      "selected_messages": 1519865,
+      "source_session_complete": false,
+      "source_file_exhausted": true,
+      "scanned_messages_sha256": "5d81c2e14a0f748b29c674b6a342796932702034b4dd341e39e9a9ec5bac610f",
+      "file": "12302019.NASDAQ_ITCH50.gz",
+      "file_sha256": "ef03df46a27e6bda4dead017f84c2e3979df7211f02c7868b51d53fceb99c689",
+      "framing": "MoldUDP64 packets rebuilt from selected raw messages"
+    },
+    "reference_book": {
+      "levels": 4,
+      "order_slots": 32768,
+      "order_hash": "xor",
+      "collisions": 328699,
+      "forgotten_levels": 152775
+    },
+    "records": 6005842,
+    "decisions_per_run": 1512179,
+    "latency_cycles": 23,
+    "stages": [
+      [
+        "moldudp64",
+        1
+      ],
+      [
+        "itch_parser",
+        1
+      ],
+      [
+        "order_book",
+        5
+      ],
+      [
+        "features",
+        3
+      ],
+      [
+        "model",
+        12
+      ],
+      [
+        "decision",
+        1
+      ]
+    ],
+    "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+    "sha256": {
+      "records.bin": "5e7ba59b393c4f513e35dba1a795f4f541b8316748bf061a894beadb86cc22fb",
+      "ddr_trading.v": "3d49142db378d93905f17d3f80be34c4562598c793a096b38bd75fd2cdc47cc3",
+      "tick_to_trade.json": "05d0764538d49cbe2c6f87e88c19451d9165913bb75b3e918b03b04a88fec45f",
+      "model/model.onnx": "bc51359899a75abb7df536a3663e46c613081e2546ee9f4145824d0d51afa0f4",
+      "model/design.json": "56d1fabdeef7480b00a92feeec6381f975879914a7f4ab0610d34db6fa207dbe"
+    }
+  },
+  "manifest": {
+    "kind": "ddr_trading",
+    "board": "kr260",
+    "clock_mhz": 322.265625,
+    "registers": {
+      "base": 2684354560,
+      "span": 65536,
+      "map": {
+        "id": {
+          "offset": 0,
+          "value": 1330922546
+        },
+        "version": {
+          "offset": 4,
+          "value": 1
+        },
+        "control": {
+          "offset": 16
+        },
+        "status": {
+          "offset": 20
+        },
+        "base_low": {
+          "offset": 32
+        },
+        "base_high": {
+          "offset": 36
+        },
+        "records": {
+          "offset": 40
+        },
+        "delivered": {
+          "offset": 48
+        },
+        "decisions": {
+          "offset": 52
+        },
+        "orders": {
+          "offset": 56
+        },
+        "cycles": {
+          "offset": 60
+        },
+        "latency": {
+          "offset": 64,
+          "value": 23
+        },
+        "result": {
+          "offset": 68
+        },
+        "t_first": {
+          "offset": 72
+        },
+        "t_last": {
+          "offset": 76
+        },
+        "t_out": {
+          "offset": 80
+        },
+        "order": {
+          "offset": 256,
+          "words": 12
+        }
+      }
+    },
+    "ddr": {
+      "address_bits": 40,
+      "base_alignment": 256,
+      "record_bytes": 16,
+      "mapped_base": 0,
+      "mapped_bytes": 2147483648
+    },
+    "replay_report_sha256": "dbd82934a35eaf3865b3433ae82fba82dcd124fd666d5c9a6a1eb0bc6c7ce1bc"
+  },
+  "build_receipt": {
+    "board": "kr260",
+    "inputs": {
+      "manifest.json": "c3e4b0c98a3270300d941baa357d09fef66b441f40091c96777fe9497795e7d6",
+      "kr260/build.tcl": "4654126a35e40983800f2011e94e09844bf06142ddcd02937a3f5ceefbe2604b",
+      "kr260/check_timing.tcl": "5ec7864bb7a3d710d07c66078c3a4f44288646903303f8a999eeb5d382a14dce",
+      "kr260/ddr_shell.v": "227a335bc0c5471f4a1a724ade86e8eac3e98b5ddc860f92b501755d6a3ee562",
+      "kr260/ddr_top.v": "a1bc78e1651699e1dd29fef861b0247827bd39bfaa82a653d7deb168d84d4c8a",
+      "kr260/kria.xdc": "a35ad8324409d50e69e0fc949d7237a6f3df9e14575f3890724c049ea30433f0",
+      "kr260/settings.tcl": "2936a9cebfd84ef32d1a848bdf3cfcbaf218bcd4edccf17ce5e047a5a0029cc1"
+    },
+    "outputs": {
+      "kr260/kr260.bit": "f4d2b3eaf7dc6a760fac54603d9832b886fd1803f9e337f90efc16f71ab45b2b",
+      "kr260/kr260.bin": "69710c822a0cbb702ebda18b81118d1979897bf3dca40a85833b91e924933b3f",
+      "kr260/kr260.xsa": "c766922daefe40d11598d74365fd0c0304893757d0be7d77ea1d1d4da63f680d",
+      "kr260/timing_summary.rpt": "7e8fd652cc6a9f07d7618a3872c7e2f9a329fc9da73fca0b0900a75bb6e52014",
+      "kr260/utilization.rpt": "410f7000c96f480b49d37db0dc4a0d60da64096ec6b1c97fb2f895ded65f35b9",
+      "kr260/methodology.rpt": "cc63cc99e867721aa52d1ba0270bdafdb9ff78ba73d4b08d30520d03024a0356"
+    }
+  },
+  "sha256": {
+    "report.json": "dbd82934a35eaf3865b3433ae82fba82dcd124fd666d5c9a6a1eb0bc6c7ce1bc",
+    "manifest.json": "c3e4b0c98a3270300d941baa357d09fef66b441f40091c96777fe9497795e7d6",
+    "kr260/build.json": "68f8b2773eddec767e82bf246484861d6185c6e8275e6cf5a2e5b66baa1164c9"
+  },
+  "firmware_package": {
+    "name": "onnx2fpga-trading",
+    "record": {
+      "name": "onnx2fpga-trading",
+      "board": "kr260",
+      "ps_clock_hz": 99999001,
+      "register_base": 2684354560,
+      "xsa_sha256": "c766922daefe40d11598d74365fd0c0304893757d0be7d77ea1d1d4da63f680d",
+      "physical_validation": "not_run",
+      "requires": [
+        "fpga_full, amba, zynqmp_clk and zynqmp_reset DT symbols",
+        "xlnx,fclk and xlnx,afi-fpga kernel drivers",
+        "xmutil/dfx-mgr"
+      ],
+      "sha256": {
+        "build.json": "68f8b2773eddec767e82bf246484861d6185c6e8275e6cf5a2e5b66baa1164c9",
+        "manifest.json": "c3e4b0c98a3270300d941baa357d09fef66b441f40091c96777fe9497795e7d6",
+        "onnx2fpga-trading.bit.bin": "69710c822a0cbb702ebda18b81118d1979897bf3dca40a85833b91e924933b3f",
+        "onnx2fpga-trading.dtbo": "acd73af35f0b245db34039c90463186329765ad96367a27436029e3d7b6a0743",
+        "onnx2fpga-trading.dts": "7e4be275f3196782397530cdc8224395ee886709c61edf7c28b022e8939841d2",
+        "shell.json": "cdd448fbc21e087904f41e0c7a666e8af5c9e1ac5ab76775214be6ee121eb6e8"
+      }
+    },
+    "package_json_sha256": "a7f1578e50df20750fc2c84468a62e44df10222ad10e96d6fb26312f68c30b21"
+  }
+}

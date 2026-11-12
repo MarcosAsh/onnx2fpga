@@ -1,0 +1,98 @@
+{
+  "status": "passed",
+  "scope": "Verilator AXI memory model; no physical DDR or board",
+  "messages_requested": 100000,
+  "seed": 71,
+  "target_clock_mhz": 322.265625,
+  "order_memory": "block",
+  "runs": [
+    {
+      "stall_percent": 0,
+      "restart": false,
+      "cycles": 466158,
+      "decisions": 65267,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 0,
+      "restart": true,
+      "cycles": 466158,
+      "decisions": 65267,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 65,
+      "restart": false,
+      "cycles": 1278112,
+      "decisions": 65267,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 65,
+      "restart": true,
+      "cycles": 1275996,
+      "decisions": 65267,
+      "bit_exact": true
+    }
+  ],
+  "source_sha256": {
+    "runtime/sim/ddr_tick_harness.cpp": "43e5724e8dfecbb9ff9b2ed37946700b06ea9f2d76cc5a5a62579845875983de",
+    "hardware/hardcaml/src/ddr_trading.ml": "c2eb851b647b1b226f6c6d0215c63f78d2dd32ff720fad48aa6d130117d0ea41",
+    "hardware/hardcaml/src/ddr_replay.ml": "41d86521ac4e09509f9b9a9e159bc46e2f6bd9f75b57c8271b12743cb3195854",
+    "tools/replay_ddr.py": "174d58e12fac13c125edf8f1de2fed27c9306ab2d411543aa4b43a2669f854c5",
+    "hardware/hardcaml/src/pipelined_order_table.ml": "4763c4aab12b25e3b24dffa131d35a8b205068b9ecd2e8093f371114ca515449",
+    "hardware/hardcaml/src/order_book.ml": "ae67898a50f6a27b22adce301d36e1f51832fcc8206b9d0de9e009a316aab7db",
+    "hardware/hardcaml/src/order_quantity.ml": "c3bd76f05c64018c520779de125c3e5eb8b7c200ed842d56fed07d5856c52bf4",
+    "hardware/hardcaml/src/book_side.ml": "07b9903a6a39510c58cbd8ded3a7ba7cb3bc2c10c83832f71c9386717f70760f",
+    "hardware/hardcaml/src/tick_to_trade.ml": "cd7385c54f15b0b5f345602ce2878a3992c67c5becd900a50c93c9f27c7d45ac",
+    "compiler/onnx2fpga/trading/reference.py": "ed84319c90e6d0a7188938ed1f2b9cae1a3786a15d61e578baddfaf6416df638",
+    "compiler/onnx2fpga/trading/recorded.py": "719c2cba8c3c6340712988a4d0f14ac8942d71b2085cf3345e59ef031b620958",
+    "compiler/onnx2fpga/trading/itch.py": "72ba04fa92adb2ecc61d1243a68aa307440eff2f21ccc9fe85f8d2ac8b6ae548",
+    "compiler/onnx2fpga/trading/replay.py": "bd69ad93089c1e282603da3c74cec9106ea561b2bf4146aa8162d42b5bc3f3ec",
+    "compiler/onnx2fpga/trading/ddr_replay.py": "e1d7fb4255d63c5336961294e4e2ab0f4f5be54a2a8b7522e86ab2950a1d24b6"
+  },
+  "reference_book": {
+    "levels": 4,
+    "order_slots": 4096,
+    "order_hash": "low",
+    "collisions": 468,
+    "forgotten_levels": 2541
+  },
+  "records": 410694,
+  "decisions_per_run": 65267,
+  "latency_cycles": 23,
+  "stages": [
+    [
+      "moldudp64",
+      1
+    ],
+    [
+      "itch_parser",
+      1
+    ],
+    [
+      "order_book",
+      5
+    ],
+    [
+      "features",
+      3
+    ],
+    [
+      "model",
+      12
+    ],
+    [
+      "decision",
+      1
+    ]
+  ],
+  "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+  "sha256": {
+    "records.bin": "8acd34a42288f8811f66739af35dd217cb4530aef6e3a9ce9234098da34391fb",
+    "ddr_trading.v": "4da7630df00953671b7a164b4d5bceb3fae377aaaf41140d17a2ce16da084616",
+    "tick_to_trade.json": "34ebfae2368f4c2d984bd23e41d415bc107152d8d3adc1c15a50ba76a491b36e",
+    "model/model.onnx": "bc51359899a75abb7df536a3663e46c613081e2546ee9f4145824d0d51afa0f4",
+    "model/design.json": "7b57895069e08260caf270b99fcb5d7420502639bede602b01510e6b98a1a6ce"
+  }
+}

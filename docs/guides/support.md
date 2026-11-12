@@ -29,7 +29,7 @@ when the generated RTL exactly matches the integer reference model.
 
 | Target | Compiler/model evidence | Full board flow | Physical board evidence |
 |---|---|---|---|
-| K26 / KR260 | [22-model routed corpus](k26-measurements.md) | MLP and 100-tree builds pass Vivado timing | Pending |
+| K26 / KR260 | [22-model routed corpus](k26-measurements.md) | MLP, 100-tree and [32K DDR trading](tick-to-trade.md#k26-clock-target) builds pass Vivado timing | Pending |
 | K26 / KV260 | Shares the K26 device model | Project generator and stub tests; a real full build remains unverified | Pending |
 | ECP5-25K / Icepi Zero | Compiler, simulation and open-tool builds | Implemented | [Recorded MLP test](../getting-started.md#what-to-expect) |
 | VU9P, VU47P, ZU7EV, Zynq-7020 | Device profiles; evidence varies by model | No corresponding board integration in the board registry | Unverified here |
