@@ -3,10 +3,10 @@
 
 import argparse
 import hashlib
+import io
 import json
 import pathlib
 import re
-import shutil
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -114,6 +114,35 @@ def overlay(name, rate, base, afi):
 ''' % (name, rate, config, base, base)
 
 
+def verify_build(build, board, manifest):
+    path = build / board / "build.json"
+    if not path.is_file():
+        raise ValueError("missing successful build record; rerun the board build")
+    record = json.loads(path.read_text())
+    if record.get("board") != board:
+        raise ValueError("build record names another board")
+    prefix = "ddr" if manifest.get("kind") == "ddr_trading" else "kria"
+    required = {
+        "inputs": {"manifest.json"} | {board + "/" + name for name in
+                    ("build.tcl", "check_timing.tcl", "settings.tcl", "kria.xdc",
+                     prefix + "_top.v", prefix + "_shell.v")},
+        "outputs": {board + "/" + board + suffix for suffix in (".bit", ".bin", ".xsa")}
+                   | {board + "/" + name for name in
+                      ("timing_summary.rpt", "utilization.rpt", "methodology.rpt")},
+    }
+    for section, names in required.items():
+        hashes = record.get(section, {})
+        if not names <= hashes.keys():
+            raise ValueError("incomplete build record")
+        for name, digest in hashes.items():
+            artifact = build / name
+            if not artifact.resolve().is_relative_to(build.resolve()):
+                raise ValueError("build record path escapes the build directory")
+            if hashlib.sha256(artifact.read_bytes()).hexdigest() != digest:
+                raise ValueError("build artifact changed: %s" % name)
+    return record
+
+
 def package(build, board, destination, name="onnx2fpga", dtc="dtc"):
     build, destination = pathlib.Path(build), pathlib.Path(destination)
     if board not in ("kr260", "kv260"):
@@ -122,17 +151,25 @@ def package(build, board, destination, name="onnx2fpga", dtc="dtc"):
         raise ValueError("invalid firmware package name")
     if destination.exists():
         raise ValueError("package destination already exists")
-    manifest = json.loads((build / "manifest.json").read_text())
+    manifest_data = (build / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_data)
     folder = build / board
     xsa = folder / (board + ".xsa")
+    xsa_data = xsa.read_bytes()
     bit = (folder / (board + ".bit")).read_bytes()
     binary = (folder / (board + ".bin")).read_bytes()
-    with zipfile.ZipFile(xsa) as archive:
+    with zipfile.ZipFile(io.BytesIO(xsa_data)) as archive:
         if archive.read(board + ".bit") != bit:
             raise ValueError("XSA bitstream differs from board bitstream")
     if bit_payload(bit) != binary:
         raise ValueError("binary payload differs from board bitstream")
-    rate, base, afi = hardware(xsa, manifest)
+    receipt = verify_build(build, board, manifest)
+    snapshots = {"manifest.json": manifest_data, board + "/" + board + ".bit": bit,
+                 board + "/" + board + ".bin": binary, board + "/" + board + ".xsa": xsa_data}
+    hashes = {**receipt["inputs"], **receipt["outputs"]}
+    if any(hashlib.sha256(data).hexdigest() != hashes[name] for name, data in snapshots.items()):
+        raise ValueError("build artifacts changed while packaging")
+    rate, base, afi = hardware(io.BytesIO(xsa_data), manifest)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
         out = pathlib.Path(temporary) / name
@@ -143,9 +180,10 @@ def package(build, board, destination, name="onnx2fpga", dtc="dtc"):
                         str(out / (name + ".dtbo")), str(out / (name + ".dts"))],
                        check=True, capture_output=True, text=True)
         (out / "shell.json").write_text(json.dumps({"shell_type": "XRT_FLAT", "num_slots": "1"}) + "\n")
-        shutil.copyfile(build / "manifest.json", out / "manifest.json")
+        (out / "manifest.json").write_bytes(manifest_data)
+        (out / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
         record = {"board": board, "ps_clock_hz": rate, "register_base": base,
-                  "xsa_sha256": hashlib.sha256(xsa.read_bytes()).hexdigest(),
+                  "xsa_sha256": hashlib.sha256(xsa_data).hexdigest(),
                   "physical_validation": "not_run",
                   "requires": ["fpga_full, amba, zynqmp_clk and zynqmp_reset DT symbols",
                                "xlnx,fclk and xlnx,afi-fpga kernel drivers", "xmutil/dfx-mgr"],

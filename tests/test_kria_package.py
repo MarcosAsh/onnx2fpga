@@ -7,9 +7,11 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 import zipfile
 
-from tools.package_kria import package
+from tools.package_kria import package, verify_build
+from onnx2fpga.board import BoardError, KR260
 
 
 @unittest.skipUnless(shutil.which("dtc") and shutil.which("fdtoverlay"), "device-tree tools not installed")
@@ -28,6 +30,10 @@ class PackageTest(unittest.TestCase):
                     + b"e\x00\x00\x00\x07payload")
         (self.board / "kr260.bit").write_bytes(self.bit)
         (self.board / "kr260.bin").write_bytes(b"payload")
+        for name in ("build.tcl", "check_timing.tcl", "settings.tcl", "kria.xdc",
+                     "kria_top.v", "kria_shell.v", "timing_summary.rpt",
+                     "utilization.rpt", "methodology.rpt"):
+            (self.board / name).write_text("fixture\n")
         params = {"C_PL_CLK0_BUF": "TRUE", "PSU__CRL_APB__PL0_REF_CTRL__ACT_FREQMHZ": "99.999001",
                   "C_MAXIGP0_DATA_WIDTH": "32", "C_MAXIGP1_DATA_WIDTH": "128",
                   "C_MAXIGP2_DATA_WIDTH": "32"}
@@ -42,6 +48,10 @@ class PackageTest(unittest.TestCase):
         with zipfile.ZipFile(self.board / "kr260.xsa", "w") as archive:
             archive.writestr("kr260.bit", self.bit if bit is None else bit)
             archive.writestr("system.hwh", self.hwh)
+        with mock.patch.object(KR260, "write"), mock.patch(
+                "onnx2fpga.board.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 0, "passed", "")):
+            KR260(self.root).run()
 
     def run_package(self):
         return package(self.root, "kr260", self.destination)
@@ -100,3 +110,41 @@ class PackageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             self.run_package()
         self.assertEqual(marker.read_text(), "keep")
+
+    def test_stale_manifest_rejected(self):
+        self.manifest["name"] = "another model"
+        (self.root / "manifest.json").write_text(json.dumps(self.manifest))
+        with self.assertRaisesRegex(ValueError, "build artifact changed: manifest.json"):
+            self.run_package()
+        self.assertFalse(self.destination.exists())
+
+    def test_failed_rebuild_invalidates_record(self):
+        with mock.patch.object(KR260, "write"), mock.patch(
+                "onnx2fpga.board.subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, "timing failed", "")):
+            with self.assertRaises(BoardError):
+                KR260(self.root).run()
+        self.assertTrue((self.board / "kr260.bit").exists())
+        with self.assertRaisesRegex(ValueError, "missing successful build record"):
+            self.run_package()
+
+    def test_inputs_changed_during_build(self):
+        def finish(*args, **kwargs):
+            (self.board / "kria_shell.v").write_text("changed\n")
+            return subprocess.CompletedProcess([], 0, "passed", "")
+        with mock.patch.object(KR260, "write"), mock.patch(
+                "onnx2fpga.board.subprocess.run", side_effect=finish):
+            with self.assertRaisesRegex(BoardError, "inputs changed"):
+                KR260(self.root).run()
+        self.assertFalse((self.board / "build.json").exists())
+
+    def test_packaging_snapshot_is_bound(self):
+        def changed(build, board, manifest):
+            self.manifest["name"] = "new build"
+            (self.root / "manifest.json").write_text(json.dumps(self.manifest))
+            self.xsa()
+            return verify_build(build, board, manifest)
+        with mock.patch("tools.package_kria.verify_build", side_effect=changed):
+            with self.assertRaisesRegex(ValueError, "changed while packaging"):
+                self.run_package()
+        self.assertFalse(self.destination.exists())

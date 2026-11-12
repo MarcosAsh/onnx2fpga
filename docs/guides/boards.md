@@ -178,7 +178,14 @@ selects a KV260 build; `--name my_model` changes the firmware application name.
 The destination must not already exist.
 
 The package contains `onnx2fpga.bit.bin`, `onnx2fpga.dtbo`, `shell.json`, the
-overlay source, the model manifest and a hash record. It checks that the XSA
+overlay source, the model manifest, the successful build record and a hash record.
+`board.run()` writes `build.json` only after Vivado succeeds, tying the generated
+sources and manifest to the bitstream, XSA and reports. A failed rebuild removes
+that record, so its older output files cannot be packaged. Source changes during
+the build and artifact changes before packaging are rejected. Builds predating
+this record need another `board.run()` before packaging.
+
+Packaging also checks that the XSA
 contains the exported bitstream and that the binary is its payload. Register
 addresses, PS clock rate and AXI interface widths come from the XSA. The overlay
 enables PL0 through `xlnx,fclk` and configures the PS interfaces through

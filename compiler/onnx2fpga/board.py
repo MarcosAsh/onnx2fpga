@@ -1,5 +1,6 @@
 """Board bitstreams through the open ECP5 flow or Vivado."""
 
+import hashlib
 import json
 import pathlib
 import shutil
@@ -222,12 +223,29 @@ class Kria:
         return self.build / "build.tcl"
 
     def run(self):
+        receipt = self.build / "build.json"
+        receipt.unlink(missing_ok=True)
         self.write()
+        inputs = [self.out / "manifest.json"] + sorted(
+            path for path in self.build.iterdir() if path.suffix in (".v", ".tcl", ".xdc"))
+
+        def hashes(paths):
+            return {str(path.relative_to(self.out)): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for path in paths}
+
+        before = hashes(inputs)
         completed = subprocess.run(self.command(), cwd=self.build, capture_output=True,
                                    text=True, timeout=self.FLOW_TIMEOUT)
         if completed.returncode != 0:
             said = completed.stdout.strip().splitlines()[-8:] + completed.stderr.strip().splitlines()[:8]
             raise BoardError("vivado failed in %s:\n%s" % (self.build, "\n".join(said)))
+        if hashes(inputs) != before:
+            raise BoardError("Kria build inputs changed while Vivado ran")
+        outputs = [self.build / (self.NAME + suffix) for suffix in (".bit", ".bin", ".xsa")]
+        outputs += [self.build / name for name in
+                    ("timing_summary.rpt", "utilization.rpt", "methodology.rpt")]
+        receipt.write_text(json.dumps({"board": self.NAME, "inputs": before,
+                                       "outputs": hashes(outputs)}, indent=2) + "\n")
         return completed.stdout
 
 
