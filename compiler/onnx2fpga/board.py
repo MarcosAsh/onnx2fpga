@@ -348,6 +348,7 @@ BOARDS = {board.NAME: board for board in (IcepiZero, KV260, KR260, ArtyA735, Art
 # Byte offsets of kria_regs.ml, which must agree with its Offset module.
 OFFSETS = {"id": 0x0000, "latency": 0x0004, "feature_bits": 0x0008,
            "prediction_bits": 0x000C, "control": 0x0010, "status": 0x0014, "cycles": 0x0018,
+           "capabilities": 0x001C,
            "weights_words": 0x0020, "weights_commit": 0x0024, "weights_bank": 0x0028,
            "weights_version": 0x002C, "weights_crc": 0x0030, "weights_idle_crc": 0x0034,
            "features": 0x1000, "prediction": 0x2000, "weights": 0x8000}
@@ -363,7 +364,8 @@ def registers(feature_bits, prediction_bits, latency, base, span, words=0):
         "latency": {"access": "r", "value": latency},
         "feature_bits": {"access": "r", "value": feature_bits},
         "prediction_bits": {"access": "r", "value": prediction_bits},
-        "control": {"access": "w", "meaning": "write 1 to start an inference"},
+        "control": {"access": "w", "meaning": "write 1 to start, 2 to reset inference; weights survive reset"},
+        "capabilities": {"access": "r", "value": 1},
         "status": {"access": "r", "meaning": "bit 0 is set once the prediction has arrived"},
         "cycles": {"access": "r", "meaning": "cycles from the last start to its prediction"},
         "weights_words": {"access": "r", "value": words},

@@ -55,6 +55,7 @@ test-api: models
 	$(PYTHON) -m unittest discover -s tests -p "test_elementwise.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_reductions.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_board.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_kria_runtime.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_arty_board.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_trees.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_reload.py" -v

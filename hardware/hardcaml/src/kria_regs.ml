@@ -14,6 +14,7 @@ module Offset = struct
   let control = 0x0010
   let status = 0x0014
   let cycles = 0x0018
+  let capabilities = 0x001c
   let weights_words = 0x0020
   let weights_commit = 0x0024
   let weights_bank = 0x0028
@@ -94,8 +95,13 @@ module Make (Config : Config) = struct
     in
     let%hw features = sel_bottom (concat_lsb feature_registers) ~width:feature_bits in
     let%hw features_valid =
-      reg spec (writes (word Offset.control) &: i.s_axi_wdata.:(0))
+      reg
+        spec
+        (writes (word Offset.control) &: i.s_axi_wdata.:(0) &: ~:(i.s_axi_wdata.:(1)))
     in
+    let%hw soft_reset = reg spec (writes (word Offset.control) &: i.s_axi_wdata.:(1)) in
+    let%hw inference_clear = i.clear |: soft_reset in
+    let inference_spec = Reg_spec.create ~clock:i.clock ~clear:inference_clear () in
     let reload signal = Option.some_if Accelerator.reloadable signal in
     (* Initialised so that power up, before the first clear, never writes or commits. *)
     let%hw weights_write =
@@ -111,7 +117,7 @@ module Make (Config : Config) = struct
       Accelerator.hierarchical
         scope
         { clock = i.clock
-        ; clear = i.clear
+        ; clear = inference_clear
         ; features
         ; features_valid
         ; weights_write = reload weights_write
@@ -122,17 +128,17 @@ module Make (Config : Config) = struct
     in
     let reloaded field = Option.value field ~default:(zero 32) in
     let%hw prediction =
-      reg spec ~enable:accelerator.prediction_valid accelerator.prediction
+      reg inference_spec ~enable:accelerator.prediction_valid accelerator.prediction
     in
     let%hw finished =
-      reg_fb spec ~width:1 ~f:(fun finished ->
+      reg_fb inference_spec ~width:1 ~f:(fun finished ->
         accelerator.prediction_valid |: (finished &: ~:features_valid))
     in
     let%hw elapsed =
-      reg_fb spec ~width:32 ~f:(fun count ->
+      reg_fb inference_spec ~width:32 ~f:(fun count ->
         mux2 features_valid (constant 1) (count +:. 1))
     in
-    let%hw cycles = reg spec ~enable:accelerator.prediction_valid elapsed in
+    let%hw cycles = reg inference_spec ~enable:accelerator.prediction_valid elapsed in
     let%hw rvalid = wire 1 in
     let%hw read = i.s_axi_arvalid &: ~:rvalid in
     rvalid <-- reg spec (read |: (rvalid &: ~:(i.s_axi_rready)));
@@ -153,6 +159,7 @@ module Make (Config : Config) = struct
          ; word_constant (word Offset.prediction_bits), constant prediction_bits
          ; word_constant (word Offset.status), uresize finished ~width:32
          ; word_constant (word Offset.cycles), cycles
+         ; word_constant (word Offset.capabilities), constant 1
          ; word_constant (word Offset.weights_words), constant Accelerator.words
          ; ( word_constant (word Offset.weights_bank)
            , uresize (reloaded accelerator.weights_bank) ~width:32 )

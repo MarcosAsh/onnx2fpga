@@ -2,6 +2,7 @@
 
 import collections.abc
 import contextlib
+import json
 import math
 import numbers
 import os
@@ -21,6 +22,7 @@ from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
                      NotDeployedError, SimulationError, ToolchainError,
                      UnknownLayerError)
 from .hardware_layer import CustomOp, custom_passes
+from .kria_runtime import RegisterSession
 from .measure import TimingReport, calibration_samples
 from .p1_ingest import OnnxModel
 from .p1_ingest.protobuf_codec import WireError
@@ -801,11 +803,19 @@ class Accelerator:
         self.board = board
         return board.bitstream
 
-    def deploy(self, port=None, program=True, timeout=2.0, host=None):
-        """Loads the bitstream into the board SRAM with openFPGALoader and opens its serial port."""
+    def deploy(self, port=None, program=True, timeout=2.0, host=None, registers=None):
+        """Opens a serial or explicit register session; optionally programs serial boards."""
+        if registers is not None:
+            self._require_compiled("deploy")
+            if not isinstance(self.board, Kria) or program or host is not None or port is not None:
+                raise ConfigError("register deployment needs a Kria board and program=False, without host or port")
+            manifest = json.loads((self.out_dir / "manifest.json").read_text())
+            self.disconnect()
+            self.session = RegisterSession(registers, manifest, timeout).open()
+            return self
         if host is not None or isinstance(self.board, Kria):
-            raise NotImplementedError("deploying to a Kria board needs the Kria runtime, "
-                                      "which is not written yet")
+            raise NotImplementedError("remote Kria deployment is not implemented; "
+                                      "use registers= with program=False")
         if self.board is None:
             raise NotCompiledError("deploy needs acc.build(board='icepi_zero') first")
         self._require_compiled("deploy")
@@ -834,13 +844,22 @@ class Accelerator:
         """Checks `model` against the compiled architecture and grid, writes it through `registers` into the idle bank, commits and confirms; predict then uses it."""
         self._require_compiled("load_weights")
         float_graph, graph = self._retarget(model)
+        if registers is None and isinstance(self.session, RegisterSession):
+            if self.session.needs_reset:
+                raise NotDeployedError("reset the Kria session before loading weights")
+            registers = self.session.registers
         if registers is None:
-            raise NotDeployedError("load_weights needs registers=, such as "
-                                   "SimulatedRegisters, until the Kria runtime can deploy "
-                                   "a board")
+            raise NotDeployedError("load_weights needs registers= or a deployed Kria session")
         reload.write_bank(registers, reload.image(graph))
         self.result = CompilationResult(float_graph, graph, self.result.context,
                                         self.result.build)
+        return self
+
+    def reset(self):
+        """Discards pending inference and framing state; preserves Kria weight banks."""
+        if self.session is None:
+            raise NotDeployedError("reset needs a deployed session")
+        self.session.reset()
         return self
 
     def _retarget(self, model):
@@ -852,7 +871,7 @@ class Accelerator:
             return reload.retarget(onnx, self.result, self.settings["samples"])
 
     def disconnect(self):
-        """Closes the serial port; predict goes back to the reference model."""
+        """Closes the session; predict goes back to the reference model."""
         if self.session is not None:
             self.session.close()
             self.session = None

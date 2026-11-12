@@ -234,7 +234,7 @@ class Flow(unittest.TestCase):
         memory.unlink()
 
     def test_deploy(self):
-        with self.assertRaisesRegex(NotImplementedError, "needs the Kria runtime"):
+        with self.assertRaisesRegex(NotImplementedError, "remote Kria deployment"):
             self.acc.deploy(host="kria.local")
         with self.assertRaisesRegex(ConfigError, "has frozen weights"):
             self.acc.load_weights(Fixtures.factory(8).mlp((16, 32, 8)))

@@ -22,14 +22,17 @@ module Offset : sig
   (** Reads the width of the prediction bus. *)
   val prediction_bits : int
 
-  (** Writing a 1 in bit 0 raises [features_valid] for one cycle. *)
+  (** Bit 0 starts inference. Bit 1 resets inference and takes priority over bit 0. *)
   val control : int
 
-  (** Bit 0 is set when a prediction arrives and cleared by the next start. *)
+  (** Bit 0 is set when a prediction arrives and cleared by start or reset. *)
   val status : int
 
   (** Cycles from the last start to its prediction, which must equal the latency. *)
   val cycles : int
+
+  (** Bit 0 indicates support for inference reset; weight banks survive that reset. *)
+  val capabilities : int
 
   (** The features, 32 bits per word, element 0 in the low bits of the first word. *)
   val features : int

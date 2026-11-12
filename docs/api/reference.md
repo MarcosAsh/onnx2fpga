@@ -159,12 +159,20 @@ take only fixed latency designs compiled for `k26`, see
 [006](../specs/006-kv260.md). They write a Vivado project and run it if
 `vivado` is on PATH; otherwise they raise `ToolchainError` after writing it.
 
-### `deploy(port=None, program=True, timeout=2.0, host=None)`
+### `deploy(port=None, program=True, timeout=2.0, host=None, registers=None)`
 
 Loads the bitstream into SRAM and opens the serial port. `program=False` only
 opens the port, for a board already loaded. `port` defaults to the board's USB
-serial device. `host=`, and any deploy after a Kria build, raises
-`NotImplementedError` until the Kria runtime is written.
+serial device. After a Kria build, `registers=regs, program=False` opens a
+session over an object with `read(offset)` and `write(offset, value)` methods.
+Offsets are bytes. The session checks the shell ID, bus widths, latency and
+reset capability before predicting. The caller retains ownership of `regs`.
+`host=` and automatic Kria programming remain unimplemented.
+
+Register prediction polls status for up to `timeout` seconds; the transport's
+individual reads and writes must themselves return or raise on failure. A failed
+transaction requires `reset()` before another prediction. Old Kria bitstreams
+without the reset capability are rejected and must be rebuilt.
 
 ### `load_weights(model, registers=None)`
 
@@ -179,15 +187,22 @@ output grids pinned to the compiled ones.
 `registers` is any object with `read(offset)` and `write(offset, value)` on
 byte offsets into the register window. `onnx2fpga.simulate.SimulatedRegisters(out_dir)`
 is the build's `kria_regs` under Verilator, usable as a context manager.
-Without `registers` it raises `NotDeployedError`. It writes the idle bank,
+Without `registers`, it uses a deployed Kria session or raises `NotDeployedError`.
+It writes the idle bank,
 checks `weights_idle_crc` and raises `BoardError` without committing if the
 CRC is wrong, commits, and checks the bank, version and CRC again. Afterwards
 `predict` and `evaluate` use the new model. A design compiled with frozen
 weights raises `ConfigError`.
 
+### `reset()`
+
+Discards pending inference and serial framing state. Kria reset preserves the
+weight banks, active bank, version and CRC. A session must be deployed first.
+
 ### `disconnect()`
 
-Closes the serial port. `predict` goes back to the reference.
+Closes the session. Caller-supplied register transports stay open. `predict`
+goes back to the reference.
 
 ### Properties
 

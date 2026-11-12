@@ -179,3 +179,20 @@ let%expect_test "the shell's ports and its MMCM" =
     BUFG
     |}]
 ;;
+
+let%test_unit "software reset discards pending work and keeps the register bus usable" =
+  Frozen.run (fun ~write ~read ->
+    [%test_result: int] (read Kria_regs.Offset.capabilities) ~expect:1;
+    write Kria_regs.Offset.features 0x0703;
+    write Kria_regs.Offset.control 1;
+    write Kria_regs.Offset.control 2;
+    List.iter (List.range 0 20) ~f:(fun _ ->
+      [%test_result: int] (read Kria_regs.Offset.status) ~expect:0);
+    [%test_result: int] (read Kria_regs.Offset.cycles) ~expect:0;
+    let rng = Random.State.make [| 42 |] in
+    [%test_result: int] (infer ~rng ~write ~read Fixed_fixture.model) ~expect:6;
+    write Kria_regs.Offset.control 3;
+    List.iter (List.range 0 20) ~f:(fun _ ->
+      [%test_result: int] (read Kria_regs.Offset.status) ~expect:0)
+    [@nontail])
+;;
