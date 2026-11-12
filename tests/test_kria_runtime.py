@@ -1,7 +1,7 @@
 """Kria register transactions, timeout recovery and simulated hardware predictions."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from onnx2fpga.board import BoardError, OFFSETS, registers
 from onnx2fpga.kria_runtime import RegisterSession
@@ -136,3 +136,20 @@ class RtlSessionTest(unittest.TestCase):
             finally:
                 acc.disconnect()
             self.assertEqual(bus.read(OFFSETS["id"]), 0x4F544631)
+            remote = Mock(read=bus.read, write=bus.write)
+            with patch("onnx2fpga.api.connect_registers", return_value=remote) as connect:
+                try:
+                    acc.deploy(host="kria.local", program=False)
+                    connect.assert_called_once()
+                    np.testing.assert_array_equal(acc.predict(samples, quantized=True),
+                                                  acc.predict(samples, quantized=True, on="reference"))
+                finally:
+                    acc.disconnect()
+                remote.close.assert_called_once()
+            wrong = Mock()
+            wrong.read.return_value = 0
+            with patch("onnx2fpga.api.connect_registers", return_value=wrong):
+                with self.assertRaisesRegex(BoardError, "id reads"):
+                    acc.deploy(host="kria.local", program=False)
+                wrong.close.assert_called_once()
+                self.assertFalse(acc.deployed)

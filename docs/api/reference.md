@@ -167,12 +167,21 @@ serial device. After a Kria build, `registers=regs, program=False` opens a
 session over an object with `read(offset)` and `write(offset, value)` methods.
 Offsets are bytes. The session checks the shell ID, bus widths, latency and
 reset capability before predicting. The caller retains ownership of `regs`.
-`host=` and automatic Kria programming remain unimplemented.
+`host="user@kria.local", program=False` connects over SSH to an installed
+`kria_regs` helper. SSH uses batch mode and the user's existing host-key and
+authentication settings. Automatic Kria programming remains unimplemented.
 
 Register prediction polls status for up to `timeout` seconds; the transport's
 individual reads and writes must themselves return or raise on failure. A failed
 transaction requires `reset()` before another prediction. Old Kria bitstreams
 without the reset capability are rejected and must be rebuilt.
+
+The SSH transport applies `timeout` to each register exchange and closes on a
+timeout, disconnect or malformed response. Reconnect with `deploy` after a
+transport failure. Build the native helper on the Kria with
+`make -C runtime bin/kria_regs` and place it on the remote user's PATH. The user
+must already have access to `/dev/mem`; the helper does not elevate privileges.
+Physical AArch64 MMIO and SSH operation still need validation on a board.
 
 ### `load_weights(model, registers=None)`
 

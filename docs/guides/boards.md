@@ -95,7 +95,9 @@ protocol to anything with `read` and `write`, and the tests drive it against
 the generated `kria_regs` under Verilator. `deploy(registers=regs, program=False)`
 opens a prediction session over that transport and checks the shell identity,
 widths and reset support. `reset()` discards pending inference while preserving
-weight banks. Remote `deploy(host=...)` remains unfinished. The example MLP does not
+weight banks. `deploy(host="user@kria.local", program=False)` uses the native
+`kria_regs` helper over SSH; see the [API reference](../api/reference.md#deploy-port-none-program-true-timeout-2-0-host-none-registers-none).
+The helper and physical MMIO still need validation on a board. The example MLP does not
 fit reloadable on the K26, since every weight then needs a multiplier and the
 estimate is 1706 DSPs; the 16-32-8 MLP of the tests needs 424 DSPs and 24096
 LUTs, 34 and 21 percent.

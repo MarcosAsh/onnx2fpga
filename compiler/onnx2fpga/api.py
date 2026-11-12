@@ -23,6 +23,7 @@ from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
                      UnknownLayerError)
 from .hardware_layer import CustomOp, custom_passes
 from .kria_runtime import RegisterSession
+from .register_transport import connect as connect_registers
 from .measure import TimingReport, calibration_samples
 from .p1_ingest import OnnxModel
 from .p1_ingest.protobuf_codec import WireError
@@ -805,6 +806,20 @@ class Accelerator:
 
     def deploy(self, port=None, program=True, timeout=2.0, host=None, registers=None):
         """Opens a serial or explicit register session; optionally programs serial boards."""
+        if host is not None and not program and registers is None:
+            self._require_compiled("deploy")
+            if not isinstance(self.board, Kria) or port is not None:
+                raise ConfigError("host deployment needs a Kria board without port=")
+            manifest = json.loads((self.out_dir / "manifest.json").read_text())
+            self.disconnect()
+            transport = connect_registers(host, manifest, timeout)
+            try:
+                self.session = RegisterSession(transport, manifest, timeout,
+                                               close_registers=True).open()
+            except Exception:
+                transport.close()
+                raise
+            return self
         if registers is not None:
             self._require_compiled("deploy")
             if not isinstance(self.board, Kria) or program or host is not None or port is not None:
@@ -814,8 +829,8 @@ class Accelerator:
             self.session = RegisterSession(registers, manifest, timeout).open()
             return self
         if host is not None or isinstance(self.board, Kria):
-            raise NotImplementedError("remote Kria deployment is not implemented; "
-                                      "use registers= with program=False")
+            raise NotImplementedError("automatic Kria programming is not implemented; "
+                                      "use host= or registers= with program=False")
         if self.board is None:
             raise NotCompiledError("deploy needs acc.build(board='icepi_zero') first")
         self._require_compiled("deploy")
