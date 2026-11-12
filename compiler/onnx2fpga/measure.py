@@ -203,6 +203,45 @@ class TimingReport:
         return cls.parse(pathlib.Path(path).read_text(), clock)
 
 
+def routed_timing(text):
+    """Internal timing checks; out-of-context reports do not validate board I/O."""
+    if not re.search(r"Design State\s*:\s*Routed", text):
+        raise ValueError("timing report is not routed")
+    section = text.split("Design Timing Summary", 1)
+    if len(section) != 2:
+        raise ValueError("missing design timing summary")
+    values = None
+    for line in section[1].split("Clock Summary", 1)[0].splitlines():
+        fields = line.split()
+        if len(fields) != 12:
+            continue
+        try:
+            values = [float(field) for field in fields]
+        except ValueError:
+            continue
+        break
+    if values is None or not np.all(np.isfinite(values)):
+        raise ValueError("invalid design timing summary")
+    result = {"scope": "internal paths; board I/O unassessed", "checks": {}}
+    for index, kind in enumerate(("setup", "hold", "pulse_width")):
+        slack, total, failing, endpoints = values[index * 4:index * 4 + 4]
+        if failing < 0 or endpoints <= 0 or failing != int(failing) or endpoints != int(endpoints):
+            raise ValueError("invalid %s endpoint counts" % kind)
+        result[kind] = {"worst_slack_ns": slack, "total_negative_slack_ns": total,
+                        "failing_endpoints": int(failing), "endpoints": int(endpoints)}
+    for check in ("no_clock", "unconstrained_internal_endpoints", "multiple_clock",
+                  "generated_clocks", "loops", "latch_loops"):
+        counts = re.findall(r"checking %s \((\d+)\)" % check, text)
+        if not counts or len(set(counts)) != 1:
+            raise ValueError("missing or inconsistent timing check: %s" % check)
+        result["checks"][check] = int(counts[0])
+    result["passed"] = all(result[kind]["worst_slack_ns"] >= 0
+                           and result[kind]["total_negative_slack_ns"] == 0
+                           and result[kind]["failing_endpoints"] == 0
+                           for kind in ("setup", "hold", "pulse_width")) and not any(result["checks"].values())
+    return result
+
+
 def calibration_samples(model, count=16, seed=0):
     """A quantized model states its scales; a float one needs data only of the right shape."""
     name = model.graph_inputs()[0]

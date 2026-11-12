@@ -116,6 +116,20 @@ Device.register(Device(
     provenance="vendor", notes="PYNQ-Z1/Z2 class board"))
 
 Device.register(Device(
+    name="a7_35t", part="xc7a35ticsg324-1L",
+    budget=Resources(lut=20800, ff=41600, dsp=90, bram36=50),
+    fmax_mhz=100.0, dsp_generation="DSP48E1", provenance="vendor",
+    notes="Arty A7-35 E.0 part; budgets from DS180. 100 MHz is a target, "
+          "not measured fmax. No calibrated delay model yet."))
+
+Device.register(Device(
+    name="a7_100t", part="xc7a100tcsg324-1",
+    budget=Resources(lut=63400, ff=126800, dsp=240, bram36=135),
+    fmax_mhz=100.0, dsp_generation="DSP48E1", provenance="vendor",
+    notes="Arty A7-100 E.0 part; budgets from DS180. 100 MHz is a target, "
+          "not measured fmax. No calibrated delay model yet."))
+
+Device.register(Device(
     name="sim", part="verilator",
     budget=Resources(lut=10 ** 9, ff=10 ** 9, dsp=10 ** 9, bram36=10 ** 9, uram=10 ** 9),
     fmax_mhz=1000.0, dsp_generation="none",

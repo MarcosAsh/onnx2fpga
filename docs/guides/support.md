@@ -33,10 +33,15 @@ when the generated RTL exactly matches the integer reference model.
 | K26 / KV260 | Shares the K26 device model | Project generator and stub tests; a real full build remains unverified | Pending |
 | ECP5-25K / Icepi Zero | Compiler, simulation and open-tool builds | Implemented | [Recorded MLP test](../getting-started.md#what-to-expect) |
 | VU9P, VU47P, ZU7EV, Zynq-7020 | Device profiles; evidence varies by model | No corresponding board integration in the board registry | Unverified here |
-| Artix-7 / Arty A7 | Planned | Planned | Pending |
+| Artix-7 35T / 100T | Device profiles `a7_35t` and `a7_100t`; validation in progress | Arty A7 integration pending | Pending |
 
 A device profile supplies budgets and estimation parameters. It does not
 establish that a board can be programmed or that a model meets timing.
+
+Artix budgets come from [AMD DS180](https://docs.amd.com/api/khub/documents/2LByHkO~nSZXcei2D55fTg/content).
+The selected parts match Digilent's E.0 board definitions for the
+[Arty A7-35](https://github.com/Digilent/vivado-boards/blob/master/new/board_files/arty-a7-35/E.0/1.1/board.xml)
+and [Arty A7-100](https://github.com/Digilent/vivado-boards/blob/master/new/board_files/arty-a7-100/E.0/1.1/board.xml).
 
 ## Reproduce the corpus report
 
@@ -60,8 +65,22 @@ python3 tools/report_corpus.py --inspect-only --mode stream --out build/stream_c
 metadata, tool versions, the source revision and working-tree status. Each
 model records inspection, compilation, numerical comparison and simulation
 separately. The report includes compiler resource estimates, cycle counts
-and throughput at the assumed clock. It does not perform place-and-route or
-physical board testing; those stages remain `not_run`.
+and throughput at the assumed clock. By default, implementation and physical
+board testing remain `not_run`.
+
+Add `--implement` to run Vivado place-and-route for a fixed-mode model:
+
+```sh
+python3 tools/report_corpus.py linear_regression --device a7_100t --frames 256 \
+    --implement --out build/artix_report
+```
+
+This records measured resources, setup, hold and pulse-width slack, internal
+constraint checks, and hashes of the reports and routed checkpoint. Any failed
+timing check fails the model's report. This build is out of context: board I/O
+timing and physical operation remain unassessed. Artix profiles currently use
+a 100 MHz target without a calibrated pipeline delay model; omit `--clock-mhz`
+for these targets.
 
 The [12 November 2026 report](../measurements/corpus-k26-2026-11-12.json),
 from clean revision `bef6835`, passes all 22 models. It used the command above

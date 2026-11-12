@@ -13,7 +13,7 @@ from support import Fixtures, ROOT
 
 from onnx2fpga.compile import Compiler
 from onnx2fpga.measure import (Characterizer, Comparison, SynthesisResult,
-                               Subject, VivadoRunner, calibration_samples, render)
+                               Subject, VivadoRunner, calibration_samples, render, routed_timing)
 from onnx2fpga.p1_ingest import OnnxModel
 from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
 from onnx2fpga.targets.device import Device
@@ -143,6 +143,34 @@ class EndToEnd(unittest.TestCase):
                           timeout=600)
         self.assertEqual(completed.returncode, 2)
         self.assertIn("settings64.sh", completed.stderr)
+
+
+
+class RoutedTiming(unittest.TestCase):
+    def report(self):
+        return (ROOT / "tests/artix_timing_summary.rpt").read_text()
+
+    def test_real_artix_report(self):
+        timing = routed_timing(self.report())
+        self.assertTrue(timing["passed"])
+        self.assertEqual(timing["setup"]["worst_slack_ns"], 1.104)
+        self.assertEqual(timing["hold"]["worst_slack_ns"], 0.163)
+        self.assertEqual(timing["pulse_width"]["worst_slack_ns"], 4.5)
+
+    def test_hold_and_constraint_failures(self):
+        for text in (self.report().replace("0.163", "-0.163"),
+                     self.report().replace("checking no_clock (0)", "checking no_clock (1)"),
+                     self.report().replace("4.500", "-0.500")):
+            with self.subTest(text=text[:80]):
+                self.assertFalse(routed_timing(text)["passed"])
+
+    def test_incomplete_evidence_rejected(self):
+        for text in ("", self.report().replace("Routed", "Synthesized"),
+                     self.report().replace("checking loops", "omitted loops"),
+                     self.report().replace("Design Timing Summary", "omitted summary"),
+                     self.report().replace("1.104", "nan")):
+            with self.subTest(text=text[:80]), self.assertRaises(ValueError):
+                routed_timing(text)
 
 
 if __name__ == "__main__":

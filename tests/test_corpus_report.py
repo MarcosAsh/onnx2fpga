@@ -15,6 +15,14 @@ from tools import report_corpus as report
 
 
 class CorpusReport(unittest.TestCase):
+    def test_implementation_requires_vivado_fixed_mode(self):
+        for arguments in (("--inspect-only",), ("--mode", "stream"),
+                          ("--device", "icepi25"), ("--device", "sim")):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    report.main(["linear_regression", "--implement", *arguments])
+                self.assertEqual(error.exception.code, 2)
+
     def test_regression_and_labels(self):
         expected = np.array([[1.0], [2.0], [3.0]])
         self.assertTrue(report.compare(expected + 0.001, expected, False)["passed"])

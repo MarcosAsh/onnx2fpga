@@ -18,7 +18,9 @@ sys.path.insert(0, str(ROOT / "compiler"))
 
 import onnx2fpga as otf  # noqa: E402
 from onnx2fpga.p1_ingest import OnnxModel  # noqa: E402
+from onnx2fpga.measure import Subject, VivadoRunner, routed_timing  # noqa: E402
 from onnx2fpga.targets.device import Device  # noqa: E402
+from onnx2fpga.targets.resources import Resources  # noqa: E402
 
 CORPUS = ROOT / "tests" / "fixtures" / "corpus"
 
@@ -80,6 +82,19 @@ def compare(got, expected, labels):
             "maximum_normalized_mae": 0.025}
 
 
+def implement(acc, out, clock):
+    runner = VivadoRunner(acc.device.part, 1000 / clock, implement=True, clock="clock")
+    result = runner.run(Subject(acc.name, "otf_top", {}, Resources(), acc.latency),
+                        ["rtl/top.v"], out, "vivado")
+    if result.stage != "impl" or result.payload["part"] != acc.device.part:
+        raise ValueError("implementation target mismatch")
+    timing = routed_timing((out / "vivado/timing_impl.rpt").read_text())
+    files = ("summary.json", "timing_impl.rpt", "utilization_impl.rpt", "routed.dcp")
+    return {"measured": result.payload, "timing": timing,
+            "script_sha256": digest(runner.script),
+            "artifacts_sha256": {name: digest(out / "vivado" / name) for name in files}}
+
+
 def report_model(path, args):
     row = {"model": path.stem, "status": "failed", "warnings": [],
            "stages": {name: "not_run" for name in
@@ -139,9 +154,16 @@ def report_model(path, args):
         row["stages"][stage] = "passed" if simulation.ok else "failed"
         if not simulation.ok:
             row["error"] = simulation.first.output[-2000:]
+        if args.implement and simulation.ok and row["numerical_comparison"]["passed"]:
+            stage = "implementation"
+            row["implementation"] = implement(acc, out, clock)
+            row["stages"][stage] = "passed" if row["implementation"]["timing"]["passed"] else "failed"
+        required = ["inspection", "compilation", "reference", "simulation"]
+        if args.implement:
+            required.append("implementation")
         row["status"] = "passed" if all(row["stages"][s] == "passed" for s in
-                                        ("inspection", "compilation", "reference", "simulation")) else "failed"
-    except (otf.Onnx2FpgaError, OSError, ValueError, KeyError) as error:
+                                        required) else "failed"
+    except (otf.Onnx2FpgaError, OSError, ValueError, KeyError, RuntimeError) as error:
         row["stages"][stage] = "failed"
         row["error"] = str(error)
     return row
@@ -161,10 +183,14 @@ def main(argv=None):
     parser.add_argument("--clock-mhz", type=float)
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--inspect-only", action="store_true")
+    parser.add_argument("--implement", action="store_true", help="run Vivado out-of-context place and route")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "corpus_report")
     args = parser.parse_args(argv)
     if args.frames < 1:
         parser.error("--frames must be positive")
+    if args.implement and (args.inspect_only or args.mode != "fixed"
+                           or Device.get(args.device).nextpnr_args or args.device == "sim"):
+        parser.error("--implement requires fixed mode on a Vivado target")
     names = args.models or sorted(path.stem for path in CORPUS.glob("*.onnx"))
     known = {path.stem for path in CORPUS.glob("*.onnx")}
     if set(names) - known:
@@ -173,11 +199,14 @@ def main(argv=None):
     report = {"schema_version": 1, "environment": {},
               "configuration": {"device": args.device, "mode": args.mode,
                                 "clock_mhz": args.clock_mhz, "frames": args.frames,
+                                "implement": args.implement,
                                 "inspect_only": args.inspect_only, "models": names},
               "complete": False, "models": []}
     destination = args.out / "report.json"
     write_report(destination, report)
     report["environment"] = metadata()
+    if args.implement:
+        report["environment"]["versions"]["vivado"] = command("vivado", "-version")
     write_report(destination, report)
     for name in names:
         row = report_model(CORPUS / (name + ".onnx"), args)

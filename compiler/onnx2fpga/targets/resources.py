@@ -54,11 +54,11 @@ class Resources:
             "%s=%s" % (f, round(getattr(self, f), 1)) for f in self.FIELDS)
 
 
-def memory_cost(depth, width):
+def memory_cost(depth, width, allow_uram=True):
     """AMD storage: LUT RAM if shallow, UltraRAM if huge and narrow, else block RAM."""
     if depth <= 64:
         return lut_memory_cost(depth, width)
-    if depth * width >= 4 * 288 * 1024 and width <= 72:
+    if allow_uram and depth * width >= 4 * 288 * 1024 and width <= 72:
         parallel = max(1, (width + 71) // 72)
         return Resources(uram=parallel * max(1, (depth + 4095) // 4096), ff=width)
     return block_ram_cost(depth, width)

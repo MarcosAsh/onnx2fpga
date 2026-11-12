@@ -230,7 +230,7 @@ class MatVecUnit(StreamingNode):
             cost = compute + lut_memory_cost(depth, width) * self.pe
         if self.neuron_fold > 1:
             width = self.simd * self.act_dtype.bits
-            cost = cost + memory_cost(self.synapse_fold, width)
+            cost = cost + memory_cost(self.synapse_fold, width, allow_uram=device.budget.uram > 0)
         return cost
 
     def input_beat_elems(self, graph):
@@ -766,7 +766,7 @@ class SlidingWindowUnit(StreamingNode):
     def amd_resources(self, device):
         depth = self.buffer_pixels * self.ifm_ch // self.sub_elems
         width = self.sub_elems * self.dtype.bits
-        memory = memory_cost(depth, width) * self.parallel_columns
+        memory = memory_cost(depth, width, allow_uram=device.budget.uram > 0) * self.parallel_columns
         return memory + Resources(lut=260 + 40 * self.parallel_columns, ff=200)
 
     def input_beat_elems(self, graph):
@@ -1044,7 +1044,7 @@ class StreamFifo(StreamingNode):
         return 0
 
     def amd_resources(self, device):
-        return memory_cost(self.depth, self.width) + Resources(ff=32)
+        return memory_cost(self.depth, self.width, allow_uram=device.budget.uram > 0) + Resources(ff=32)
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])

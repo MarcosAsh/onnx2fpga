@@ -33,6 +33,7 @@ models:
 test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
+	$(PYTHON) -m unittest discover -s tests -p "test_artix.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_compatibility.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_corpus_report.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
