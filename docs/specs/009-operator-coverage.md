@@ -2,9 +2,9 @@
 
 Status: implemented. Constant folding, live layout ops as wiring or views,
 BatchNormalization, LinearRegressor, binary LinearClassifier, Scaler,
-Binarizer and ONNX Runtime's QDQ and QOperator forms are built, and all 20
+Binarizer and ONNX Runtime's QDQ and QOperator forms are built, and all 22
 corpus models compile in fixed latency mode for `k26`, simulate bit exact and
-track ONNX Runtime; the multiclass classifier and the L1 Normalizer came with
+track their stored reference outputs; the multiclass classifier and the L1 Normalizer came with
 [011](011-reductions-and-softmax.md). A `Concat` of several live tensors
 builds in fixed latency mode, its earlier pieces waiting in registers.
 

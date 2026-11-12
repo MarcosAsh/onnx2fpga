@@ -34,6 +34,7 @@ test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_compatibility.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_corpus_report.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_numerics.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v

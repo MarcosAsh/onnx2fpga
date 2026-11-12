@@ -1,0 +1,77 @@
+# Model and device support
+
+Support depends on an operator's attributes, input shapes, data types and
+execution mode. Start with `onnx2fpga check model.onnx --device k26 --mode fixed`.
+This checks the built-in importer and known mode restrictions. It reports
+unassessed properties separately; compilation and timing may still fail.
+
+## Operator families
+
+| Family | Execution modes | Restrictions and details |
+|---|---|---|
+| Gemm, MatMul | Stream and fixed | Constant weights; Gemm `transA` is unsupported. |
+| Conv, MaxPool | Stream | Spatial operators; grouped convolution is unsupported. Fixed mode rejects these units. |
+| Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
+| Other live elementwise operations | Fixed | See [elementwise functions and tables](../specs/010-lookup-tables-and-elementwise.md) for operations and broadcasting limits. |
+| Reductions, Softmax, Normalizer | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
+| Tree ensembles | Fixed | See [tree ensembles](../specs/005-tree-ensembles.md) and [multiclass trees](../specs/012-multiclass-trees.md) for branch modes and output semantics. |
+| Layout operations and constant arithmetic | Depends on the imported graph | Many fold away. Live views can become dense layers; live Concat can require fixed mode. See [import rules](../specs/009-operator-coverage.md). |
+| BatchNormalization and ONNX-ML linear operators | Depends on the imported graph | Inference BatchNormalization folds into arithmetic; training mode is rejected. LinearRegressor requires `post_transform=NONE`. |
+| QDQ, QOperator and QONNX imports | Depends on the lowered operations | Static grids are required. See [quantized imports](../specs/009-operator-coverage.md) and [QONNX](../specs/014-qonnx.md). |
+
+These families do not imply support for every ONNX opset or attribute value.
+The importer converts declared input shapes to its internal layout and uses
+batch size 1 for symbolic batch dimensions. The checker marks unknown feature
+dimensions as unassessed. Quantized hardware introduces numerical error even
+when the generated RTL exactly matches the integer reference model.
+
+## Device and board evidence
+
+| Target | Compiler/model evidence | Full board flow | Physical board evidence |
+|---|---|---|---|
+| K26 / KR260 | [22-model routed corpus](k26-measurements.md) | MLP and 100-tree builds pass Vivado timing | Pending |
+| K26 / KV260 | Shares the K26 device model | Project generator and stub tests; a real full build remains unverified | Pending |
+| ECP5-25K / Icepi Zero | Compiler, simulation and open-tool builds | Implemented | [Recorded MLP test](../getting-started.md#what-to-expect) |
+| VU9P, VU47P, ZU7EV, Zynq-7020 | Device profiles; evidence varies by model | No corresponding board integration in the board registry | Unverified here |
+| Artix-7 / Arty A7 | Planned | Planned | Pending |
+
+A device profile supplies budgets and estimation parameters. It does not
+establish that a board can be programmed or that a model meets timing.
+
+## Reproduce the corpus report
+
+From a checkout, using Python, NumPy, Hardcaml and Verilator:
+
+```sh
+python3 tools/report_corpus.py --clock-mhz 322.265625
+```
+
+The command compiles each corpus model for K26 in fixed mode, compares its
+integer predictions with stored independent outputs on 256 evaluation inputs,
+and simulates 16 inputs. Use `--frames` to change the simulation count, up to
+the fixture's available inputs. Model names select a subset:
+
+```sh
+python3 tools/report_corpus.py linear_regression xgb_small --clock-mhz 322.265625
+python3 tools/report_corpus.py --inspect-only --mode stream --out build/stream_coverage
+```
+
+`build/corpus_report/report.json` contains model and fixture hashes, exporter
+metadata, tool versions, the source revision and working-tree status. Each
+model records inspection, compilation, numerical comparison and simulation
+separately. The report includes compiler resource estimates, cycle counts
+and throughput at the assumed clock. It does not perform place-and-route or
+physical board testing; those stages remain `not_run`.
+
+Regression error must be below 2.5 percent of the reference output's standard
+deviation. A constant reference requires exact agreement. Classifier labels
+must agree on at least 98 percent of inputs. These are corpus regression
+thresholds; applications need their own accuracy requirements. Reference
+outputs come from ONNX Runtime, or QONNX for the QONNX/Brevitas fixtures;
+this command does not regenerate or independently revalidate those outputs.
+
+The JSON file is replaced after each model. `complete=false` means the run
+was interrupted, and any failed model causes a nonzero exit status. An
+inspection-only run records `inspected`, with later stages left `not_run`.
+Use the [K26 measurement flow](k26-measurements.md#reproduce) and
+[KR260 board builds](boards.md#reproduce-the-kr260-build) for routed evidence.
