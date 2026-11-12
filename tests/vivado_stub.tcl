@@ -166,6 +166,12 @@ proc write_bitstream {args} {
     record write_bitstream $args
     close [open [lindex $args end] w]
 }
+proc write_hw_platform {args} {
+    record write_hw_platform $args
+    set handle [open [lindex $args end] w]
+    puts $handle "stub hardware handoff"
+    close $handle
+}
 proc set_false_path {args} { record set_false_path $args }
 
 foreach command {
@@ -173,7 +179,7 @@ foreach command {
     create_bd_intf_port create_bd_port get_bd_intf_pins get_bd_pins get_bd_ports
     connect_bd_intf_net connect_bd_net assign_bd_address get_bd_addr_spaces
     get_bd_addr_segs validate_bd_design save_bd_design make_wrapper current_fileset
-    get_runs wait_on_run open_run write_hw_platform create_clock create_generated_clock get_pins current_design
+    get_runs wait_on_run open_run create_clock create_generated_clock get_pins current_design
 } {
     proc $command {args} "record $command \$args; return $command"
 }
