@@ -9,6 +9,7 @@ module type Config = sig
   val symbols : int
   val levels : int
   val order_bits : int
+  val hash_orders : bool
 end
 
 module Make (Config : Config) = struct
@@ -76,7 +77,14 @@ module Make (Config : Config) = struct
   end
 
   let create scope ({ clocking; event } : Signal.t I.t) =
-    let slot order = sel_bottom order ~width:order_bits in
+    let slot order =
+      if hash_orders
+      then
+        split_lsb ~exact:false ~part_width:order_bits order
+        |> List.map ~f:(uresize ~width:order_bits)
+        |> reduce ~f:( ^: )
+      else sel_bottom order ~width:order_bits
+    in
     let tag order = sel_top order ~width:tag_bits in
     (* After a clear, port A writes every slot empty before the book takes events. *)
     let%hw sweep =

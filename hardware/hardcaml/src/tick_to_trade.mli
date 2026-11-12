@@ -10,6 +10,7 @@ module Params : sig
     ; names : string list
     ; levels : int
     ; order_bits : int
+    ; order_hash : string
     ; spread_shift : int
     ; flow_shift : int
     ; buy_threshold : int

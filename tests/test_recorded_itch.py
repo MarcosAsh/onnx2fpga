@@ -32,6 +32,21 @@ class RecordedTest(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(ValueError):
                 list(messages(io.BytesIO(data)))
 
+    def test_eof_capture(self):
+        wanted = directory(b"AAPL", 123)
+        selected, record = select(binary([wanted], end=False), "AAPL", 10, allow_eof=True)
+        self.assertEqual(selected, [wanted])
+        self.assertTrue(record["source_file_exhausted"])
+        self.assertFalse(record["source_session_complete"])
+        _, terminated = select(binary([wanted]), "AAPL", 10, allow_eof=True)
+        self.assertTrue(terminated["source_session_complete"])
+        _, prefix = select(binary([wanted]), "AAPL", 1, allow_eof=True)
+        self.assertFalse(prefix["source_file_exhausted"])
+        self.assertFalse(prefix["source_session_complete"])
+        for data in (b"\0", b"\0\x03ab", b"\0\0x"):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                list(messages(io.BytesIO(data), allow_eof=True))
+
     def test_symbol_filter_and_prefix(self):
         wanted = directory(b"AAPL", 123)
         other = directory(b"MSFT", 456)

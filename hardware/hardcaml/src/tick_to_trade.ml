@@ -8,6 +8,7 @@ module Params = struct
     ; names : string list
     ; levels : int
     ; order_bits : int
+    ; order_hash : string
     ; spread_shift : int
     ; flow_shift : int
     ; buy_threshold : int
@@ -40,6 +41,16 @@ module Params = struct
       | _ -> fail ("expected an array for " ^ name)
     in
     let int name = number (field name) in
+    let order_hash =
+      match Jsonaf.of_string text with
+      | `Object fields ->
+        (match List.Assoc.find fields "order_hash" ~equal:String.equal with
+         | None -> "low"
+         | Some (`String name) when List.mem [ "low"; "xor" ] name ~equal:String.equal ->
+           name
+         | _ -> fail "order_hash must be low or xor")
+      | _ -> fail "expected an object"
+    in
     { locates = list "locates" ~f:number
     ; names =
         list "names" ~f:(function
@@ -47,6 +58,7 @@ module Params = struct
           | _ -> fail "expected a string in names")
     ; levels = int "levels"
     ; order_bits = int "order_bits"
+    ; order_hash
     ; spread_shift = int "spread_shift"
     ; flow_shift = int "flow_shift"
     ; buy_threshold = int "buy_threshold"
@@ -74,6 +86,7 @@ module Make (Config : Config) = struct
       let symbols = symbols
       let levels = params.levels
       let order_bits = params.order_bits
+      let hash_orders = String.equal params.order_hash "xor"
     end)
 
   module Extract = Features.Make (struct

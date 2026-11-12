@@ -34,7 +34,12 @@ test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_recorded_itch.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_trading_board.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_trading_runtime.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_trading_dma.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_run_ddr.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_replay_records.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_replay_compare.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_package.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_artix.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_compatibility.py" -v
@@ -76,6 +81,7 @@ test-flaky-all:
 	$(PYTHON) tools/flakecheck.py --repeat 3
 
 test-sim:
+	$(PYTHON) -m unittest discover -s tests -p "test_trading_host_rtl.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_ddr_trading.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_residual.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_sliding_window.py" -v

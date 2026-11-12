@@ -56,6 +56,14 @@ module Make (Config : Tick_to_trade.Config) = struct
     let%hw records = reg spec ~enable:accepted i.records in
     let%hw trading_clear = i.clear |: sm.is Clearing in
     let%hw ready = wire 1 in
+    let%hw memory_ready = wire 1 in
+    let%hw response_full = wire 1 in
+    let%hw response_ready = ~:response_full |: memory_ready &: ~:(i.clear) in
+    response_full <-- reg spec (mux2 response_ready i.rvalid response_full);
+    let response value = reg spec ~enable:(response_ready &: i.rvalid) value in
+    let%hw response_data = response i.rdata in
+    let%hw response_code = response i.rresp in
+    let%hw response_last = response i.rlast in
     let replay =
       Ddr_replay.hierarchical
         scope
@@ -67,12 +75,14 @@ module Make (Config : Tick_to_trade.Config) = struct
         ; records
         ; ready
         ; arready = i.arready
-        ; rvalid = i.rvalid
-        ; rdata = i.rdata
-        ; rresp = i.rresp
-        ; rlast = i.rlast
+        ; rvalid = response_full
+        ; rdata = response_data
+        ; rresp = response_code
+        ; rlast = response_last
         }
     in
+    memory_ready <-- replay.rready;
+    let replay = { replay with rready = response_ready } in
     let trading =
       Trading.hierarchical
         scope

@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 import pathlib
+import shutil
 import subprocess
 
 from onnx2fpga.trading.ddr_replay import DdrReplay
@@ -22,10 +23,20 @@ def main(argv=None):
     parser.add_argument("--seed", type=int, default=71)
     parser.add_argument("--itch", type=pathlib.Path, help="recorded BinaryFILE, optionally gzip compressed")
     parser.add_argument("--symbol", default="AAPL", help="stock directory symbol for recorded replay")
+    parser.add_argument("--allow-eof", action="store_true",
+                        help="accept a recorded file without a session terminator")
+    parser.add_argument("--order-bits", type=int, default=12,
+                        help="log2 of order-table slots; larger tables need more FPGA memory")
+    parser.add_argument("--order-hash", choices=("low", "xor"), default="low",
+                        help="index orders by low bits or XOR-folded chunks")
     parser.add_argument("--stalls", type=int, nargs="+", default=[0, 65])
     args = parser.parse_args(argv)
+    if args.allow_eof and args.itch is None:
+        parser.error("allow-eof requires itch input")
     if args.messages < 100 or any(not 0 <= stall < 100 for stall in args.stalls):
         parser.error("use at least 100 messages and stall percentages between 0 and 99")
+    if not 1 <= args.order_bits <= 20:
+        parser.error("order-bits must be between 1 and 20")
     args.out.mkdir(parents=True, exist_ok=True)
     root = pathlib.Path(__file__).resolve().parents[1]
     report = {"status": "running", "scope": "Verilator AXI memory model; no physical DDR or board",
@@ -40,11 +51,12 @@ def main(argv=None):
     path = args.out / "report.json"
     path.write_text(json.dumps(report, indent=2) + "\n")
     try:
-        source_messages, config = None, None
+        source_messages, config = None, Config(order_bits=args.order_bits, order_hash=args.order_hash)
         if args.itch:
             opener = gzip.open if args.itch.suffix == ".gz" else open
             with opener(args.itch, "rb") as stream:
-                source_messages, record = select(stream, args.symbol, args.messages)
+                source_messages, record = select(stream, args.symbol, args.messages,
+                                                  allow_eof=args.allow_eof)
             digest = hashlib.sha256()
             with args.itch.open("rb") as stream:
                 for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -52,7 +64,7 @@ def main(argv=None):
             record.update(file=args.itch.name, file_sha256=digest.hexdigest(),
                           framing="MoldUDP64 packets rebuilt from selected raw messages")
             report["recorded_source"] = record
-            config = Config(locates=(record["locate"],), names=(args.symbol,))
+            config.locates, config.names = (record["locate"],), (args.symbol,)
         replay = DdrReplay(args.out, messages=args.messages, seed=args.seed,
                            config=config, source_messages=source_messages)
         acc, model = replay.model(device="k26", clock_mhz=322.265625)
@@ -62,6 +74,7 @@ def main(argv=None):
         expected = reference.run(replay.framed)
         report["reference_book"] = {"levels": replay.config.levels,
                                     "order_slots": 1 << replay.config.order_bits,
+                                    "order_hash": replay.config.order_hash,
                                     "collisions": reference.book.collisions,
                                     "forgotten_levels": reference.book.forgotten}
         latency = sum(cycles for _, cycles in replay.stages)
@@ -69,14 +82,13 @@ def main(argv=None):
                       latency_cycles=latency, stages=replay.stages,
                       verilator=subprocess.check_output(["verilator", "--version"], text=True).strip())
         for stall in args.stalls:
-            sections = replay.run(gap=stall, seed=args.seed, runs=2)
+            sections = replay.run(gap=stall, seed=args.seed, runs=2, stream=True)
             for index, lines in enumerate(sections):
                 compare(lines, expected, replay.config, latency, timed=False)
                 cycles = int(next(line.split()[1] for line in lines if line.startswith("cycles ")))
                 report["runs"].append({"stall_percent": stall, "restart": bool(index),
                                        "cycles": cycles, "decisions": len(expected), "bit_exact": True})
-            (args.out / ("results_stall%d.txt" % stall)).write_text(
-                (args.out / "ddr_results.txt").read_text())
+            shutil.copyfile(args.out / "ddr_results.txt", args.out / ("results_stall%d.txt" % stall))
         report["sha256"] = {name: hashlib.sha256((args.out / name).read_bytes()).hexdigest()
                             for name in ("records.bin", "ddr_trading.v", "tick_to_trade.json",
                                          "model/model.onnx", "model/design.json")}

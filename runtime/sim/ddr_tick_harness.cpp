@@ -45,6 +45,7 @@ int main(int argc, char** argv) {
         if (argc != 6 && argc != 7)
             throw std::runtime_error("usage: Vddr_trading records output runs seed stall-percent [abort-after]");
         const auto records = load(argv[1]);
+        if (records.size() > UINT32_MAX) throw std::runtime_error("too many replay records");
         std::ofstream out(argv[2]);
         if (!out) throw std::runtime_error("cannot open replay output");
         const int runs = std::stoi(argv[3]), stall = std::stoi(argv[5]);
@@ -68,7 +69,9 @@ int main(int argc, char** argv) {
             bool presenting = false, first = true;
             dut.abort_request = 0;
             dut.start = 1; dut.eval(); tick(); dut.start = 0;
-            const uint64_t limit = cycle + 10000000;
+            const uint64_t transactions = records.size() + (records.size() + 15) / 16;
+            const uint64_t limit = cycle + (1 << 20) + 1024
+                + transactions * 8 * ((100 + 99 - stall) / (100 - stall));
             for (;;) {
                 if (cycle > limit) throw std::runtime_error("DDR replay timed out");
                 dut.abort_request = run == 0 && abort_after && received >= abort_after;

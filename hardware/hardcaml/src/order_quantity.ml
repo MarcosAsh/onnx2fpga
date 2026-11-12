@@ -19,10 +19,18 @@ module O = struct
 end
 
 let create scope ({ held; requested } : Signal.t I.t) =
-  let%hw difference = ue held -: ue requested in
-  let%hw underflow = msb difference in
+  let%hw low = ue held.:[15, 0] -: ue requested.:[15, 0] in
+  let%hw high_a = ue held.:[31, 16] in
+  let%hw high_b = ue requested.:[31, 16] in
+  (* Preserve the two parallel high-half carry chains. *)
+  let keep value = add_attribute value (Rtl_attribute.Vivado.keep true) in
+  let%hw high_borrow = keep (high_a +: ~:high_b) in
+  let%hw high_no_borrow = keep (high_a -: high_b) in
+  let%hw high = mux2 (msb low) high_borrow high_no_borrow in
+  let%hw underflow = msb high in
+  let%hw difference = lsbs high @: lsbs low in
   { O.executed = mux2 underflow held requested
-  ; remaining = mux2 underflow (zero 32) (lsbs difference)
+  ; remaining = mux2 underflow (zero 32) difference
   }
 ;;
 

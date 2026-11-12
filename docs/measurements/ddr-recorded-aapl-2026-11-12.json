@@ -1,0 +1,109 @@
+{
+  "status": "passed",
+  "scope": "Verilator AXI memory model; no physical DDR or board",
+  "messages_requested": 2000000,
+  "seed": 71,
+  "target_clock_mhz": 322.265625,
+  "runs": [
+    {
+      "stall_percent": 0,
+      "restart": false,
+      "cycles": 6789371,
+      "decisions": 1512179,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 0,
+      "restart": true,
+      "cycles": 6789371,
+      "decisions": 1512179,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 65,
+      "restart": false,
+      "cycles": 18647618,
+      "decisions": 1512179,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 65,
+      "restart": true,
+      "cycles": 18636733,
+      "decisions": 1512179,
+      "bit_exact": true
+    }
+  ],
+  "source_sha256": {
+    "runtime/sim/ddr_tick_harness.cpp": "43e5724e8dfecbb9ff9b2ed37946700b06ea9f2d76cc5a5a62579845875983de",
+    "hardware/hardcaml/src/ddr_trading.ml": "c2eb851b647b1b226f6c6d0215c63f78d2dd32ff720fad48aa6d130117d0ea41",
+    "hardware/hardcaml/src/ddr_replay.ml": "41d86521ac4e09509f9b9a9e159bc46e2f6bd9f75b57c8271b12743cb3195854",
+    "tools/replay_ddr.py": "e7560f2895115903dce4b619522457c112a95eba330063c099b46e35ab2bee17",
+    "compiler/onnx2fpga/trading/recorded.py": "719c2cba8c3c6340712988a4d0f14ac8942d71b2085cf3345e59ef031b620958",
+    "compiler/onnx2fpga/trading/itch.py": "72ba04fa92adb2ecc61d1243a68aa307440eff2f21ccc9fe85f8d2ac8b6ae548",
+    "compiler/onnx2fpga/trading/replay.py": "bd69ad93089c1e282603da3c74cec9106ea561b2bf4146aa8162d42b5bc3f3ec",
+    "compiler/onnx2fpga/trading/ddr_replay.py": "e1d7fb4255d63c5336961294e4e2ab0f4f5be54a2a8b7522e86ab2950a1d24b6"
+  },
+  "recorded_source": {
+    "symbol": "AAPL",
+    "locate": 13,
+    "source_messages_scanned": 268744780,
+    "selected_messages": 1519865,
+    "source_session_complete": false,
+    "source_file_exhausted": true,
+    "scanned_messages_sha256": "5d81c2e14a0f748b29c674b6a342796932702034b4dd341e39e9a9ec5bac610f",
+    "file": "12302019.NASDAQ_ITCH50.gz",
+    "file_sha256": "ef03df46a27e6bda4dead017f84c2e3979df7211f02c7868b51d53fceb99c689",
+    "framing": "MoldUDP64 packets rebuilt from selected raw messages",
+    "url": "https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/12302019.NASDAQ_ITCH50.gz",
+    "compressed_bytes": 3524013057,
+    "gzip_integrity": "passed",
+    "publisher_checksum": "unavailable: advertised .md5sum URL returns HTTP404"
+  },
+  "reference_book": {
+    "levels": 4,
+    "order_slots": 32768,
+    "order_hash": "xor",
+    "collisions": 328699,
+    "forgotten_levels": 152775
+  },
+  "records": 6005842,
+  "decisions_per_run": 1512179,
+  "latency_cycles": 22,
+  "stages": [
+    [
+      "moldudp64",
+      1
+    ],
+    [
+      "itch_parser",
+      1
+    ],
+    [
+      "order_book",
+      4
+    ],
+    [
+      "features",
+      3
+    ],
+    [
+      "model",
+      12
+    ],
+    [
+      "decision",
+      1
+    ]
+  ],
+  "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+  "sha256": {
+    "records.bin": "5e7ba59b393c4f513e35dba1a795f4f541b8316748bf061a894beadb86cc22fb",
+    "ddr_trading.v": "7abec75fb7e2ef1ad31d5a7eb79ee85d7ce7063a1e0107003b822e8e9a031060",
+    "tick_to_trade.json": "2a2da25ed2a4ac0de9970aa9b2376dc62238041827bbea410f710589f238e363",
+    "model/model.onnx": "bc51359899a75abb7df536a3663e46c613081e2546ee9f4145824d0d51afa0f4",
+    "model/design.json": "56d1fabdeef7480b00a92feeec6381f975879914a7f4ab0610d34db6fa207dbe"
+  },
+  "reproduce": "PYTHONPATH=compiler:. python3 tools/replay_ddr.py --itch build/itch_samples/12302019.NASDAQ_ITCH50.gz --allow-eof --symbol AAPL --messages 2000000 --order-bits 15 --order-hash xor --out build/ddr_recorded_aapl",
+  "rtl_regeneration": "current generator matches recorded ddr_trading.v SHA-256"
+}

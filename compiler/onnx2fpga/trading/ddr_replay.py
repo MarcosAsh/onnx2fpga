@@ -11,6 +11,17 @@ from .replay import Replay, ReplayError, WARNINGS, generate
 from .replay_records import records
 
 
+class _Section:
+    def __init__(self, path, start, end):
+        self.path, self.start, self.end = path, start, end
+
+    def __iter__(self):
+        with self.path.open("rb") as stream:
+            stream.seek(self.start)
+            while stream.tell() < self.end:
+                yield stream.readline().decode("ascii").rstrip("\n")
+
+
 class DdrReplay(Replay):
     def build(self, accelerator):
         design = json.loads((pathlib.Path(accelerator.out_dir) / "design.json").read_text())
@@ -31,10 +42,11 @@ class DdrReplay(Replay):
         if completed.returncode:
             raise ReplayError("Verilator could not build DDR replay:\n" + completed.stderr[-4000:])
 
-    def run(self, gap=0, seed=1, runs=2, abort_after=None):
-        with (self.out / "records.bin").open("wb") as stream:
+    def run(self, gap=0, seed=1, runs=2, abort_after=None, stream=False):
+        """Streamed sections reread the result file and must be consumed before the next run."""
+        with (self.out / "records.bin").open("wb") as record_file:
             for record in records(self.beats):
-                stream.write(record)
+                record_file.write(record)
         output = self.out / "ddr_results.txt"
         command = ["./obj_dir/Vddr_trading", "records.bin", output.name,
                    str(runs), str(seed), str(gap)]
@@ -45,11 +57,17 @@ class DdrReplay(Replay):
         if result.returncode:
             raise ReplayError("DDR replay failed:\n" + result.stderr[-4000:])
         sections = []
-        for line in output.read_text().splitlines():
-            if line.startswith("run "):
-                sections.append([])
-            else:
-                sections[-1].append(line)
+        start = None
+        with output.open("rb") as result_file:
+            while True:
+                offset = result_file.tell()
+                line = result_file.readline()
+                if line.startswith(b"run ") or not line:
+                    if start is not None:
+                        sections.append(_Section(output, start, offset))
+                    start = result_file.tell()
+                if not line:
+                    break
         if len(sections) != runs:
             raise ReplayError("DDR replay returned the wrong number of runs")
-        return sections
+        return sections if stream else [list(section) for section in sections]

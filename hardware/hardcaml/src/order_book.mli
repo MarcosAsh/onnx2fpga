@@ -16,6 +16,8 @@ module type Config = sig
 
   (** One to 20. *)
   val order_bits : int
+
+  val hash_orders : bool
 end
 
 module Make (_ : Config) : sig

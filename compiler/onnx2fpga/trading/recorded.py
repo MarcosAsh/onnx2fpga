@@ -5,18 +5,20 @@ import hashlib
 from .itch import HEADER, MTU_PAYLOAD
 
 
-def messages(stream):
-    """Yield length-prefixed payloads; require the session's zero-length terminator."""
+def messages(stream, *, allow_eof=False):
+    """Yield payloads and return whether the zero-length terminator was present."""
     index = 0
     while True:
         header = stream.read(2)
+        if not header and allow_eof:
+            return False
         if len(header) != 2:
             raise ValueError("incomplete BinaryFILE length at message %d" % index)
         length = int.from_bytes(header, "big")
         if length == 0:
             if stream.read(1):
                 raise ValueError("data after BinaryFILE session terminator")
-            return
+            return True
         payload = stream.read(length)
         if len(payload) != length:
             raise ValueError("incomplete BinaryFILE payload at message %d" % index)
@@ -24,7 +26,7 @@ def messages(stream):
         index += 1
 
 
-def select(stream, symbol, limit):
+def select(stream, symbol, limit, *, allow_eof=False):
     """Keep a symbol's first messages in source order, starting at its directory entry."""
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         raise ValueError("message limit must be a positive integer")
@@ -35,8 +37,16 @@ def select(stream, symbol, limit):
     selected = []
     digest = hashlib.sha256()
     scanned = 0
-    complete = True
-    for payload in messages(stream):
+    complete = False
+    exhausted = False
+    source = messages(stream, allow_eof=allow_eof)
+    while True:
+        try:
+            payload = next(source)
+        except StopIteration as end:
+            complete = end.value
+            exhausted = True
+            break
         scanned += 1
         digest.update(len(payload).to_bytes(2, "big") + payload)
         if len(payload) < 11:
@@ -54,11 +64,11 @@ def select(stream, symbol, limit):
                 raise ValueError("ITCH message exceeds replay packet capacity")
             selected.append(payload)
             if len(selected) == limit:
-                complete = False
                 break
     if locate is None:
         raise ValueError("stock directory has no symbol %r" % symbol)
     return selected, {"symbol": symbol, "locate": locate,
                       "source_messages_scanned": scanned,
                       "selected_messages": len(selected), "source_session_complete": complete,
+                      "source_file_exhausted": exhausted,
                       "scanned_messages_sha256": digest.hexdigest()}

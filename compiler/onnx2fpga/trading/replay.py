@@ -1,6 +1,7 @@
 """Replays synthetic ITCH traffic through the tick to trade RTL and checks it against the software model."""
 
 import argparse
+from collections import deque
 import json
 import pathlib
 import re
@@ -138,16 +139,26 @@ def _signed(value, bits):
 
 def compare(lines, decisions, config, latency, timed=True):
     """Checks every RTL output against the model and returns the first byte to decision cycles."""
-    books = [line.split() for line in lines if line.startswith("B ")]
-    vectors = [line.split() for line in lines if line.startswith("F ")]
-    outs = [line.split() for line in lines if line.startswith("D ")]
-    beat0 = next(int(line.split()[1]) for line in lines if line.startswith("beat0"))
-    if not len(books) == len(vectors) == len(outs) == len(decisions):
-        raise ReplayError("the RTL made %d books, %d feature vectors and %d decisions for %d "
-                          "tracked messages" % (len(books), len(vectors), len(outs),
-                                                len(decisions)))
+    books, vectors = deque(), deque()
+    counts = [0, 0, 0]
+    beat0 = None
     totals, offset = [], None
-    for index, (book, vector, out, want) in enumerate(zip(books, vectors, outs, decisions)):
+    for line in lines:
+        if line.startswith("beat0 "):
+            beat0 = int(line.split()[1])
+        elif line.startswith("B "):
+            books.append(line.split())
+            counts[0] += 1
+        elif line.startswith("F "):
+            vectors.append(line.split())
+            counts[1] += 1
+        if not line.startswith("D "):
+            continue
+        index = counts[2]
+        counts[2] += 1
+        if not books or not vectors or beat0 is None or index >= len(decisions):
+            raise ReplayError("decision %d has no matching book, features or reference" % index)
+        book, vector, out, want = books.popleft(), vectors.popleft(), line.split(), decisions[index]
         got_book = (int(book[1]), _levels(book[2], config.levels), _levels(book[3], config.levels),
                     _signed(int(book[4], 16), 20))
         word = int(vector[1], 16)
@@ -171,6 +182,9 @@ def compare(lines, decisions, config, latency, timed=True):
                               % (index, t_first, t_last, want.message.first_beat,
                                  want.message.last_beat))
         totals.append(t_out - t_first)
+    if counts != [len(decisions)] * 3 or beat0 is None:
+        raise ReplayError("the RTL made %d books, %d feature vectors and %d decisions for %d "
+                          "tracked messages" % (*counts, len(decisions)))
     return np.array(totals)
 
 

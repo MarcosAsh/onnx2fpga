@@ -21,6 +21,7 @@ class Config:
     names: tuple = ("BRVO", "CHRL", "ECHO", "FXTR")
     levels: int = 4
     order_bits: int = 12
+    order_hash: str = "low"
     spread_shift: int = 6
     flow_shift: int = 5
     buy_threshold: int = 40
@@ -29,7 +30,7 @@ class Config:
 
     def as_json(self, model):
         return {"locates": list(self.locates), "names": list(self.names),
-                "levels": self.levels, "order_bits": self.order_bits,
+                "levels": self.levels, "order_bits": self.order_bits, "order_hash": self.order_hash,
                 "spread_shift": self.spread_shift, "flow_shift": self.flow_shift,
                 "buy_threshold": self.buy_threshold, "sell_threshold": self.sell_threshold,
                 "order_shares": self.order_shares, "model": model}
@@ -100,15 +101,23 @@ class Book:
     symbols: int
     levels: int
     order_bits: int
+    order_hash: str = "low"
     table: dict = field(default_factory=dict)
     collisions: int = 0
     forgotten: int = 0
 
     def __post_init__(self):
+        if self.order_hash not in ("low", "xor"):
+            raise ValueError("order_hash must be low or xor")
         self.sides = [[[], []] for _ in range(self.symbols)]
         self.flow = [0] * self.symbols
 
     def slot(self, order):
+        if self.order_hash == "xor":
+            folded = 0
+            for shift in range(0, 64, self.order_bits):
+                folded ^= order >> shift
+            return folded & ((1 << self.order_bits) - 1)
         return order & ((1 << self.order_bits) - 1)
 
     @staticmethod
@@ -238,7 +247,7 @@ class Pipeline:
     def __init__(self, config, model):
         self.config = config
         self.model = model
-        self.book = Book(len(config.locates), config.levels, config.order_bits)
+        self.book = Book(len(config.locates), config.levels, config.order_bits, config.order_hash)
         self.token = 0
 
     def run(self, messages):

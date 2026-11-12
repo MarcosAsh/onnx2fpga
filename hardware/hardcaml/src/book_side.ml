@@ -65,13 +65,35 @@ module Make (Config : Config) = struct
     List.folding_map bits ~init:gnd ~f:(fun acc bit -> acc |: bit, acc |: bit)
   ;;
 
+  let at_least a b =
+    let keep value = add_attribute value (Rtl_attribute.Vivado.keep true) in
+    let chunks =
+      List.map2_exn (split_lsb ~part_width:8 a) (split_lsb ~part_width:8 b) ~f:(fun a b ->
+        keep (a >: b), keep (a ==: b))
+    in
+    let combine (low_greater, low_equal) (high_greater, high_equal) =
+      high_greater |: (high_equal &: low_greater), high_equal &: low_equal
+    in
+    let greater, equal =
+      tree
+        ~arity:2
+        ~f:(fun pair ->
+          match pair with
+          | [ low; high ] -> combine low high
+          | _ -> assert false)
+        chunks
+    in
+    greater |: equal
+  ;;
+
   (* The level at [price] loses [shares], and leaves the book when that empties it. *)
   let remove levels (change : _ Change.t) =
     let found =
       List.map levels ~f:(fun l -> change.valid &: live l &: (l.price ==: change.price))
     in
     let emptied =
-      List.map2_exn found levels ~f:(fun found l -> found &: (change.shares >=: l.shares))
+      List.map2_exn found levels ~f:(fun found l ->
+        found &: at_least change.shares l.shares)
     in
     let shifted = List.tl_exn levels @ [ Level.empty ] in
     let gone = prefix_or emptied in

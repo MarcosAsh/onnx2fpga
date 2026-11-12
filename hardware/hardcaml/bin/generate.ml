@@ -150,5 +150,23 @@ let () =
        ; "kria-regs", kria_regs_command
        ; "tick-to-trade", tick_to_trade_command
        ; "ddr-trading", ddr_trading_command
+       ; ( "ddr-regs"
+         , Command.basic
+             ~summary:"Verilog for DDR trading registers without board clocks"
+             [%map_open.Command
+               let path = anon ("CONFIG_JSON" %: string) in
+               fun () ->
+                 print_string
+                   (Ddr_regs.verilog
+                      (Tick_to_trade.Params.of_string (In_channel.read_all path)))] )
+       ; ( "ddr-shell"
+         , Command.basic
+             ~summary:"Verilog for the Kria DDR trading shell"
+             [%map_open.Command
+               let path = anon ("CONFIG_JSON" %: string) in
+               fun () ->
+                 print_string
+                   (Ddr_shell.verilog
+                      (Tick_to_trade.Params.of_string (In_channel.read_all path)))] )
        ])
 ;;

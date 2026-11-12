@@ -2,11 +2,13 @@
 
 Status: partial. Fabric DDR replay through the trading pipeline matches the
 software model on every book update, feature vector and decision for 100,000
-synthetic messages in simulation. The K26 pipeline takes 22 cycles from a
+synthetic messages and all 1,519,865 available AAPL messages in a recorded sample.
+The K26 pipeline takes 22 cycles from a
 message's last byte to its decision; the original unpipelined design takes 14.
-Unit proofs cover selected invariants, while replay checks the complete book.
-PS DDR integration, a routed Kria trading build, recorded NASDAQ data and all
-of stage B remain unfinished.
+Unit proofs cover selected invariants; replay checks each bounded book snapshot.
+Host DMA ownership and recovery pass simulation. A validated routed Kria trading
+build, physical deployment and all of stage B remain unfinished. The recorded
+source ends without a session terminator, so its completeness is unverified.
 
 ## Goal
 
@@ -20,7 +22,7 @@ anyone can run it.
 Stage A runs on either Kria board. A replayer in the fabric reads ITCH messages
 from DDR and feeds them into the parser at line rate, so the whole path from
 parser to decision runs and gets measured with no network at all. Today stage
-A runs in Verilator, with a C++ harness in the replayer's place.
+A runs in Verilator, with the RTL replayer connected to a C++ DDR model.
 
 The standalone `ddr_replay` unit reads 128-bit records through an AXI4 master.
 Each record holds a 64-bit input beat in bits 63:0, `keep` in 71:64, `last` in
@@ -55,14 +57,53 @@ PYTHONPATH=compiler:. python3 tools/replay_ddr.py --out build/ddr_trading_100k
 
 The report records input/model/RTL hashes, source hashes, simulated cycle counts
 and comparison results. The AXI memory model stalls address and data channels;
-it does not model physical DDR bandwidth or a Linux DMA allocation. PS DDR
-connection, replay control registers and the routed KR260 trading build remain
-unfinished.
+it does not model physical DDR bandwidth or a Linux DMA allocation. The KR260
+project connects the reader to the PS HP0 port; its routed result and physical
+operation still need validation.
 
 The [100,000-message record](../measurements/ddr-trading-2026-11-12.json) covers
 410,694 DDR records and 65,267 decisions per run. Four runs include restart,
 with 0% and 65% randomized stalls. All match the software model and retain the
 22-cycle last-byte-to-decision latency.
+
+### KR260 replay control
+
+After replay simulation, generate or build the board project with:
+
+```sh
+python3 tools/build_ddr_kr260.py build/ddr_trading_100k --generate-only
+python3 tools/build_ddr_kr260.py build/ddr_trading_100k
+```
+
+The builder checks the report's input/configuration hashes and regenerates the
+trading core to confirm it matches the simulated RTL. The board adds an AXI4-Lite
+control window at `0xA0000000` and a 128-bit read path to PS HP0. That path maps
+only low DDR, addresses `0` through `0x7fffffff`; OCM is excluded. A replay buffer
+must belong to a DMA allocation with the required cache synchronization and
+lifetime. Linux buffer allocation and host ownership are not implemented yet.
+
+| Byte offset | Register | Meaning |
+|---|---|---|
+| `0x00` | ID | `0x4f544432` (`OTD2`) |
+| `0x04` | Version | `1` |
+| `0x10` | Control | Bit 0 starts; bit 1 aborts and takes priority |
+| `0x14` | Status | Bits 0 through 3: busy, done, error, aborted |
+| `0x20`, `0x24` | Buffer address | Low 32 and high 8 bits; unused high bits must be zero |
+| `0x28` | Records | Number of 16-byte DDR records |
+| `0x30` | Delivered | Records delivered to the parser |
+| `0x34`, `0x38` | Decisions, orders | Completed decisions and generated orders |
+| `0x3c` | Cycles | Start through initialization and final pipeline drain |
+| `0x40` | Latency | Last byte to decision, in pipeline cycles |
+| `0x44` | Latest result | Prediction in bits 7:0, action in 9:8, order-valid in bit 10 |
+| `0x48`, `0x4c`, `0x50` | Timestamps | First byte, last byte and output for the latest decision |
+| `0x100` through `0x12c` | Latest order | Twelve little-endian words; the final byte is padding |
+
+Configuration writes honor byte strobes. Write address and data may arrive in
+either order. A start while busy returns `SLVERR`; unknown writes also return
+`SLVERR`, and unknown reads return `DECERR`. Decision snapshots clear on start
+and update on each decision. Read them after completion for a consistent
+snapshot. Exposing the prediction and complete order keeps synthesis from
+discarding their data paths when building the board design.
 
 Stage B needs the KR260, the board with the SFP+ cage. It adds a 10G MAC and
 PCS so real frames come in from a PC with a 10G card and decisions go back out.
@@ -270,20 +311,83 @@ To replay recorded data, supply an uncompressed or gzip-compressed
 ```sh
 PYTHONPATH=compiler:. python3 tools/replay_ddr.py \
   --itch build/itch_samples/12302019.NASDAQ_ITCH50.gz \
-  --symbol AAPL --messages 100000 --out build/ddr_recorded_aapl
+  --allow-eof --symbol AAPL --messages 2000000 \
+  --order-bits 15 --order-hash xor --out build/ddr_recorded_aapl
 ```
 
 The reader finds the symbol's stock locate in its directory entry, retains its
 first requested messages in source order, and builds new MoldUDP64 packets.
-Payload bytes stay unchanged. This tests a symbol prefix with simulated stalls;
-it does not reproduce the original network packets or market arrival times.
+Payload bytes stay unchanged. The limit can select a prefix or exceed the file's
+message count to replay every available message for that symbol. Replay uses
+simulated stalls; it does not reproduce the original network packets or market arrival times.
 The report records the source-file and scanned-message hashes, selection count,
-and whether scanning reached the session terminator. A full scan rejects a
-missing terminator or truncated record.
+and whether scanning reached the session terminator or exhausted the file.
+A full scan rejects a missing terminator by default. For captures that end
+between records, `--allow-eof` accepts the file while leaving
+`source_session_complete` false. Truncated records are always rejected.
 
 The software comparison uses the same bounded order table and price levels as
 the hardware. Reports include table collisions and forgotten price levels;
 agreement with this model does not establish a complete exchange order book.
+
+The [recorded AAPL result](../measurements/ddr-recorded-aapl-2026-11-12.json)
+uses all 1,519,865 AAPL messages found after scanning 268,744,780 source records
+in Nasdaq's 30 December 2019 sample. It covers 6,005,842 DDR records and
+1,512,179 decisions per run. All four runs,
+with zero/65 percent stalls and restart, match the software books, features
+and decisions at 22 cycles from the parser's last byte to its decision.
+The 32,768-slot, four-level reference book uses XOR-folded order IDs and records
+328,699 table collisions and 152,775 forgotten levels. These losses limit this configuration
+for reconstructing that market session.
+
+The source gzip passed its integrity check. The record includes the complete
+compressed-file SHA-256 and source URL. Nasdaq's advertised `.md5sum` URL returned
+HTTP 404, so no publisher checksum was verified. The scan exhausted the source
+file at a record boundary without finding a BinaryFILE session terminator.
+The result covers all available AAPL messages, with source-session completeness
+explicitly false.
+
+## Host buffer ownership
+
+`trading.runtime.ReplaySession` controls the DDR registers through a `read`/`write`
+transport. Opening verifies the device ID, version and latency, then aborts any
+previous replay and waits for its outstanding reads to drain. `run(records)`
+validates packed records, copies them to the buffer, transfers ownership to the
+device and starts replay. It returns counters and the final decision snapshot.
+Timeouts and transport failures require `abort()` before retrying.
+
+`trading.dma.DmaBuffer` maps an existing Linux
+[u-dma-buf allocation](https://github.com/ikwzm/udmabuf#sync_for_device).
+The allocation must be noncoherent, 256-byte aligned and entirely within the
+board design's low 2 GiB DDR window. Its DMA address must map directly to the
+physical address used by HP0; translated IOMMU addresses are unsupported.
+The adapter uses explicit `DMA_TO_DEVICE`
+cache synchronization and holds an exclusive advisory lock on the device.
+It refuses writes or close while the device owns the buffer. The native
+`kria_regs` transport also holds an exclusive advisory lock on its register
+device. Other programs accessing these devices must honor those locks.
+
+The caller owns both resources: close the replay session before closing the
+buffer and register transport. If abort cannot establish that the engine is
+idle, keep the allocation reserved until the fabric has been stopped. This
+adapter does not allocate arbitrary physical memory, unload the DMA driver,
+or program the FPGA. Provision the allocation on the board before opening it.
+
+Host tests cover ownership transitions, repeated replay, timeouts, lost start
+responses, failed aborts and exclusive access. The host-to-RTL test drives the
+generated registers through stalled DDR reads, compares decision snapshots and
+counters with the software model, and checks timeout recovery and DDR errors.
+Cache coherency and physical DDR access still require board validation.
+
+On an already programmed board with the package's `manifest.json`, a provisioned
+`udmabuf0` and the native register helper installed, run:
+
+```bash
+python3 tools/run_ddr.py manifest.json records.bin --buffer udmabuf0 --timeout 30
+```
+
+The command prints counters and the last decision as JSON. It runs locally on
+the board and does not program it or change device permissions.
 
 ## What is ours and what is borrowed
 
@@ -314,8 +418,8 @@ this demo is aimed at.
 ## Done when
 
 - [ ] Replaying a sample ITCH day through the design gives decisions identical
-  to a software model of the same pipeline run on the same file. A synthetic
-  day of 100000 messages does, in Verilator.
+  to a software model of the same pipeline run on the same file. All available
+  AAPL messages in the sample pass in Verilator; source completeness is unverified.
 - [x] We report tick to trade latency in cycles and ns, with the model's share
   of it broken out.
 - [x] The parser has a formal proof that no message is dropped.

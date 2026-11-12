@@ -7,6 +7,7 @@ module Book = Order_book.Make (struct
     let symbols = 2
     let levels = 2
     let order_bits = 3
+    let hash_orders = false
   end)
 
 module Harness = Hardcaml_test_harness.Lws_harness.Make (Book.I) (Book.O)
