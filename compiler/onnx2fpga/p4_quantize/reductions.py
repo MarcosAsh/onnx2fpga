@@ -152,25 +152,30 @@ def lower_layernorm(node, ctx):
     graph, plan = ctx.graph, ctx.plan
     source, out = node.inputs[0], node.outputs[0]
     lanes, dtype = graph.tensor(source).numel, plan.act_dtype
+    shape = graph.tensor(source).shape
+    scale = np.broadcast_to(graph.tensor(node.inputs[1]).data, shape).reshape(lanes, 1)
+    bias = (np.broadcast_to(graph.tensor(node.inputs[2]).data, shape).reshape(lanes, 1)
+            if len(node.inputs) == 3 else 0)
+    direct = np.all(scale == 1) and np.all(bias == 0)
     epsilon = max(1, round(node.attrs["epsilon"] * lanes * lanes / plan.scale(source)**2 * 256))
     codes = np.arange(dtype.min, dtype.max + 1, dtype=np.int64)
     largest = (lanes * lanes * int((codes * codes).max()) << 8) + epsilon
     if largest.bit_length() > 52:
         raise ConfigError("LayerNormalization variance exceeds 52 bits")
-    normalized_scale = math.sqrt(max(1, lanes - 1)) / dtype.max
-    intermediate = graph.fresh_name(node.name + "_normalized")
+    normalized_scale = plan.scale(out) if direct else math.sqrt(max(1, lanes - 1)) / dtype.max
+    intermediate = out if direct else graph.fresh_name(node.name + "_normalized")
     tensor = graph.ensure_tensor(intermediate)
     tensor.shape, tensor.dtype = graph.tensor(source).shape, dtype
-    plan.annotate(intermediate, QuantSpec(normalized_scale))
+    if not direct:
+        plan.annotate(intermediate, QuantSpec(normalized_scale))
     unit = SoftmaxUnit(node.name + "_normalize", [source], [intermediate], lanes,
                        node.op_type, dtype, dtype, sum_table=codes * codes,
                        numer_table=codes, min_exp=0, mantissa_bits=MANTISSA_BITS - 1,
-                       out_zero_point=0, subtract_max=False, mode="center_root", epsilon=epsilon,
+                       out_zero_point=plan.zero_point(out) if direct else 0,
+                       subtract_max=False, mode="center_root", epsilon=epsilon,
                        **root(largest, normalized_scale / 16, plan))
-    shape = tensor.shape
-    scale = np.broadcast_to(graph.tensor(node.inputs[1]).data, shape).reshape(lanes, 1)
-    bias = (np.broadcast_to(graph.tensor(node.inputs[2]).data, shape).reshape(lanes, 1)
-            if len(node.inputs) == 3 else 0)
+    if direct:
+        return [unit]
     values = (codes[None] * normalized_scale * scale + bias) / plan.scale(out)
     rows = dtype.clamp(np.rint(values) + plan.zero_point(out))
     affine = TableUnit.per_lane(node.name + "_affine", [intermediate], [out], rows, dtype, dtype)

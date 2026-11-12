@@ -356,38 +356,48 @@ when quantized at the model input. Calibration and independent accuracy checks
 remain necessary.
 
 The centered normalization unit takes seven cycles before optional pipeline
-stages. Its affine table adds another stage, and scheduling can add registers
+stages. When Scale is one and Bias is zero, normalization writes directly to the final
+output grid, including its zero point, without the affine table or intermediate
+rounding. Otherwise the affine table adds another stage. Scheduling can add registers
 to meet the requested clock estimate. RTL checks cover constant and nearly
 constant inputs, one- and three-lane vectors, negative scale values and omitted
 bias. The corpus fixture `torch_layernorm_mlp` exports a seeded, untrained
 PyTorch LayerNorm/Linear/GELU/Linear network at opset 20. Its metadata records
 the exporter version and seed; its reference outputs come from ONNX Runtime.
 
-The [K26 measurement](../measurements/layernorm-k26-2026-11-12.json) passes
-256 bit-exact RTL vectors and the existing normalized-MAE limit of 0.025
-against ONNX Runtime (measured 0.02154). At 322.265625 MHz, the network takes
-27 cycles, or 83.78 ns, with an initiation interval of one cycle. Its routed
-core uses 4,536 LUTs, 3,093 registers, 26 DSPs and 4.5 RAMB36 equivalents.
-Setup, hold and pulse-width slack are +0.202, +0.059 and +0.789 ns respectively.
-These measurements exclude the board shell and physical I/O.
+The optimized `torch_layernorm_mlp` passes 256 bit-exact RTL inputs on both
+K26 and Artix-7 35T. Normalized MAE against ONNX Runtime is 0.02064, within the
+existing 0.025 limit. Both routed cores pass all timing and internal constraint
+checks; these measurements exclude board shells and physical I/O.
+
+| Target | Clock | Cycles | LUTs | Registers | DSPs | RAMB36 equivalents | Setup slack | Hold slack |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| [K26](../measurements/layernorm-direct-k26-2026-11-12.json) | 322.265625 MHz | 26 | 4362 | 3028 | 26 | 4.5 | +0.254 ns | +0.055 ns |
+| [Artix-7 35T](../measurements/layernorm-direct-a7-35t-2026-11-12.json) | 100 MHz | 21 | 4468 | 3058 | 26 | 1.5 | +1.590 ns | +0.037 ns |
+
+K26 latency is 80.68 ns and Artix latency is 210 ns, each with an initiation
+interval of one cycle. Pulse-width slack is +0.789 ns and +4.020 ns respectively.
+The initial implementation at `04dc73e` took
+[27 K26 cycles](../measurements/layernorm-k26-2026-11-12.json) and
+[22 Artix cycles](../measurements/layernorm-a7-35t-2026-11-12.json).
+Removing the redundant affine table saves one cycle and 174/171 LUTs on these
+builds, and reduces normalized MAE from 0.02154 to 0.02064.
 
 ```sh
 python3 tests/fixtures/make_corpus.py torch_layernorm_mlp
 python3 tools/report_corpus.py torch_layernorm_mlp --device k26 \
     --clock-mhz 322.265625 --frames 256 --implement --out build/layernorm_k26
+python3 tools/report_corpus.py torch_layernorm_mlp --device a7_35t \
+    --clock-mhz 100 --frames 256 --implement --out build/layernorm_a7_35t
 ```
 
 Weight reloads retain the normalization parameters and tables already in the
-bitstream. A new model that changes their integer representation is rejected.
+bitstream. A new model that changes their integer representation or the frozen
+pipeline structure is rejected.
 
-The same network passes [Artix-7 35T routing at 100 MHz](../measurements/layernorm-a7-35t-2026-11-12.json),
-with 22 cycles of latency, 4,639 LUTs, 3,123 registers, 26 DSPs and 1.5 RAMB36
-equivalents. Setup slack is +1.301 ns and hold slack is +0.038 ns. Its 256
-simulation inputs are bit-exact and meet the same numerical threshold.
-
-The full network is not accepted on ECP5-25K. At
+The full network was not accepted in the initial ECP5-25K runs. At
 [100 MHz](../measurements/layernorm-icepi25-100-2026-11-12.json), the compiler
-rejects the normalization rescale's estimated delay. At
-[80 MHz](../measurements/layernorm-icepi25-80-2026-11-12.json), it rejects the
+rejected the normalization rescale's estimated delay. At
+[80 MHz](../measurements/layernorm-icepi25-80-2026-11-12.json), it rejected the
 34 estimated DSPs against the device's 28. These are compiler estimates,
 not measured hardware limits. No ECP5 implementation of this network is claimed.

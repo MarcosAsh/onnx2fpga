@@ -17,12 +17,14 @@ from onnx2fpga.targets.device import Device
 from support import Fixtures, Hdl
 
 
-def model(lanes=8, bias=True, outputs=None, **attrs):
+def model(lanes=8, bias=True, outputs=None, identity=False, **attrs):
     builder = ModelBuilder('layernorm', opset=17).add_input('x', (1, lanes))
-    builder.add_initializer('scale', np.linspace(-1.5, 1.5, lanes).astype(np.float32))
+    scale = np.ones(lanes) if identity else np.linspace(-1.5, 1.5, lanes)
+    builder.add_initializer('scale', scale.astype(np.float32))
     inputs = ['x', 'scale']
     if bias:
-        builder.add_initializer('bias', np.linspace(-.3, .7, lanes).astype(np.float32))
+        offset = np.zeros(lanes) if identity else np.linspace(-.3, .7, lanes)
+        builder.add_initializer('bias', offset.astype(np.float32))
         inputs.append('bias')
     builder.add_node('LayerNormalization', inputs, outputs or ['y'], name='norm', **attrs)
     return builder.add_output('y', (1, lanes)).build()
@@ -34,6 +36,21 @@ def reference(x, epsilon):
 
 
 class Arithmetic(unittest.TestCase):
+    def test_identity_affine_grid(self):
+        from onnx2fpga.p2_graph.datatype import QuantSpec
+        graph = OnnxImporter(model(identity=True)).run()
+        samples = [{'x': np.random.default_rng(i).normal(size=(1, 8))} for i in range(32)]
+        plan = Calibrator(graph).plan(samples)
+        plan.annotate('y', QuantSpec(.025, 11))
+        graph = LowerToHardware(plan, fixed=True).run(graph, CompilerContext(Device.get('sim')))
+        (unit,) = graph.nodes
+        self.assertIsInstance(unit, SoftmaxUnit)
+        codes = np.random.default_rng(23).integers(-128, 128, size=(512, 8))
+        got = np.concatenate([unit.execute(graph, {'x': row[None]})[0] for row in codes])
+        real = reference(codes * plan.scale('x'), 1e-5)
+        expected = np.clip(np.rint(real / .025) + 11, -128, 127)
+        self.assertLessEqual(np.max(np.abs(got - expected)), 1)
+
     def test_centered_normalization(self):
         rng = np.random.default_rng(17)
         for lanes in (1, 3, 8, 16):
@@ -78,6 +95,12 @@ class Hardware(unittest.TestCase):
         acc._retarget(model())
         with self.assertRaisesRegex(ConfigError, 'frozen'):
             acc._retarget(model(epsilon=.1))
+        direct = otf.load(model(identity=True))
+        direct.compile(device='k26', mode='fixed', weights='reloadable', calibration=samples,
+                       out_dir=Fixtures.build_dir('layernorm_direct_reload'))
+        direct._retarget(model(identity=True))
+        with self.assertRaisesRegex(ConfigError, 'frozen'):
+            direct._retarget(model())
 
     @unittest.skipUnless(shutil.which('verilator'), 'Verilator unavailable')
     def test_affine_rtl(self):

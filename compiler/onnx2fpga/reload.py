@@ -152,7 +152,10 @@ def _same_frozen(compiled, lowered):
                 unit.mults, unit.mult, unit.shift, unit.out_zero_point,
                 [None if table is None else np.asarray(table).tolist() for table in unit.tables])
 
-    for old, new in zip(frozen(compiled), frozen(lowered)):
+    before, after = frozen(compiled), frozen(lowered)
+    if len(before) != len(after):
+        raise ConfigError("the new model changes the frozen pipeline")
+    for old, new in zip(before, after):
         if values(old) != values(new):
             raise ConfigError("%s is frozen, and the new model changes it" % old.name)
 
