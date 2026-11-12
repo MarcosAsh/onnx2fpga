@@ -1,6 +1,7 @@
 // A bounded register window over stdin/stdout, for local use or SSH.
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -42,6 +43,10 @@ public:
             throw std::runtime_error("invalid register base");
         const int fd = open(device.c_str(), O_RDWR | O_SYNC | O_CLOEXEC);
         if (fd < 0) throw std::runtime_error("cannot open register device");
+        if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+            close(fd);
+            throw std::runtime_error("register device is already in use");
+        }
         struct stat info {};
         if (fstat(fd, &info) != 0) {
             close(fd);
@@ -59,13 +64,19 @@ public:
         }
         void* mapped = mmap(nullptr, span, PROT_READ | PROT_WRITE, MAP_SHARED,
                             fd, static_cast<off_t>(base));
-        close(fd);
-        if (mapped == MAP_FAILED) throw std::runtime_error("cannot map register device");
+        if (mapped == MAP_FAILED) {
+            close(fd);
+            throw std::runtime_error("cannot map register device");
+        }
+        fd_ = fd;
         words_ = static_cast<volatile uint32_t*>(mapped);
     }
     Registers(const Registers&) = delete;
     Registers& operator=(const Registers&) = delete;
-    ~Registers() { munmap(const_cast<uint32_t*>(words_), span); }
+    ~Registers() {
+        munmap(const_cast<uint32_t*>(words_), span);
+        close(fd_);
+    }
 
     uint32_t read(uint64_t offset) const {
         check(offset);
@@ -87,6 +98,7 @@ private:
         if (offset >= span || offset % 4) throw std::runtime_error("invalid register offset");
     }
     volatile uint32_t* words_ = nullptr;
+    int fd_ = -1;
 };
 }  // namespace
 

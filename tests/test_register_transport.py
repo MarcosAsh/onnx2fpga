@@ -81,6 +81,14 @@ class NativeTest(unittest.TestCase):
                     regs.write(0, value)
         self.assertEqual(self.memory.read_bytes()[0x1000:0x1004], b"\xef\xcd\xab\x89")
 
+    def test_exclusive_device_access(self):
+        with ProcessRegisters(self.command) as first:
+            with self.assertRaisesRegex(BoardError, "disconnected"):
+                ProcessRegisters(self.command)
+            first.write(0x100, 42)
+        with ProcessRegisters(self.command) as second:
+            self.assertEqual(second.read(0x100), 42)
+
     def test_native_rejects_invalid_commands(self):
         for command in ("r 10000", "r 1", "w 0 100000000", "w 0 -1",
                         "w 0 1 extra", "r 0 extra", "r", "x 0"):
