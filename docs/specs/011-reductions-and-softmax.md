@@ -395,9 +395,35 @@ Weight reloads retain the normalization parameters and tables already in the
 bitstream. A new model that changes their integer representation or the frozen
 pipeline structure is rejected.
 
+On ECP5, centered normalization multiplies the narrow numerator before shifting
+the product. For a positive effective shift `s`, its rounding is
+`((product >> (s - 1)) + 1) >> 1`, with arithmetic right shifts. This preserves
+the integer result while using one 18-by-18 multiplier per lane in the corpus
+model. K26 and Artix retain their original datapath; the alternative increased
+K26 fabric use without saving DSPs.
+
+The [ECP5-25K measurement](../measurements/layernorm-ecp5-2026-11-12.json) passes
+256 bit-exact vectors and the same numerical threshold, with normalized MAE
+0.02064. At the requested 80 MHz, the full network takes 21 cycles (262.5 ns),
+with an initiation interval of one. It uses 11,470 LUTs, 3,687 registers, 26 DSPs
+and 17 EBRs. nextpnr reports 100.15 MHz achievable setup frequency. This is a
+core implementation; hold, pulse-width and board I/O timing remain unassessed.
+
+The ECP5 delay model adds 5 ns to the first sum-tree segment after a ROM read.
+It also permits a register between the reciprocal ROM and its multiplier.
+The measured ROM clock-to-output delay was 5.609 ns. Without these cuts, the
+network reached 69.57 MHz; the sum cut alone reached 74.93 MHz. Both cuts are
+selected for this model at 80 MHz. The product-shift identity is checked with
+an all-input SAT proof over representative shift ranges, alongside RTL tests.
+
+```sh
+python3 tools/report_corpus.py torch_layernorm_mlp --device icepi25 \
+    --clock-mhz 80 --frames 256 --implement --out build/layernorm_ecp5
+```
+
 The full network was not accepted in the initial ECP5-25K runs. At
 [100 MHz](../measurements/layernorm-icepi25-100-2026-11-12.json), the compiler
 rejected the normalization rescale's estimated delay. At
 [80 MHz](../measurements/layernorm-icepi25-80-2026-11-12.json), it rejected the
-34 estimated DSPs against the device's 28. These are compiler estimates,
-not measured hardware limits. No ECP5 implementation of this network is claimed.
+34 estimated DSPs against the device's 28. Those refusals describe the earlier
+datapath and remain available with their original hashes.

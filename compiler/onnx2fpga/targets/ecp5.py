@@ -200,7 +200,8 @@ class Ecp5CostModel:
 # Fitted to 54 nextpnr-ecp5 runs, with the carry and mux held fixed; see docs/specs/002.
 ECP5_6 = DelayModel(register=1.21, net=1.17, lut=0.39, carry=0.3, carry_bit=0.035, mux=1.2,
                     tree=1.80, fanout=0.53, multiply=(4.31, 4.31), dsp=(18, 18), margin=0.10,
-                    provenance="fitted to nextpnr-ecp5 place and route", lut_inputs=4)
+                    provenance="fitted to nextpnr-ecp5 place and route", lut_inputs=4,
+                    rom_output=5.0)
 
 
 class Ecp5Device(Device):

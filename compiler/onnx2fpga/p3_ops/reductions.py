@@ -192,11 +192,13 @@ def sum_paths(delays, levels, bits):
             for cuts in range(max(1, levels))]
 
 
-def rescale_paths(delays, acc, mult_bits, shift, fanout=1, multiply=True):
-    """The cuts of Otf_requant after its multiply, rounding and zero point; Log multiplies by 1."""
+def rescale_paths(delays, acc, mult_bits, shift, fanout=1, multiply=True, shift_choices=1):
+    """Cuts after multiplication, rounding and the zero point; Log multiplies by 1."""
     path, adder, logic = delays.path, delays.adder, delays.logic
     wide = acc + mult_bits + 1
     rounding = [adder(wide)] if 0 < shift < wide - 1 else []
+    if shift_choices > 1:
+        rounding = [delays.select(ceil_log2(shift_choices)), adder(wide)]
     clamp = [logic()]
     if multiply:
         first = [delays.product(acc, mult_bits)]
@@ -317,9 +319,10 @@ class SoftmaxUnit(StreamingNode):
 
     def __init__(self, name, inputs, outputs, lanes, op, in_dtype, out_dtype, sum_table,
                  numer_table, min_exp, mantissa_bits, scale_table, exp_table, scale_bits,
-                 shift, out_zero_point, subtract_max, mode=None, epsilon=0):
+                 shift, out_zero_point, subtract_max, mode=None, epsilon=0, post_shift=False):
         self.mode = mode or ("divide" if exp_table is None else "log")
         self.epsilon = int(epsilon)
+        self.post_shift_enabled = bool(post_shift)
         self.lanes = int(lanes)
         self.op = op
         self.in_dtype = in_dtype
@@ -341,6 +344,8 @@ class SoftmaxUnit(StreamingNode):
             self.stages = {"max": 0, "table": 0, "sum": 0, "normalize": 0, "rescale": 0}
             if not self.subtract_max:
                 del self.stages["max"]
+            if self.post_shift:
+                self.stages["scale"] = 0
         StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
@@ -405,8 +410,12 @@ class SoftmaxUnit(StreamingNode):
         if self.mode == "max":
             return self.numer_bits
         if self.mode in ("root", "center_root"):
-            return self.numer_bits + self.root_shifts
+            return self.numer_bits if self.post_shift else self.numer_bits + self.root_shifts
         return self.numer_bits + self.exps - 1
+
+    @property
+    def post_shift(self):
+        return self.post_shift_enabled and self.centered and self.shift > self.root_shifts
 
     def normalise(self, total):
         """The sum's leading one at or above min_exp, and the mantissa_bits bits below it."""
@@ -473,12 +482,16 @@ class SoftmaxUnit(StreamingNode):
         else:
             found["table"] = [path(table, fanout=fanout)] * 2
         found["sum"] = sum_paths(delays, self.levels, self.total_bits)
+        if delays.rom_output:
+            found["sum"] = [max(cost, path(delays.rom_output, delays.adder_tree(
+                self.levels // (stages + 1), self.total_bits)))
+                for stages, cost in enumerate(found["sum"])]
         detect = [logic(), select(ceil_log2(self.exps))]
         root = self.mode in ("root", "center_root")
         scale = [delays.table(self.mantissa_bits + root),
                  delays.adder(self.scale_bits) if self.log else logic()]
         shifts = self.root_shifts + 1 if root else self.exps
-        shift = [] if self.log else [select(ceil_log2(shifts))]
+        shift = [] if self.log or self.post_shift else [select(ceil_log2(shifts))]
         found["normalize"] = [
             max(path(*detect, *scale, fanout=self.exps), path(*detect, *shift)),
             max(path(*detect, fanout=self.exps), path(*scale), path(*shift, fanout=lanes))]
@@ -489,7 +502,13 @@ class SoftmaxUnit(StreamingNode):
                                           path(*shift, fanout=lanes)))
         found["rescale"] = rescale_paths(delays, self.acc_bits, 2 if self.log else
                                          self.scale_bits, self.shift, fanout=lanes,
-                                         multiply=not self.log)
+                                         multiply=not self.log,
+                                         shift_choices=shifts if self.post_shift else 1)
+        if self.post_shift:
+            found["scale"] = [
+                path(delays.rom_output, delays.product(self.acc_bits, self.scale_bits), fanout=lanes),
+                max(path(delays.rom_output, delays.net, fanout=lanes),
+                    delays.registered_product(self.acc_bits, self.scale_bits, lanes))]
         if self.centered:
             width = self.total_bits
             constant = delays.adder_tree(ceil_log2(self.lanes.bit_count()), width)
@@ -509,7 +528,8 @@ class SoftmaxUnit(StreamingNode):
         trees = (lanes - 1) * (2 * bits * has_max + (self.mode != "max") * self.total_bits)
         shifts = {"log": 1, "max": 1, "root": self.root_shifts + 1,
                   "center_root": self.root_shifts + 1}.get(self.mode, self.exps)
-        shift = 0 if shifts == 1 else lanes * self.acc_bits * max(1, ceil_log2(shifts))
+        shifted_bits = self.acc_bits + self.scale_bits + 1 if self.post_shift else self.acc_bits
+        shift = 0 if shifts == 1 else lanes * shifted_bits * max(1, ceil_log2(shifts))
         rescale = lanes * 3 * (self.acc_bits + self.scale_bits)
         lut = lanes * table_bits * luts + scale + trees + shift + rescale
         wide = table_bits + self.acc_bits
@@ -538,6 +558,8 @@ class SoftmaxUnit(StreamingNode):
         return {"LANES": self.lanes, "IN_BITS": self.in_dtype.bits,
                 "MAX": int(self.subtract_max), "LOG": int(self.log),
                 "MODE": self.MODES.index(self.mode), "EPSILON": self.epsilon,
+                "POST_SHIFT": int(self.post_shift),
+                "SCALE_STAGES": self.stages.get("scale", 0),
                 "SUM_BITS": self.sum_bits, "NUMER_BITS": self.numer_bits,
                 "TOTAL_BITS": self.total_bits, "MIN_EXP": self.min_exp,
                 "MANTISSA_BITS": self.mantissa_bits, "SCALE_BITS": self.scale_bits,

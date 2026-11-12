@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-12T05:11:05.007231+00:00",
+    "revision": "ac9131722e4ab777a498baabecde01ac3747fceb",
+    "worktree_status": "M compiler/onnx2fpga/measure.py\n M compiler/onnx2fpga/p3_ops/reductions.py\n M compiler/onnx2fpga/p4_quantize/lower.py\n M compiler/onnx2fpga/p4_quantize/reductions.py\n M compiler/onnx2fpga/p5_schedule/fixed.py\n M compiler/onnx2fpga/targets/ecp5.py\n M compiler/onnx2fpga/targets/timing.py\n M hardware/boards/kria/build.tcl\n M hardware/hardcaml/src/book_side.ml\n M hardware/hardcaml/src/order_book.ml\n M hardware/hardcaml/src/otf_softmax.ml\n M hardware/hardcaml/src/otf_softmax.mli\n M hardware/hardcaml/src/units.ml\n M hardware/hardcaml/test/test_otf_softmax.ml\n M tests/test_corpus_report.py\n M tests/test_layernorm.py\n M tools/report_corpus.py",
+    "reporter_sha256": "2130da93f327d4ee14a417c97a29a34a0956dfeae6b6a0bd97fcf7c827613535",
+    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox",
+      "yosys": "Yosys 0.52 (git sha1 fee39a3284c90249e1d9684cf6944ffbbcbb8f90)",
+      "nextpnr": "\"nextpnr-ecp5\" -- Next Generation Place and Route (Version 0.9-3)"
+    }
+  },
+  "configuration": {
+    "device": "icepi25",
+    "mode": "fixed",
+    "clock_mhz": 80.0,
+    "frames": 256,
+    "implement": true,
+    "inspect_only": false,
+    "models": [
+      "torch_layernorm_mlp"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "torch_layernorm_mlp",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "bced7d1b36f81c22d376142310c9f77e66265434f254cbf888c40cf5d72a35ba",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.14.1",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              "batch",
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "LayerNormalization",
+            "attributes": [
+              "axis",
+              "epsilon"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gelu",
+            "attributes": [
+              "approximate"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "icepi25",
+        "mode": "fixed",
+        "findings": [
+          {
+            "severity": "warning",
+            "code": "batch_shape",
+            "message": "input 'x' uses batch size 1 during import",
+            "node_index": null,
+            "node": null,
+            "op_type": null,
+            "domain": null,
+            "opset": null
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "117cb15b08db3acbbcaf2f2d545c81309e6567bc214a34cb8f8dc8e1b9b0f741",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 17602.1,
+          "ff": 5538,
+          "dsp": 26,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": 21,
+        "initiation_interval_cycles": 1,
+        "clock_assumption_mhz": 80.0,
+        "latency_ns_at_assumed_clock": 262.5,
+        "frames_per_second_at_assumed_clock": 80000000.0,
+        "predicted_fmax_mhz": 88.14665544247369
+      },
+      "generated_sha256": {
+        "rtl/top.v": "8502ce032c51b22a67d9a2937b924c1669e5a894d5315fca36f7583c801caab3"
+      },
+      "manifest_sha256": "6101083f8b1945b1342fd114d241b7087ee96e2aa9167fca6772e95917ad6114",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0024183835328442185,
+        "max_absolute_error": 0.008515090776100909,
+        "reference_std": 0.11717857350213069,
+        "normalized_mae": 0.020638444901364534,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "part": "LFE5U-25F-6CABGA256",
+          "stage": "impl",
+          "lut": 11470,
+          "ff": 3687,
+          "dsp": 26,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 17
+        },
+        "timing": {
+          "passed": true,
+          "clocks": {
+            "$glbnet$clock$TRELLIS_IO_IN": {
+              "achieved": 100.15023040771484,
+              "constraint": 80
+            }
+          },
+          "scope": "nextpnr setup estimate; hold, pulse width and board I/O unassessed"
+        },
+        "artifacts_sha256": {
+          "top.json": "43936c8a5939d9c80ed8190817e5af481d3bfe93889e8b2ddbe3814778b1f145",
+          "route.json": "b8ece1c072fef02e5a5e7d6879b692dd0ad2187c7a05d14dce7f0438b99d7363",
+          "commands.json": "d29e4bfdd2b4e42696e96ab21788d12beaf590b194773fea499b2f24136efa72",
+          "yosys.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "nextpnr.log": "d5c91add521552f04e89554c6df026bea05b711a76afbc166b2568adca109e5b"
+        }
+      }
+    }
+  ]
+}

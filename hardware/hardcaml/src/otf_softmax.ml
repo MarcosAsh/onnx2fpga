@@ -18,11 +18,12 @@ module Stages = struct
     ; table : int
     ; sum : int
     ; normalize : int
+    ; scale : int
     ; rescale : int
     }
   [@@deriving sexp_of]
 
-  let none = { max = 0; table = 0; sum = 0; normalize = 0; rescale = 0 }
+  let none = { max = 0; table = 0; sum = 0; normalize = 0; scale = 0; rescale = 0 }
 end
 
 module type Config = sig
@@ -31,6 +32,7 @@ module type Config = sig
   val subtract_max : bool
   val mode : Mode.t
   val epsilon : int
+  val post_shift : bool
   val sum_table : int array
   val sum_bits : int
   val numer_table : int array
@@ -70,18 +72,20 @@ module Make (Config : Config) = struct
       + (if centered then 3 else 0)
       + 1
       + stages.normalize
+      + stages.scale
       + 1
       + stages.rescale
   ;;
 
   (* Root shifts by half of the leading one's position, the parity going to the table. *)
   let root_shifts = (exps - 1) / 2
+  let post_shift = post_shift && centered && shift > root_shifts
 
   (* Divide shifts each numerator left by up to [exps - 1]; Log subtracts the logarithm. *)
   let acc_bits =
     match mode with
     | Divide -> numer_bits + exps - 1
-    | Root | Center_root -> numer_bits + root_shifts
+    | Root | Center_root -> if post_shift then numer_bits else numer_bits + root_shifts
     | Log -> Int.max numer_bits scale_bits + 1
     | Max -> numer_bits
   ;;
@@ -147,6 +151,9 @@ module Make (Config : Config) = struct
        || stages.normalize < 0
        || stages.normalize > 2
        || (stages.normalize = 2 && exps < 3)
+       || stages.scale < 0
+       || stages.scale > 1
+       || (stages.scale > 0 && not post_shift)
        || stages.rescale < 0
        || stages.rescale > 3
     then raise_s [%message "BUG: otf_softmax stages out of range" (stages : Stages.t)]
@@ -348,7 +355,7 @@ module Make (Config : Config) = struct
         let b = sresize b ~width:acc_bits in
         match mode with
         | Divide -> reg (pick exp (List.init exps ~f:(fun j -> sll b ~by:(exps - 1 - j))))
-        | (Root | Center_root) when root_shifts = 0 -> reg b
+        | (Root | Center_root) when root_shifts = 0 || post_shift -> reg b
         | Root | Center_root ->
           reg
             (pick
@@ -356,14 +363,39 @@ module Make (Config : Config) = struct
                (List.init (root_shifts + 1) ~f:(fun j -> sll b ~by:(root_shifts - j))))
         | Log | Max -> reg b)
     in
+    let scale = delay stages.scale scale in
+    let accs = List.map accs ~f:(delay stages.scale) in
     let%hw_list y =
       List.map accs ~f:(fun acc ->
-        let acc, mult =
-          match mode with
-          | Divide | Root | Center_root | Max -> acc, scale
-          | Log -> acc -: sresize scale ~width:acc_bits, of_signed_int ~width:2 1
-        in
-        reg (Requant.hierarchical scope { clocking = i.clocking; acc; mult }).out)
+        if post_shift
+        then (
+          let cut stage value = if stages.rescale >= stage then reg value else value in
+          let width = acc_bits + scale_bits + 1 in
+          let product = cut 1 (sresize (acc *+ scale) ~width) in
+          let half =
+            delay (1 + stages.scale + Int.min 1 stages.rescale) (drop_bottom exp ~width:1)
+          in
+          let shifted =
+            pick
+              half
+              (List.init (root_shifts + 1) ~f:(fun j ->
+                 sra product ~by:(shift - root_shifts + j - 1)))
+          in
+          let rounded = cut 2 (sra (shifted +:. 1) ~by:1) in
+          let offset = cut 3 (rounded +: Sv_int.cast ~width out_zp) in
+          let lo = Sv_int.cast ~width out_min in
+          let hi = Sv_int.cast ~width out_max in
+          reg
+            (sresize
+               (mux2 (offset <+ lo) lo (mux2 (offset >+ hi) hi offset))
+               ~width:out_bits))
+        else (
+          let acc, mult =
+            match mode with
+            | Divide | Root | Center_root | Max -> acc, scale
+            | Log -> acc -: sresize scale ~width:acc_bits, of_signed_int ~width:2 1
+          in
+          reg (Requant.hierarchical scope { clocking = i.clocking; acc; mult }).out))
     in
     let%hw valid = Clocking.pipeline i.clocking ~n:latency i.x.valid in
     { O.y = { valid; value = concat_lsb y } }

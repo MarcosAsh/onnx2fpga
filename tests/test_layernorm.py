@@ -1,6 +1,9 @@
 """Layer normalization import, integer arithmetic and fixed-latency RTL."""
 
 import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 import unittest
 
 import numpy as np
@@ -12,6 +15,7 @@ from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
 from onnx2fpga.p3_ops.reductions import SoftmaxUnit
 from onnx2fpga.p4_quantize.calibrate import Calibrator
 from onnx2fpga.p4_quantize.lower import LowerToHardware
+from onnx2fpga.p5_schedule.fixed import UnrollForFixedLatency
 from onnx2fpga.pipeline import CompilerContext
 from onnx2fpga.targets.device import Device
 from support import Fixtures, Hdl
@@ -36,6 +40,47 @@ def reference(x, epsilon):
 
 
 class Arithmetic(unittest.TestCase):
+    def test_target_pipeline(self):
+        samples = [{'x': np.random.default_rng(i).normal(size=(1, 8))} for i in range(32)]
+        for name, clock in (('icepi25', 80), ('k26', 322.265625), ('a7_35t', 100)):
+            with self.subTest(device=name):
+                graph = OnnxImporter(model(identity=True)).run()
+                plan = Calibrator(graph).plan(samples)
+                context = CompilerContext(Device.get(name))
+                graph = LowerToHardware(plan, fixed=True).run(graph, context)
+                UnrollForFixedLatency(clock_mhz=clock).run(graph, context)
+                (unit,) = graph.nodes
+                self.assertEqual(unit.post_shift, name == 'icepi25')
+                if name == 'icepi25':
+                    self.assertEqual(unit.stages['sum'], 1)
+                    self.assertEqual(unit.stages['scale'], 1)
+                    self.assertEqual(unit.acc_bits, unit.numer_bits)
+                else:
+                    self.assertEqual(unit.stages.get('scale', 0), 0)
+                    self.assertGreater(unit.acc_bits, unit.numer_bits)
+
+    @unittest.skipUnless(shutil.which('yosys'), 'Yosys unavailable')
+    def test_product_shift_equivalence(self):
+        for base in (1, 7, 31, 40):
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder)
+                source = '''module check(input signed [29:0] product, input [3:0] half,
+                    output trigger);
+wire signed [44:0] wide = product;
+wire signed [30:0] narrow = product;
+wire signed [44:0] reference = (BASE+14 >= 44) ? 45'sd0 :
+    ((wide <<< (14-half)) + (45'sd1 <<< (BASE+13))) >>> (BASE+14);
+wire signed [30:0] shifted = narrow >>> (BASE+half-1);
+wire signed [30:0] result = (shifted + 31'sd1) >>> 1;
+assign trigger = (half <= 14) && (reference != result);
+endmodule
+'''.replace('BASE', str(base))
+                (path / 'check.v').write_text(source)
+                result = subprocess.run(['yosys', '-Q', '-T', '-p',
+                    'read_verilog check.v; prep -top check; sat -verify -prove trigger 0'],
+                    cwd=path, text=True, capture_output=True, timeout=60)
+                self.assertEqual(result.returncode, 0, result.stdout[-3000:] + result.stderr)
+
     def test_identity_affine_grid(self):
         from onnx2fpga.p2_graph.datatype import QuantSpec
         graph = OnnxImporter(model(identity=True)).run()

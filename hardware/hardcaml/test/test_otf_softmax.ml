@@ -86,6 +86,7 @@ let config ?(stages = Otf_softmax.Stages.none) ~lanes kind : (module Otf_softmax
     let lanes = lanes
     let in_bits = 8
     let epsilon = 0
+    let post_shift = false
 
     let subtract_max =
       match kind with
@@ -237,24 +238,39 @@ let%expect_test "softmax, logsoftmax and the normalizers match the compiler's mo
     [ ( "softmax"
       , 5
       , Softmax
-      , { Otf_softmax.Stages.max = 2; table = 1; sum = 2; normalize = 1; rescale = 3 } )
+      , { Otf_softmax.Stages.max = 2
+        ; table = 1
+        ; sum = 2
+        ; normalize = 1
+        ; scale = 0
+        ; rescale = 3
+        } )
     ; ( "softmax, two lanes"
       , 2
       , Softmax
-      , { max = 0; table = 1; sum = 0; normalize = 1; rescale = 2 } )
-    ; "logsoftmax", 6, Log, { max = 2; table = 1; sum = 2; normalize = 1; rescale = 3 }
-    ; "l1", 4, L1, { max = 0; table = 1; sum = 1; normalize = 1; rescale = 3 }
+      , { max = 0; table = 1; sum = 0; normalize = 1; scale = 0; rescale = 2 } )
+    ; ( "logsoftmax"
+      , 6
+      , Log
+      , { max = 2; table = 1; sum = 2; normalize = 1; scale = 0; rescale = 3 } )
+    ; "l1", 4, L1, { max = 0; table = 1; sum = 1; normalize = 1; scale = 0; rescale = 3 }
     ; ( "l1, split search"
       , 4
       , L1
-      , { max = 0; table = 0; sum = 0; normalize = 2; rescale = 0 } )
-    ; "l2", 6, L2, { max = 0; table = 1; sum = 2; normalize = 2; rescale = 3 }
-    ; "l2, one lane", 1, L2, { max = 0; table = 1; sum = 0; normalize = 1; rescale = 1 }
-    ; "max", 5, Max, { max = 2; table = 1; sum = 0; normalize = 0; rescale = 3 }
+      , { max = 0; table = 0; sum = 0; normalize = 2; scale = 0; rescale = 0 } )
+    ; "l2", 6, L2, { max = 0; table = 1; sum = 2; normalize = 2; scale = 0; rescale = 3 }
+    ; ( "l2, one lane"
+      , 1
+      , L2
+      , { max = 0; table = 1; sum = 0; normalize = 1; scale = 0; rescale = 1 } )
+    ; ( "max"
+      , 5
+      , Max
+      , { max = 2; table = 1; sum = 0; normalize = 0; scale = 0; rescale = 3 } )
     ; ( "max, two lanes"
       , 2
       , Max
-      , { max = 0; table = 1; sum = 0; normalize = 0; rescale = 1 } )
+      , { max = 0; table = 1; sum = 0; normalize = 0; scale = 0; rescale = 1 } )
     ]
     ~f:(fun (name, lanes, kind, most) ->
       let runs =

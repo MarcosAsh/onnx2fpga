@@ -26,6 +26,7 @@ module Stages : sig
     ; table : int
     ; sum : int
     ; normalize : int
+    ; scale : int
     ; rescale : int
     }
   [@@deriving sexp_of]
@@ -46,6 +47,9 @@ module type Config = sig
 
   (** Center_root adds this to the variance numerator with eight fraction bits. *)
   val epsilon : int
+
+  (** Multiply the centered numerator before shifting the product. *)
+  val post_shift : bool
 
   (** Unsigned values summed across the lanes, [2 ** in_bits] of them. *)
   val sum_table : int array

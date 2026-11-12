@@ -639,6 +639,7 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
           ;;
 
           let epsilon = param ~default:0 "EPSILON"
+          let post_shift = param ~default:0 "POST_SHIFT" <> 0
           let sum_table = ints ~signed:false "sum_table"
           let sum_bits = param "SUM_BITS"
           let numer_table = ints "numer_table"
@@ -660,6 +661,7 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
             ; table = param ~default:0 "TABLE_STAGES"
             ; sum = param ~default:0 "SUM_STAGES"
             ; normalize = param ~default:0 "NORMALIZE_STAGES"
+            ; scale = param ~default:0 "SCALE_STAGES"
             ; rescale = param ~default:0 "RESCALE_STAGES"
             }
           ;;

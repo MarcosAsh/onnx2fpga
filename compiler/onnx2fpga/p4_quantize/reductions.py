@@ -173,6 +173,7 @@ def lower_layernorm(node, ctx):
                        numer_table=codes, min_exp=0, mantissa_bits=MANTISSA_BITS - 1,
                        out_zero_point=plan.zero_point(out) if direct else 0,
                        subtract_max=False, mode="center_root", epsilon=epsilon,
+                       post_shift=ctx.device is not None and ctx.device.dsp_generation == "sysDSP",
                        **root(largest, normalized_scale / 16, plan))
     if direct:
         return [unit]

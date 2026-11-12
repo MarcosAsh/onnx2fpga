@@ -7,7 +7,7 @@ class DelayModel:
     """A path is a flip flop's clock to out and setup, plus a net and a cell for each step."""
 
     def __init__(self, register, net, lut, carry, carry_bit, mux, tree, fanout, multiply, dsp,
-                 internal=None, margin=0.0, provenance="", lut_inputs=6):
+                 internal=None, margin=0.0, provenance="", lut_inputs=6, rom_output=0.0):
         self.register = register
         self.net = net
         self.lut = lut
@@ -23,6 +23,7 @@ class DelayModel:
         self.margin = margin
         self.provenance = provenance
         self.lut_inputs = lut_inputs
+        self.rom_output = rom_output
 
     def path(self, *steps, fanout=1):
         """One register to register path: the source's fanout costs routing per doubling."""

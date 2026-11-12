@@ -48,10 +48,11 @@ class Lowering:
 class LoweringContext:
     """`fixed` lowers for fixed latency mode, where Relu and Add become elementwise units."""
 
-    def __init__(self, graph, plan, fixed=False):
+    def __init__(self, graph, plan, fixed=False, device=None):
         self.graph = graph
         self.plan = plan
         self.fixed = fixed
+        self.device = device
 
     def scale(self, name):
         return self.plan.scale(name)
@@ -241,7 +242,7 @@ class LowerToHardware(Pass):
                 self.rules[op_class] = lowering.apply
 
     def run(self, graph, context):
-        ctx = LoweringContext(graph, self.plan, self.fixed)
+        ctx = LoweringContext(graph, self.plan, self.fixed, device=context.device)
         for name in graph.inputs:
             graph.tensor(name).dtype = self.plan.act_dtype
         for node in list(graph.topological_order()):

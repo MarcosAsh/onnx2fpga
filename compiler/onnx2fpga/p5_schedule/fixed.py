@@ -15,7 +15,7 @@ from .folding import FoldingReport
 PATHS = {"product": "multiplies", "sum": "adder tree", "rescale": "rescale",
          "compare": "comparators", "select": "leaf select", "table": "table",
          "test": "comparison", "logic": "logic", "tree": "tree", "max": "max tree",
-         "normalize": "normalisation", "pick": "pick tree"}
+         "normalize": "normalisation", "pick": "pick tree", "scale": "scale table output"}
 
 
 def slowest(unit, delays):
