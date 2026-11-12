@@ -257,14 +257,33 @@ count waits for Vivado.
 
 ## Data
 
-NASDAQ publishes sample ITCH 5.0 days of several gigabytes. For now the replay
-uses a generator instead, `compiler/onnx2fpga/trading/itch.py`: six stocks with
+NASDAQ publishes [sample ITCH 5.0 days](https://emi.nasdaq.com/ITCH/Nasdaq%20ITCH/)
+of several gigabytes. The default replay uses
+`compiler/onnx2fpga/trading/itch.py`: six stocks with
 a price-time priority book each, adds near the touch, executions at the best
 level, cancels, deletes and replaces in roughly the mix of a NASDAQ day, plus
 messages the book ignores, in MoldUDP64 packets of up to 40 messages with
 heartbeats and an end of session packet. The same seed gives the same bytes.
-A sample day needs the MoldUDP64 framing built around its raw messages, which
-the generator's packet code already does.
+To replay recorded data, supply an uncompressed or gzip-compressed
+[BinaryFILE](https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/binaryfile.pdf):
+
+```sh
+PYTHONPATH=compiler:. python3 tools/replay_ddr.py \
+  --itch build/itch_samples/12302019.NASDAQ_ITCH50.gz \
+  --symbol AAPL --messages 100000 --out build/ddr_recorded_aapl
+```
+
+The reader finds the symbol's stock locate in its directory entry, retains its
+first requested messages in source order, and builds new MoldUDP64 packets.
+Payload bytes stay unchanged. This tests a symbol prefix with simulated stalls;
+it does not reproduce the original network packets or market arrival times.
+The report records the source-file and scanned-message hashes, selection count,
+and whether scanning reached the session terminator. A full scan rejects a
+missing terminator or truncated record.
+
+The software comparison uses the same bounded order table and price levels as
+the hardware. Reports include table collisions and forgotten price levels;
+agreement with this model does not establish a complete exchange order book.
 
 ## What is ours and what is borrowed
 

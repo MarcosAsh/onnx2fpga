@@ -214,6 +214,8 @@ class Generator:
 
 def packets(messages, seed=1):
     """MoldUDP64 packets up to an Ethernet MTU, with heartbeats and an end of session packet."""
+    if any(not 0 < len(message) <= MTU_PAYLOAD - HEADER - 2 for message in messages):
+        raise ValueError("message length exceeds replay packet capacity or is zero")
     rng = random.Random(seed)
     out, sequence, index = [], 1, 0
     while index < len(messages):

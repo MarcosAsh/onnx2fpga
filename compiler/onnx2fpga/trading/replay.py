@@ -68,11 +68,12 @@ def generate(config_path, *flags):
 
 
 class Replay:
-    def __init__(self, out_dir, messages=100000, seed=1, config=None):
+    def __init__(self, out_dir, messages=100000, seed=1, config=None, source_messages=None):
         self.out = pathlib.Path(out_dir)
         self.out.mkdir(parents=True, exist_ok=True)
         self.config = config or Config()
-        self.messages = itch.Generator(seed).messages(messages)
+        self.messages = (itch.Generator(seed).messages(messages)
+                         if source_messages is None else list(source_messages))
         self.packets = itch.packets(self.messages, seed)
         self.beats = itch.beats(self.packets)
         self.framed = frame(self.packets)
@@ -81,6 +82,8 @@ class Replay:
         """Compiles the MLP in fixed mode on the stream's features; thresholds at its 10th and 90th percentile."""
         books = Pipeline(self.config, lambda vector: 0).run(self.framed)
         vectors = [decision.features for decision in books]
+        if not vectors:
+            raise ReplayError("replay produced no feature vectors; include more tracked order messages")
         accelerator = load(tiny_mlp(), name="t2t_model")
         accelerator.compile(device=device, mode="fixed", hdl="hardcaml", clock_mhz=clock_mhz,
                             calibration=np.array(vectors[:4096], np.float32),
