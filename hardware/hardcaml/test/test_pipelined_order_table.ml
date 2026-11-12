@@ -6,6 +6,7 @@ open Onnx2fpga_hardcaml
 module Table = Pipelined_order_table.Make (struct
     let address_bits = 2
     let data_bits = 9
+    let use_ultra = false
   end)
 
 module Harness = Hardcaml_test_harness.Lws_harness.Make (Table.I) (Table.O)
@@ -23,6 +24,7 @@ let%expect_test "forwarded reads agree with a flat memory" =
        let o = Before_and_after_edge.after_edge outputs in
        let memory = Array.create ~len:4 0 in
        let pending = ref (0, 0) in
+       let pending_reads = ref (0, 0) in
        let drive (port : _ Table.Write.t) = function
          | Idle -> port.enable := Bits.gnd
          | (Write (address, data) | Speculate (address, data)) as action ->
@@ -54,7 +56,9 @@ let%expect_test "forwarded reads agree with a flat memory" =
          write a;
          write b;
          let expected = !pending in
-         pending := memory.(read_a), memory.(read_b);
+         let previous_a, previous_b = !pending_reads in
+         pending := memory.(previous_a), memory.(previous_b);
+         pending_reads := read_a, read_b;
          Lws.cycle h;
          if check
          then (

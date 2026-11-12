@@ -8,9 +8,9 @@ from onnx2fpga.trading.replay_records import records
 from onnx2fpga.trading.runtime import ReplaySession
 
 
-def manifest():
+def manifest(latency=22):
     return {"kind": "ddr_trading", "registers": {"map": {
-        name: {"offset": offset, "value": 22 if name == "latency" else 0}
+        name: {"offset": offset, "value": latency if name == "latency" else 0}
         for name, offset in OFFSETS.items()}},
         "ddr": {"record_bytes": 16, "base_alignment": 256, "address_bits": 40,
                 "mapped_base": 0, "mapped_bytes": 0x80000000}}

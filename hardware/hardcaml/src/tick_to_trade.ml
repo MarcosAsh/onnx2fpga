@@ -9,6 +9,7 @@ module Params = struct
     ; levels : int
     ; order_bits : int
     ; order_hash : string
+    ; order_memory : string
     ; spread_shift : int
     ; flow_shift : int
     ; buy_threshold : int
@@ -51,6 +52,16 @@ module Params = struct
          | _ -> fail "order_hash must be low or xor")
       | _ -> fail "expected an object"
     in
+    let order_memory =
+      match Jsonaf.of_string text with
+      | `Object fields ->
+        (match List.Assoc.find fields "order_memory" ~equal:String.equal with
+         | None -> "block"
+         | Some (`String name) when List.mem [ "block"; "ultra" ] name ~equal:String.equal
+           -> name
+         | _ -> fail "order_memory must be block or ultra")
+      | _ -> fail "expected an object"
+    in
     { locates = list "locates" ~f:number
     ; names =
         list "names" ~f:(function
@@ -59,6 +70,7 @@ module Params = struct
     ; levels = int "levels"
     ; order_bits = int "order_bits"
     ; order_hash
+    ; order_memory
     ; spread_shift = int "spread_shift"
     ; flow_shift = int "flow_shift"
     ; buy_threshold = int "buy_threshold"
@@ -87,6 +99,7 @@ module Make (Config : Config) = struct
       let levels = params.levels
       let order_bits = params.order_bits
       let hash_orders = String.equal params.order_hash "xor"
+      let use_ultra = String.equal params.order_memory "ultra"
     end)
 
   module Extract = Features.Make (struct
@@ -304,6 +317,7 @@ let verilog ?unit params =
     | Some "pipelined_order_table" ->
       let module Table =
         Pipelined_order_table.Make (struct
+          let use_ultra = String.equal params.Params.order_memory "ultra"
           let address_bits = params.Params.order_bits
           let data_bits = 64 - params.order_bits + 1 + 3 + 1 + 32 + 32
         end)

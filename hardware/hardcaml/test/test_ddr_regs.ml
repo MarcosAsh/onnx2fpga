@@ -146,6 +146,6 @@ let%test_unit "control registers honor channel skew, byte strobes and backpressu
        [%test_result: int * int] (read 0x34) ~expect:(3, 0);
        [%test_result: int * int] (read 0x38) ~expect:(2, 0);
        [%test_result: int * int] (read 0x44) ~expect:(0x56b, 0);
-       [%test_result: int] (fst (read 0x50) - fst (read 0x4c)) ~expect:13;
+       [%test_result: int] (fst (read 0x50) - fst (read 0x4c)) ~expect:14;
        [%test_result: int] (fst (read 0x100) land 255) ~expect:(Char.to_int 'O'))
 ;;

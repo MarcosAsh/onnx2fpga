@@ -1,4 +1,4 @@
-(** Two-cycle reads include same-cycle writes; bit zero is live. *)
+(** Three-cycle reads include writes during the first two cycles; bit zero is live. *)
 
 open! Core
 open! Hardcaml
@@ -6,6 +6,7 @@ open! Hardcaml
 module type Config = sig
   val address_bits : int
   val data_bits : int
+  val use_ultra : bool
 end
 
 module Make (_ : Config) : sig
@@ -34,7 +35,7 @@ module Make (_ : Config) : sig
     [@@deriving hardcaml]
   end
 
-  (** [_first] outputs arrive after one cycle; dead payloads are unspecified. *)
+  (** [_first] outputs arrive after two cycles; dead payloads are unspecified. *)
   module O : sig
     type 'a t =
       { qa : 'a

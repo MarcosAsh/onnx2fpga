@@ -10,7 +10,7 @@ from support import Fixtures, Hdl, ROOT
 from onnx2fpga.board import IcepiZero
 from onnx2fpga.trading import formal, itch
 from onnx2fpga.trading.reference import BUY, SELL, Config, Pipeline, frame
-from onnx2fpga.trading.replay import Replay, compare, generate
+from onnx2fpga.trading.replay import Replay, ReplayError, compare, generate
 
 HARDCAML = Hdl.skip_reason("hardcaml")
 VERILATOR = None if shutil.which("verilator") else "verilator not on PATH"
@@ -29,6 +29,42 @@ DESIGN = {"format": 1, "top": "otf_top", "mode": "fixed", "latency": 3, "input":
                                   "bias": {"elem_bits": 18, "lanes": 1, "values": [0]},
                                   "mult": {"elem_bits": 8, "lanes": 1, "values": [64]}},
                      "inputs": ["x"], "outputs": ["y"]}]}
+
+
+class Configuration(unittest.TestCase):
+    def test_memory_choice(self):
+        self.assertEqual(Config().order_memory, "block")
+        for memory in ("block", "ultra"):
+            self.assertEqual(Config(order_memory=memory).as_json(DESIGN)["order_memory"], memory)
+        for invalid in ("auto", "", None):
+            with self.assertRaisesRegex(ValueError, "order_memory"):
+                Config(order_memory=invalid)
+
+
+@unittest.skipIf(HARDCAML, HARDCAML)
+class MemorySelection(unittest.TestCase):
+    def test_selection_and_default(self):
+        path = Fixtures.build_dir("trading_memory_selection") / "config.json"
+        config = Config(order_bits=2).as_json(DESIGN)
+        path.write_text(json.dumps(config))
+        block = generate(path, "-unit", "pipelined_order_table")
+        self.assertRegex(block, r'(?i)ram_style\s*=\s*"block"')
+        del config["order_memory"]
+        path.write_text(json.dumps(config))
+        self.assertEqual(generate(path, "-unit", "pipelined_order_table"), block)
+        config["order_memory"] = "ultra"
+        path.write_text(json.dumps(config))
+        self.assertRegex(generate(path, "-unit", "pipelined_order_table"),
+                         r'(?i)ram_style\s*=\s*"ultra"')
+
+    def test_invalid_memory(self):
+        path = Fixtures.build_dir("trading_memory_invalid") / "config.json"
+        config = Config(order_bits=2).as_json(DESIGN)
+        for invalid in ("auto", 1, None):
+            config["order_memory"] = invalid
+            path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ReplayError, "order_memory must be block or ultra"):
+                generate(path, "-unit", "pipelined_order_table")
 
 
 class Stream(unittest.TestCase):
@@ -74,7 +110,7 @@ class Rtl(unittest.TestCase):
 
     def test_latency(self):
         self.assertEqual(self.replay.stages, [("moldudp64", 1), ("itch_parser", 1),
-                                              ("order_book", 4), ("features", 3),
+                                              ("order_book", 5), ("features", 3),
                                               ("model", 6), ("decision", 1)])
         self.assertEqual(self.accelerator.latency, 6)
 
@@ -101,7 +137,7 @@ class K26(unittest.TestCase):
         replay.build(acc)
         self.assertEqual(acc.latency, 12)
         latency = sum(cycles for _, cycles in replay.stages)
-        self.assertEqual(latency, 22)
+        self.assertEqual(latency, 23)
         decisions = Pipeline(replay.config, model).run(replay.framed)
         for gap in (0, 30):
             compare(replay.run(gap=gap), decisions, replay.config, latency, timed=gap == 0)
@@ -219,7 +255,8 @@ module check (input [31:0] held, requested, output trigger);
     wire [31:0] executed, remaining;
     dut optimized (.held(held), .requested(requested), .executed(executed), .remaining(remaining));
     wire [31:0] expected = requested < held ? requested : held;
-    assign trigger = executed != expected || remaining != held - expected;
+    assign trigger = executed != expected || remaining != held - expected
+        || ((remaining != 0) != (held > requested));
 endmodule
 """)
         script = ("read_verilog dut.v check.v; prep -flatten -top check; "
@@ -299,13 +336,24 @@ endmodule
 @unittest.skipIf(HARDCAML or IcepiZero.tool("yosys") is None, HARDCAML or "yosys not found")
 class PipelinedTableEquivalence(unittest.TestCase):
     def test_table_induction(self):
-        build = Fixtures.build_dir("pipelined_order_table_equivalence")
-        config = Config(order_bits=2)
+        for memory in ("block", "ultra"):
+            with self.subTest(memory=memory):
+                self.check_table(memory)
+
+    def check_table(self, memory):
+        build = Fixtures.build_dir("pipelined_order_table_equivalence_" + memory)
+        config = Config(order_bits=2, order_memory=memory)
         path = build / "config.json"
         path.write_text(json.dumps(config.as_json(DESIGN)))
         source = generate(path, "-unit", "pipelined_order_table").split("endmodule", 1)[0]
         source = source.replace("module pipelined_order_table (", "module check (")
         source = source.replace("module check (", "module check (\n    trigger,")
+        width = 132 - config.order_bits
+        bank_width = 72 if memory == "ultra" else 9
+        prefixes = ("payload_0_", "payload_1_") if memory == "ultra" else ("payload_",)
+        payloads = ["{" + ", ".join(
+            f"{prefix}{bank}[index]" for bank in reversed(range((width + bank_width - 1) // bank_width))
+        ) + "}" for prefix in prefixes]
         invariant = """
     output trigger;
     reg [%(top)d:0] reference [0:3];
@@ -325,15 +373,20 @@ class PipelinedTableEquivalence(unittest.TestCase):
         && !(wa && wb && write_a$address == write_b$address));
     reg [%(top)d:0] expected_a, expected_b, first_a, first_b;
     reg first_seen_a = 0, first_seen_b = 0;
-    wire [%(top)d:0] next_a = initialize && read_a == write_a$address ? 0
-        : !initialize && wa && read_a == write_a$address ? write_a$data
-        : !initialize && wb && read_a == write_b$address ? write_b$data : reference[read_a];
-    wire [%(top)d:0] next_b = initialize && read_b == write_a$address ? 0
-        : !initialize && wa && read_b == write_a$address ? write_a$data
-        : !initialize && wb && read_b == write_b$address ? write_b$data : reference[read_b];
+    reg [1:0] delayed_a, delayed_b;
+    reg read_seen = 0;
+    wire [%(top)d:0] next_a = initialize && delayed_a == write_a$address ? 0
+        : !initialize && wa && delayed_a == write_a$address ? write_a$data
+        : !initialize && wb && delayed_a == write_b$address ? write_b$data : reference[delayed_a];
+    wire [%(top)d:0] next_b = initialize && delayed_b == write_a$address ? 0
+        : !initialize && wa && delayed_b == write_a$address ? write_a$data
+        : !initialize && wb && delayed_b == write_b$address ? write_b$data : reference[delayed_b];
     reg seen_a = 0, seen_b = 0;
     always @(posedge clock) begin
         legal_so_far <= legal_so_far && legal;
+        delayed_a <= read_a;
+        delayed_b <= read_b;
+        read_seen <= 1;
         if (initialize) begin
             reference[write_a$address] <= 0;
             initialized[write_a$address] <= 1;
@@ -345,21 +398,23 @@ class PipelinedTableEquivalence(unittest.TestCase):
         first_b <= next_b;
         expected_a <= first_a;
         expected_b <= first_b;
-        first_seen_a <= initialized[read_a] || (initialize && read_a == write_a$address);
-        first_seen_b <= initialized[read_b] || (initialize && read_b == write_a$address);
+        first_seen_a <= read_seen && (initialized[delayed_a]
+            || (initialize && delayed_a == write_a$address));
+        first_seen_b <= read_seen && (initialized[delayed_b]
+            || (initialize && delayed_b == write_a$address));
         seen_a <= first_seen_a;
         seen_b <= first_seen_b;
     end
     wire [3:0] mismatch;
     genvar index;
     generate for (index=0; index<4; index=index+1) begin
-        wire effective_created = pending_created_enable && pending_created_address == index
-            ? pending_created_data : created[index];
-        wire effective_deleted = pending_deleted_enable && pending_deleted_address == index
-            ? pending_deleted_data : deleted[index];
+        wire effective_created = pending_created_enable[index/2] && pending_created_address == index
+            ? pending_created_data[index/2] : (index<2 ? created_0[index%%2] : created_1[index%%2]);
+        wire effective_deleted = pending_deleted_enable[index/2] && pending_deleted_address == index
+            ? pending_deleted_data[index/2] : (index<2 ? deleted_0[index%%2] : deleted_1[index%%2]);
         assign mismatch[index] = initialized[index]
             && (((effective_created ^ effective_deleted) != reference[index][0])
-                || (reference[index][0] && %(payload)s != reference[index][%(top)d:1]));
+                || (reference[index][0] && (%(payload_checks)s)));
     end endgenerate
     assign trigger = legal_so_far && ((|mismatch)
         || (seen_a && (qa[0] != expected_a[0] || (expected_a[0] && qa != expected_a)))
@@ -369,10 +424,9 @@ class PipelinedTableEquivalence(unittest.TestCase):
 endmodule
 """ % {
             "top": 132 - config.order_bits,
-            "payload": "{" + ", ".join(
-                f"payload_{bank}[index]"
-                for bank in reversed(range((132 - config.order_bits + 8) // 9))
-            ) + "}",
+            "payload_checks": " || ".join(
+                f"{payload} != reference[index][{width}:1]" for payload in payloads
+            ),
         }
         (build / "check.v").write_text(source + invariant)
         script = ("read_verilog check.v; prep -flatten -top check; memory_map; opt; "

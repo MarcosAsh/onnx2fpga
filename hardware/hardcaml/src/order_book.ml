@@ -2,7 +2,7 @@ open! Core
 open! Hardcaml
 open! Signal
 
-let latency = 4
+let latency = 5
 let flow_bits = 20
 
 module type Config = sig
@@ -10,6 +10,7 @@ module type Config = sig
   val levels : int
   val order_bits : int
   val hash_orders : bool
+  val use_ultra : bool
 end
 
 module Make (Config : Config) = struct
@@ -40,6 +41,7 @@ module Make (Config : Config) = struct
 
   module Table = Pipelined_order_table.Make (struct
       let address_bits = order_bits
+      let use_ultra = use_ultra
       let data_bits = Entry.sum_of_port_widths
     end)
 
@@ -99,26 +101,38 @@ module Make (Config : Config) = struct
     in
     let first = Itch_parser.Event.map event ~f:event_reg in
     let first = { first with valid = Clocking.reg clocking (event.valid &: ready) } in
-    let current = Itch_parser.Event.map first ~f:event_reg in
-    let current = { current with valid = Clocking.reg clocking first.valid } in
+    let second = Itch_parser.Event.map first ~f:event_reg in
+    let second = { second with valid = Clocking.reg clocking first.valid } in
+    let current = Itch_parser.Event.map second ~f:event_reg in
+    let current = { current with valid = Clocking.reg clocking second.valid } in
     let is kind = current.kind ==:. Itch_parser.Kind.code kind in
     let table_a = Entry.Of_signal.wires () in
     let table_b = Entry.Of_signal.wires () in
-    let first_a = Entry.Of_signal.wires () in
-    let%hw same_slot = slot current.order ==: slot current.new_order in
-    let%hw hit =
-      Clocking.reg_no_clear
-        clocking
-        (first_a.live
-         &: (first_a.tag ==: tag first.order)
-         &: (first_a.symbol ==: first.symbol))
+    let second_a = Entry.Of_signal.wires () in
+    let%hw current_slot = event_reg (slot second.order) in
+    let%hw current_new_slot = event_reg (slot second.new_order) in
+    let%hw same_slot = event_reg (slot second.order ==: slot second.new_order) in
+    let%hw second_hit =
+      second_a.live
+      &: (second_a.tag ==: tag second.order)
+      &: (second_a.symbol ==: second.symbol)
     in
+    let%hw hit = Clocking.reg_no_clear clocking second_hit in
     let quantity =
       Order_quantity.hierarchical
         scope
-        { held = first_a.shares; requested = first.shares }
+        { held = second_a.shares; requested = second.shares }
     in
-    let executed = Clocking.reg_no_clear clocking quantity.executed in
+    let executed =
+      Clocking.reg_no_clear
+        clocking
+        (mux2
+           (second.kind
+            ==:. Itch_parser.Kind.code Execute
+            |: (second.kind ==:. Itch_parser.Kind.code Cancel))
+           quantity.executed
+           second_a.shares)
+    in
     let%hw reduce = is Execute |: is Cancel in
     let%hw ask = mux2 (is Add) current.side table_a.side in
     let%hw adding = is Add &: ~:(table_a.live) in
@@ -134,8 +148,9 @@ module Make (Config : Config) = struct
     let crossing =
       Book_crossing.hierarchical
         scope
-        { ask = mux2 (first.kind ==:. Itch_parser.Kind.code Add) first.side first_a.side
-        ; price = first.price
+        { ask =
+            mux2 (second.kind ==:. Itch_parser.Kind.code Add) second.side second_a.side
+        ; price = second.price
         ; bid = Book_side.Level.of_word (sel_bottom early_bid ~width:64)
         ; offer = Book_side.Level.of_word (sel_bottom early_offer ~width:64)
         }
@@ -150,10 +165,7 @@ module Make (Config : Config) = struct
             ; ask
             ; opposite = zero 64
             ; remove =
-                { valid = hit &: ~:(is Add)
-                ; price = table_a.price
-                ; shares = mux2 reduce executed table_a.shares
-                }
+                { valid = hit &: ~:(is Add); price = table_a.price; shares = executed }
             ; insert =
                 { valid = adding |: replacing &: ~:crosses
                 ; price = current.price
@@ -165,18 +177,15 @@ module Make (Config : Config) = struct
     let bid_update = update bids gnd in
     let ask_update = update asks vdd in
     let accepted = bid_update.accepted in
-    let remaining =
-      add_attribute
-        (Clocking.reg_no_clear clocking quantity.remaining)
-        (Rtl_attribute.Vivado.extract_reset false)
-    in
+    let second_is kind = second.kind ==:. Itch_parser.Kind.code kind in
+    let%hw has_remaining = second_a.shares >: second.shares in
     let added ~order ~side =
       { Entry.live = vdd
       ; tag = tag order
-      ; symbol = current.symbol
+      ; symbol = second.symbol
       ; side
-      ; price = current.price
-      ; shares = current.shares
+      ; price = second.price
+      ; shares = second.shares
       }
     in
     let empty = Entry.map Entry.port_widths ~f:zero in
@@ -186,18 +195,26 @@ module Make (Config : Config) = struct
     let%hw write_a = current.valid &: (stored |: changed |: freed) in
     let entry_a =
       Entry.Of_signal.mux2
-        (is Add)
+        (second_is Add)
         (Entry.Of_signal.mux2
-           adding
-           (added ~order:current.order ~side:current.side)
-           table_a)
+           ~:(second_a.live)
+           (added ~order:second.order ~side:second.side)
+           second_a)
         (Entry.Of_signal.mux2
-           hit
+           second_hit
            (Entry.Of_signal.mux2
-              (reduce &: (remaining <>:. 0))
-              { table_a with shares = remaining }
+              (second_is Execute |: second_is Cancel &: has_remaining)
+              { second_a with shares = quantity.remaining }
               empty)
-           table_a)
+           second_a)
+      |> Entry.map ~f:event_reg
+    in
+    let entry_b =
+      Entry.Of_signal.mux2
+        (slot second.order ==: slot second.new_order &: ~:second_hit)
+        second_a
+        (added ~order:second.new_order ~side:second_a.side)
+      |> Entry.map ~f:event_reg
     in
     let%hw write_b = current.valid &: is Replace &: accepted in
     let port ~write ~address ~data =
@@ -217,20 +234,12 @@ module Make (Config : Config) = struct
         ; write_a =
             port
               ~write:(write_a |: ~:ready)
-              ~address:(mux2 ready (slot current.order) (lsbs sweep))
+              ~address:(mux2 ready current_slot (lsbs sweep))
               ~data:(Entry.Of_signal.mux2 ready entry_a empty)
-        ; write_b =
-            port
-              ~write:write_b
-              ~address:(slot current.new_order)
-              ~data:
-                (Entry.Of_signal.mux2
-                   (same_slot &: ~:hit)
-                   table_a
-                   (added ~order:current.new_order ~side:table_a.side))
+        ; write_b = port ~write:write_b ~address:current_new_slot ~data:entry_b
         }
     in
-    Entry.Of_signal.assign first_a (Entry.Of_signal.unpack table.qa_first);
+    Entry.Of_signal.assign second_a (Entry.Of_signal.unpack table.qa_first);
     Entry.Of_signal.assign table_a (Entry.Of_signal.unpack table.qa);
     Entry.Of_signal.assign table_b (Entry.Of_signal.unpack table.qb);
     let delayed = Clocking.reg_no_clear clocking in
@@ -264,8 +273,8 @@ module Make (Config : Config) = struct
       ; t_last = delayed current.t_last
       }
     in
-    let pending = updating &: (update_index ==: first.symbol) in
-    let read side = mux first.symbol (List.map sides ~f:side) in
+    let pending = updating &: (update_index ==: second.symbol) in
+    let read side = mux second.symbol (List.map sides ~f:side) in
     early_bid <-- mux2 pending book.bids (read fst);
     early_offer <-- mux2 pending book.asks (read snd);
     let registered = Snapshot.map book ~f:(Clocking.reg_no_clear clocking) in

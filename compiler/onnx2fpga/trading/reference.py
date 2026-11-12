@@ -27,10 +27,16 @@ class Config:
     buy_threshold: int = 40
     sell_threshold: int = -40
     order_shares: int = 100
+    order_memory: str = "block"
+
+    def __post_init__(self):
+        if self.order_memory not in ("block", "ultra"):
+            raise ValueError("order_memory must be block or ultra")
 
     def as_json(self, model):
         return {"locates": list(self.locates), "names": list(self.names),
                 "levels": self.levels, "order_bits": self.order_bits, "order_hash": self.order_hash,
+                "order_memory": self.order_memory,
                 "spread_shift": self.spread_shift, "flow_shift": self.flow_shift,
                 "buy_threshold": self.buy_threshold, "sell_threshold": self.sell_threshold,
                 "order_shares": self.order_shares, "model": model}

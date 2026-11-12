@@ -18,6 +18,7 @@ module type Config = sig
   val order_bits : int
 
   val hash_orders : bool
+  val use_ultra : bool
 end
 
 module Make (_ : Config) : sig

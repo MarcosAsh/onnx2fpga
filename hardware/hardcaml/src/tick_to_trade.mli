@@ -11,6 +11,7 @@ module Params : sig
     ; levels : int
     ; order_bits : int
     ; order_hash : string
+    ; order_memory : string
     ; spread_shift : int
     ; flow_shift : int
     ; buy_threshold : int

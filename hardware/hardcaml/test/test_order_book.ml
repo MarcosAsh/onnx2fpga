@@ -8,6 +8,7 @@ module Book = Order_book.Make (struct
     let levels = 2
     let order_bits = 3
     let hash_orders = false
+    let use_ultra = false
   end)
 
 module Harness = Hardcaml_test_harness.Lws_harness.Make (Book.I) (Book.O)
@@ -202,5 +203,29 @@ let%expect_test "crossing checks see the preceding event" =
     ((kind Add) (order 5) (bids ()) (asks ((9 10))) (flow 0))
     ((kind Delete) (order 3) (bids ()) (asks ()) (flow 0))
     ((kind Add) (order 6) (bids ()) (asks ((9 10))) (flow 0))
+    |}]
+;;
+
+let%expect_test "adjacent quantity updates use forwarded shares" =
+  run
+    [ event Add 1 ~shares:100 ~price:10
+    ; event Execute 1 ~shares:30
+    ; event Cancel 1 ~shares:20
+    ; event Execute 1 ~shares:70
+    ; event Add 1 ~shares:40 ~price:10
+    ; event Replace 1 ~new_order:9 ~shares:25 ~price:11
+    ; event Cancel 9 ~shares:5
+    ; event Delete 9
+    ];
+  [%expect
+    {|
+    ((kind Add) (order 1) (bids ((10 100))) (asks ()) (flow 0))
+    ((kind Execute) (order 1) (bids ((10 70))) (asks ()) (flow -30))
+    ((kind Cancel) (order 1) (bids ((10 50))) (asks ()) (flow -30))
+    ((kind Execute) (order 1) (bids ()) (asks ()) (flow -76))
+    ((kind Add) (order 1) (bids ((10 40))) (asks ()) (flow -76))
+    ((kind Replace) (order 1) (bids ((11 25))) (asks ()) (flow -76))
+    ((kind Cancel) (order 9) (bids ((11 20))) (asks ()) (flow -76))
+    ((kind Delete) (order 9) (bids ()) (asks ()) (flow -76))
     |}]
 ;;

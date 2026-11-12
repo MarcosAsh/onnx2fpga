@@ -65,7 +65,7 @@ class HostRtlTest(unittest.TestCase):
 
     def test_decision_snapshot_and_restart(self):
         buffer, bus = self.connect()
-        with ReplaySession(bus, buffer, manifest(), timeout=5) as session:
+        with ReplaySession(bus, buffer, manifest(latency=23), timeout=5) as session:
             for _ in range(2):
                 result = session.run(self.payload)
                 want = self.expected[-1]
@@ -74,12 +74,12 @@ class HostRtlTest(unittest.TestCase):
                 self.assertEqual(result["orders"], sum(bool(d.order) for d in self.expected))
                 self.assertEqual((result["prediction"], result["action"], result["order"]),
                                  (want.prediction, want.action, want.order))
-                self.assertEqual((result["t_out"] - result["t_last"]) & 0xFFFFFFFF, 22)
+                self.assertEqual((result["t_out"] - result["t_last"]) & 0xFFFFFFFF, 23)
                 self.assertTrue(buffer.cpu_owned)
 
     def test_timeout_abort_and_restart(self):
         buffer, bus = self.connect()
-        with ReplaySession(bus, buffer, manifest(), timeout=5) as session:
+        with ReplaySession(bus, buffer, manifest(latency=23), timeout=5) as session:
             session.timeout = 0.001
             with self.assertRaisesRegex(BoardError, "timed out"):
                 session.run(self.payload)
@@ -93,7 +93,7 @@ class HostRtlTest(unittest.TestCase):
 
     def test_ddr_error_is_drained(self):
         buffer, bus = self.connect(error=True)
-        with ReplaySession(bus, buffer, manifest(), timeout=5) as session:
+        with ReplaySession(bus, buffer, manifest(latency=23), timeout=5) as session:
             with self.assertRaisesRegex(BoardError, "status"):
                 session.run(self.payload)
             self.assertTrue(buffer.cpu_owned)

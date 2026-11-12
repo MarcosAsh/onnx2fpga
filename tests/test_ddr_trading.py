@@ -14,6 +14,11 @@ from onnx2fpga.trading.replay import compare
                  "Hardcaml and Verilator required")
 class IntegratedReplay(unittest.TestCase):
     def test_hashed_collisions_and_same_slot_replace(self):
+        for memory in ("block", "ultra"):
+            with self.subTest(memory=memory):
+                self.check_hashed_replay(memory)
+
+    def check_hashed_replay(self, memory):
         messages = [itch.add_order(2, 0, 1, "B", 100, "BRVO", 10000),
                     itch.add_order(2, 1, 2, "S", 100, "BRVO", 10100),
                     itch.add_order(2, 2, 257, "B", 30, "BRVO", 10000),
@@ -24,13 +29,13 @@ class IntegratedReplay(unittest.TestCase):
                     itch.order_replace(2, 5, 257, 514, 20, 10000),
                     itch.order_delete(2, 6, 257),
                     itch.order_executed(2, 7, 514, 5, 1)]
-        config = Config(order_bits=8, order_hash="xor")
+        config = Config(order_bits=8, order_hash="xor", order_memory=memory)
         reference = Pipeline(config, lambda vector: 0)
         reference.run(frame(itch.packets(messages)))
         self.assertEqual(reference.book.collisions, 2)
         self.assertEqual(reference.book.sides[0][0], [[10000, 115]])
         messages += itch.Generator(71).messages(2000)
-        replay = DdrReplay(Fixtures.build_dir("ddr_trading_hashed"), config=config,
+        replay = DdrReplay(Fixtures.build_dir("ddr_trading_hashed_" + memory), config=config,
                            source_messages=messages)
         acc, model = replay.model(device="k26", clock_mhz=322.265625)
         replay.build(acc)
@@ -42,12 +47,18 @@ class IntegratedReplay(unittest.TestCase):
             self.assertTrue(any(line.startswith("cycles ") for line in lines))
 
     def test_stalls_and_restart(self):
-        replay = DdrReplay(Fixtures.build_dir("ddr_trading"), messages=2000, seed=71)
+        for memory in ("block", "ultra"):
+            with self.subTest(memory=memory):
+                self.check_stalls_and_restart(memory)
+
+    def check_stalls_and_restart(self, memory):
+        replay = DdrReplay(Fixtures.build_dir("ddr_trading_" + memory), messages=2000, seed=71,
+                           config=Config(order_memory=memory))
         acc, model = replay.model(device="k26", clock_mhz=322.265625)
         replay.build(acc)
         expected = Pipeline(replay.config, model).run(replay.framed)
         latency = sum(cycles for _, cycles in replay.stages)
-        self.assertEqual(latency, 22)
+        self.assertEqual(latency, 23)
         for stall in (0, 65):
             with self.subTest(stall=stall):
                 for lines in replay.run(gap=stall, seed=4, runs=2):
@@ -60,3 +71,26 @@ class IntegratedReplay(unittest.TestCase):
         self.assertLess(partial, len(expected))
         compare(first, expected[:partial], replay.config, latency, timed=False)
         compare(restarted, expected, replay.config, latency, timed=False)
+
+    def test_ultra_depth_banks(self):
+        config = Config(order_bits=15, order_hash="xor", order_memory="ultra")
+        messages = []
+        for bank in range(8):
+            order = (bank << 12) | 1
+            replacement = (((bank + 1) % 8) << 12) | 2
+            messages += [itch.add_order(2, len(messages), order, "B", 100, "BRVO", 10000),
+                         itch.order_executed(2, len(messages) + 1, order, 30, 1),
+                         itch.order_replace(2, len(messages) + 2, order, replacement, 40, 10000),
+                         itch.order_delete(2, len(messages) + 3, order),
+                         itch.order_delete(2, len(messages) + 4, replacement)]
+        messages += itch.Generator(71).messages(2000)
+        replay = DdrReplay(Fixtures.build_dir("ddr_trading_ultra_depth_banks"), config=config,
+                           source_messages=messages)
+        acc, model = replay.model(device="k26", clock_mhz=322.265625)
+        replay.build(acc)
+        expected = Pipeline(config, model).run(replay.framed)
+        latency = sum(cycles for _, cycles in replay.stages)
+        self.assertEqual(latency, 23)
+        for lines in replay.run(gap=65, seed=71, runs=2, stream=True):
+            compare(lines, expected, config, latency, timed=False)
+            self.assertTrue(any(line.startswith("cycles ") for line in lines))

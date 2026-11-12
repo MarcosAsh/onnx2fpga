@@ -29,6 +29,8 @@ def main(argv=None):
                         help="log2 of order-table slots; larger tables need more FPGA memory")
     parser.add_argument("--order-hash", choices=("low", "xor"), default="low",
                         help="index orders by low bits or XOR-folded chunks")
+    parser.add_argument("--order-memory", choices=("block", "ultra"), default="block",
+                        help="payload memory primitive; ultra requires UltraRAM")
     parser.add_argument("--stalls", type=int, nargs="+", default=[0, 65])
     args = parser.parse_args(argv)
     if args.allow_eof and args.itch is None:
@@ -41,17 +43,22 @@ def main(argv=None):
     root = pathlib.Path(__file__).resolve().parents[1]
     report = {"status": "running", "scope": "Verilator AXI memory model; no physical DDR or board",
               "messages_requested": args.messages, "seed": args.seed,
-              "target_clock_mhz": 322.265625, "runs": []}
+              "target_clock_mhz": 322.265625, "order_memory": args.order_memory, "runs": []}
     report["source_sha256"] = {
         name: hashlib.sha256((root / name).read_bytes()).hexdigest()
         for name in ("runtime/sim/ddr_tick_harness.cpp", "hardware/hardcaml/src/ddr_trading.ml",
                      "hardware/hardcaml/src/ddr_replay.ml", "tools/replay_ddr.py",
+                     "hardware/hardcaml/src/pipelined_order_table.ml", "hardware/hardcaml/src/order_book.ml",
+                     "hardware/hardcaml/src/order_quantity.ml", "hardware/hardcaml/src/book_side.ml",
+                     "hardware/hardcaml/src/tick_to_trade.ml",
+                     "compiler/onnx2fpga/trading/reference.py",
                      "compiler/onnx2fpga/trading/recorded.py", "compiler/onnx2fpga/trading/itch.py",
                      "compiler/onnx2fpga/trading/replay.py", "compiler/onnx2fpga/trading/ddr_replay.py")}
     path = args.out / "report.json"
     path.write_text(json.dumps(report, indent=2) + "\n")
     try:
-        source_messages, config = None, Config(order_bits=args.order_bits, order_hash=args.order_hash)
+        source_messages, config = None, Config(order_bits=args.order_bits, order_hash=args.order_hash,
+                                               order_memory=args.order_memory)
         if args.itch:
             opener = gzip.open if args.itch.suffix == ".gz" else open
             with opener(args.itch, "rb") as stream:
