@@ -1044,7 +1044,13 @@ class StreamFifo(StreamingNode):
         return 0
 
     def amd_resources(self, device):
-        return memory_cost(self.depth, self.width, allow_uram=device.budget.uram > 0) + Resources(ff=32)
+        # The asynchronous read port cannot infer block RAM or UltraRAM.
+        if self.depth == 1:
+            return Resources(lut=self.width + 4, ff=self.width + 1)
+        ptr_bits = (self.depth - 1).bit_length()
+        banks = (self.depth + 63) // 64
+        return Resources(lut=2 * banks * self.width + 4 * ptr_bits + 8,
+                         ff=2 * ptr_bits + self.depth.bit_length() + 2 * (banks - 1))
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])

@@ -79,6 +79,35 @@ python3 tools/report_corpus.py --device a7_100t --clock-mhz 100 \
 The 200 MHz command exits with failure because of the five compilation refusals;
 its complete JSON report distinguishes them from routed timing failures.
 
+## FIFO resources
+
+Stream FIFOs have an asynchronous read port. Vivado maps their storage to
+distributed RAM; increasing their depth does not move them into block RAM or
+UltraRAM. The compiler charges LUTs for this storage and its selection logic,
+plus registers for the pointers, occupancy count and replicated controls.
+Depth-one buffers use registers.
+
+The [FIFO measurements](../measurements/fifo-resources-2026-11-12.json) use
+Vivado 2026.1 synthesis on the 35T part, with a 100 MHz constraint:
+
+| Depth x width | Backend | Estimated LUTs | Synthesized LUTs | Estimated FFs | Synthesized FFs |
+|---|---|---:|---:|---:|---:|
+| 1024 x 8 | SystemVerilog | 304 | 273 | 61 | 31 |
+| 1024 x 8 | Hardcaml | 304 | 273 | 61 | 31 |
+| 4096 x 8 | SystemVerilog | 1080 | 1022 | 163 | 45 |
+| 4096 x 8 | Hardcaml | 1080 | 1003 | 163 | 86 |
+
+All four use zero block RAMs, UltraRAMs and DSPs. These are synthesis resource
+checks, not routed timing results. The estimates are conservative for these
+configurations; other sizes still need implementation checks, including the
+device's available memory-capable slices. The fixed-mode corpus results above
+do not use these streaming FIFOs.
+
+```sh
+python3 tools/measure_fifos.py --device a7_35t --depths 1024 4096 --width 8 \
+    --out build/fifo_resources
+```
+
 ## Full board builds
 
 With the calibrated profile, the

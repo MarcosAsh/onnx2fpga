@@ -1,0 +1,157 @@
+{
+  "status": "passed",
+  "device": "a7_35t",
+  "scope": "synthesis only; no routed timing",
+  "runs": [
+    {
+      "depth": 1024,
+      "width": 8,
+      "backend": "sv",
+      "predicted": {
+        "lut": 304,
+        "ff": 61,
+        "dsp": 0,
+        "bram36": 0,
+        "uram": 0,
+        "ebr": 0
+      },
+      "measured": {
+        "top": "otf_fifo",
+        "part": "xc7a35ticsg324-1L",
+        "stage": "synth",
+        "generics": "DEPTH=1024 WIDTH=8",
+        "period_ns": 10,
+        "wns_ns": 6.004,
+        "fmax_mhz": 250.25,
+        "lut": 273,
+        "ff": 31,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      },
+      "rtl_sha256": "9bbc2078113723788f47538843fa420ec5568b0c10ed6474369d6807d15f2a06",
+      "synthesis_script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+      "artifacts_sha256": {
+        "vivado_output.log": "0fe5f3ca8fae99ceb28ab8ad705aa8ad2b16c24020eecf1ea58288be9569632b",
+        "vivado/clock.xdc": "69a86abd0d85ebb20aef22d29da5379f0c675a9f1d4484d8ae8de3247720e88e",
+        "vivado/utilization_synth.rpt": "459699074ea90c4383eace10900d78ddc6f7044986417cd2bc89929cc22fb687",
+        "vivado/timing_synth.rpt": "8656664ed8118cea96c9042d2b367168471d8c06ef614bdc2d5661148e15d542"
+      }
+    },
+    {
+      "depth": 1024,
+      "width": 8,
+      "backend": "hardcaml",
+      "predicted": {
+        "lut": 304,
+        "ff": 61,
+        "dsp": 0,
+        "bram36": 0,
+        "uram": 0,
+        "ebr": 0
+      },
+      "measured": {
+        "top": "fifo",
+        "part": "xc7a35ticsg324-1L",
+        "stage": "synth",
+        "generics": "",
+        "period_ns": 10,
+        "wns_ns": 5.981,
+        "fmax_mhz": 248.82,
+        "lut": 273,
+        "ff": 31,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      },
+      "rtl_sha256": "66bffa01daa95ee4e3bbc43548fa4dcd38ee7b53780c07a197d1857ee4aacbc9",
+      "synthesis_script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+      "artifacts_sha256": {
+        "vivado_output.log": "d658071087939134c1543f72eba762163c36da6a2b6c13c7b57c61dc18ad586a",
+        "vivado/clock.xdc": "26f025eb0044cd7d7f3861fed5fca3077c05d265faa8a0ad2ac718eeacc5b533",
+        "vivado/utilization_synth.rpt": "257dbe2ef0476b5bc8c096dcd28ed65a17d13c4b3dea828db238c514edb14aa8",
+        "vivado/timing_synth.rpt": "162dacf0e8ad6243e328631d2dfb1496d3c422deb915d34f8d3b32f7aa30a8af"
+      }
+    },
+    {
+      "depth": 4096,
+      "width": 8,
+      "backend": "sv",
+      "predicted": {
+        "lut": 1080,
+        "ff": 163,
+        "dsp": 0,
+        "bram36": 0,
+        "uram": 0,
+        "ebr": 0
+      },
+      "measured": {
+        "top": "otf_fifo",
+        "part": "xc7a35ticsg324-1L",
+        "stage": "synth",
+        "generics": "DEPTH=4096 WIDTH=8",
+        "period_ns": 10,
+        "wns_ns": 5.702,
+        "fmax_mhz": 232.67,
+        "lut": 1022,
+        "ff": 45,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      },
+      "rtl_sha256": "9bbc2078113723788f47538843fa420ec5568b0c10ed6474369d6807d15f2a06",
+      "synthesis_script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+      "artifacts_sha256": {
+        "vivado_output.log": "d5f3af48eaf03d3f79367f715d01e1eccb0edf3647d186be6a7c487ca5257d8f",
+        "vivado/clock.xdc": "69a86abd0d85ebb20aef22d29da5379f0c675a9f1d4484d8ae8de3247720e88e",
+        "vivado/utilization_synth.rpt": "e4f8f85f678a2bb6e804ce7c01d63b7c5d2fe337867790936a2e22845848bddf",
+        "vivado/timing_synth.rpt": "9a38b0b98a20bf48824c06cc1f17c52dbd34713addb3d375cc8955d171f790ac"
+      }
+    },
+    {
+      "depth": 4096,
+      "width": 8,
+      "backend": "hardcaml",
+      "predicted": {
+        "lut": 1080,
+        "ff": 163,
+        "dsp": 0,
+        "bram36": 0,
+        "uram": 0,
+        "ebr": 0
+      },
+      "measured": {
+        "top": "fifo",
+        "part": "xc7a35ticsg324-1L",
+        "stage": "synth",
+        "generics": "",
+        "period_ns": 10,
+        "wns_ns": 5.474,
+        "fmax_mhz": 220.95,
+        "lut": 1003,
+        "ff": 86,
+        "dsp": 0,
+        "ramb36": 0,
+        "ramb18": 0,
+        "bram36": 0.0,
+        "uram": 0
+      },
+      "rtl_sha256": "c31caa96fcb8d08bf27db92ab409f6a43c6bcd9eb6067438d8c8f010c43e723b",
+      "synthesis_script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+      "artifacts_sha256": {
+        "vivado_output.log": "b395b76a08a8d8d62b1fea5c34bc5366cebbcc17e9b2352e0d5c82d55f8201c9",
+        "vivado/clock.xdc": "26f025eb0044cd7d7f3861fed5fca3077c05d265faa8a0ad2ac718eeacc5b533",
+        "vivado/utilization_synth.rpt": "0013f8a718c711ea7d6bcb81cc3e16f235a1530bba655ea8210dcf0ddad376f7",
+        "vivado/timing_synth.rpt": "673f1d2a46631b4a0851f06f3873694c6917af960bb893429931a2132fcfc10b"
+      }
+    }
+  ],
+  "vivado_version": "2026.1",
+  "reproduce": "python3 tools/measure_fifos.py --device a7_35t --depths 1024 4096 --width 8 --out build/fifo_resources"
+}
