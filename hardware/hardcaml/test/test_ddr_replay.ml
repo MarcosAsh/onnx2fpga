@@ -24,7 +24,7 @@ let%test_unit "DDR records survive address, response and consumer stalls" =
        let rng = Random.State.make [| 871 |] in
        inputs.clear := Bits.vdd;
        inputs.start := Bits.gnd;
-       inputs.abort := Bits.gnd;
+       inputs.abort_request := Bits.gnd;
        inputs.ready := Bits.vdd;
        inputs.arready := Bits.gnd;
        inputs.rvalid := Bits.gnd;
@@ -101,7 +101,7 @@ let%test_unit "errors and abort drain a burst before another start" =
            let o = Before_and_after_edge.before_edge outputs in
            inputs.clear := Bits.vdd;
            inputs.start := Bits.gnd;
-           inputs.abort := Bits.gnd;
+           inputs.abort_request := Bits.gnd;
            inputs.ready := Bits.vdd;
            inputs.arready := Bits.gnd;
            inputs.rvalid := Bits.gnd;
@@ -125,7 +125,7 @@ let%test_unit "errors and abort drain a burst before another start" =
            List.iter (List.range 0 100) ~f:(fun cycle ->
              inputs.clear := Bits.gnd;
              inputs.start := Bits.of_bool (cycle = 0);
-             inputs.abort
+             inputs.abort_request
              := Bits.of_bool
                   ((String.equal fault "abort" && cycle = 3)
                    || (String.equal fault "abort_data" && cycle = 10));
@@ -197,7 +197,7 @@ let%test_unit "empty and invalid replay requests never issue AXI reads" =
            let o = Before_and_after_edge.before_edge outputs in
            inputs.clear := Bits.vdd;
            inputs.start := Bits.gnd;
-           inputs.abort := Bits.gnd;
+           inputs.abort_request := Bits.gnd;
            inputs.ready := Bits.vdd;
            inputs.arready := Bits.vdd;
            inputs.rvalid := Bits.gnd;

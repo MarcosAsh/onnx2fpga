@@ -127,6 +127,17 @@ let tick_to_trade_command =
         else print_string (Tick_to_trade.verilog ?unit params)]
 ;;
 
+let ddr_trading_command =
+  Command.basic
+    ~summary:"Verilog for DDR replay through the trading pipeline"
+    [%map_open.Command
+      let path = anon ("CONFIG_JSON" %: string) in
+      fun () ->
+        print_string
+          (Ddr_trading.verilog
+             (Tick_to_trade.Params.of_string (In_channel.read_all path)))]
+;;
+
 let () =
   Command_unix.run
     (Command.group
@@ -138,5 +149,6 @@ let () =
        ; "kria", kria_command
        ; "kria-regs", kria_regs_command
        ; "tick-to-trade", tick_to_trade_command
+       ; "ddr-trading", ddr_trading_command
        ])
 ;;

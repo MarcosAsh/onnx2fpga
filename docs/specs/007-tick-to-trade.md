@@ -1,13 +1,12 @@
 # 007 Tick to trade demo
 
-Status: partial. Stage A's path from UDP payload bytes to an order is built in
-Hardcaml and verified in simulation and by proof: a 100000 message replay
-matches the software model on every book, feature vector and decision, and
-every decision comes 14 cycles after its message's last byte. Still missing:
-the replayer in the fabric that reads from DDR, a build on a Kria board with
-its timing report, all of stage B, and a replay of a NASDAQ sample day, since
-the replay runs on synthetic traffic for now. The book is checked against the
-software book by replay, not by proof.
+Status: partial. Fabric DDR replay through the trading pipeline matches the
+software model on every book update, feature vector and decision for 100,000
+synthetic messages in simulation. The K26 pipeline takes 22 cycles from a
+message's last byte to its decision; the original unpipelined design takes 14.
+Unit proofs cover selected invariants, while replay checks the complete book.
+PS DDR integration, a routed Kria trading build, recorded NASDAQ data and all
+of stage B remain unfinished.
 
 ## Goal
 
@@ -39,8 +38,31 @@ not clear outstanding bus state.
 Randomized simulation covers address, data and consumer stalls across a 4 KiB
 boundary. Directed cases cover early/late `RLAST`, response and record errors,
 abort during address/data transfer, empty buffers, misalignment and address
-overflow. Connection to PS DDR, replay control registers and the integrated
-KR260 trading build remain unfinished.
+overflow.
+
+`ddr_trading` connects that engine to the complete trading pipeline. A start
+clears the parser and book, waits for table initialization, then starts DDR reads.
+Completion waits for the final decisions to leave the pipeline. Abort drains
+the current burst and pending decisions; a subsequent start clears the book
+again. Simulation compares every book update, feature vector and decision to
+the software model, including repeated runs and abort followed by restart.
+
+To reproduce the 100,000-message synthetic DDR replay:
+
+```sh
+PYTHONPATH=compiler:. python3 tools/replay_ddr.py --out build/ddr_trading_100k
+```
+
+The report records input/model/RTL hashes, source hashes, simulated cycle counts
+and comparison results. The AXI memory model stalls address and data channels;
+it does not model physical DDR bandwidth or a Linux DMA allocation. PS DDR
+connection, replay control registers and the routed KR260 trading build remain
+unfinished.
+
+The [100,000-message record](../measurements/ddr-trading-2026-11-12.json) covers
+410,694 DDR records and 65,267 decisions per run. Four runs include restart,
+with 0% and 65% randomized stalls. All match the software model and retain the
+22-cycle last-byte-to-decision latency.
 
 Stage B needs the KR260, the board with the SFP+ cage. It adds a 10G MAC and
 PCS so real frames come in from a PC with a 10G card and decisions go back out.

@@ -1,0 +1,80 @@
+{
+  "status": "passed",
+  "scope": "Verilator AXI memory model; no physical DDR or board",
+  "messages_requested": 100000,
+  "seed": 71,
+  "target_clock_mhz": 322.265625,
+  "runs": [
+    {
+      "stall_percent": 0,
+      "restart": false,
+      "cycles": 440488,
+      "decisions": 65267,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 0,
+      "restart": true,
+      "cycles": 440488,
+      "decisions": 65267,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 65,
+      "restart": false,
+      "cycles": 1252943,
+      "decisions": 65267,
+      "bit_exact": true
+    },
+    {
+      "stall_percent": 65,
+      "restart": true,
+      "cycles": 1250312,
+      "decisions": 65267,
+      "bit_exact": true
+    }
+  ],
+  "source_sha256": {
+    "runtime/sim/ddr_tick_harness.cpp": "8449a898673c27facdf65fcbabdf83a4e733a93d524fecd4050723ffa7efa2f3",
+    "hardware/hardcaml/src/ddr_trading.ml": "d7dc267eb45391f2e32a98406c7e4683598a906645be9f129b6109ae8773a255",
+    "hardware/hardcaml/src/ddr_replay.ml": "41d86521ac4e09509f9b9a9e159bc46e2f6bd9f75b57c8271b12743cb3195854",
+    "tools/replay_ddr.py": "5e64c3e740b952fd3af8f232429ce8623725b7850a60f88b0b3f1284f80ba929"
+  },
+  "records": 410694,
+  "decisions_per_run": 65267,
+  "latency_cycles": 22,
+  "stages": [
+    [
+      "moldudp64",
+      1
+    ],
+    [
+      "itch_parser",
+      1
+    ],
+    [
+      "order_book",
+      4
+    ],
+    [
+      "features",
+      3
+    ],
+    [
+      "model",
+      12
+    ],
+    [
+      "decision",
+      1
+    ]
+  ],
+  "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+  "sha256": {
+    "records.bin": "8acd34a42288f8811f66739af35dd217cb4530aef6e3a9ce9234098da34391fb",
+    "ddr_trading.v": "5b069398906101a27589ee14ed0637ee7b1dcd558a983078f9b71ce8a0e610d4",
+    "tick_to_trade.json": "73d4eeaa3ccd65f453656e7d29b2d467c82a03067db493bccc115850622913bf",
+    "model/model.onnx": "bc51359899a75abb7df536a3663e46c613081e2546ee9f4145824d0d51afa0f4",
+    "model/design.json": "7b57895069e08260caf270b99fcb5d7420502639bede602b01510e6b98a1a6ce"
+  }
+}

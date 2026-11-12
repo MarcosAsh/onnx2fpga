@@ -75,6 +75,7 @@ test-flaky-all:
 	$(PYTHON) tools/flakecheck.py --repeat 3
 
 test-sim:
+	$(PYTHON) -m unittest discover -s tests -p "test_ddr_trading.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_residual.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_sliding_window.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_simulation.py" -v

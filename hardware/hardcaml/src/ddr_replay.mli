@@ -9,7 +9,7 @@ module I : sig
     { clock : 'a
     ; clear : 'a
     ; start : 'a
-    ; abort : 'a
+    ; abort_request : 'a
     ; base : 'a
     ; records : 'a
     ; ready : 'a

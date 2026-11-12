@@ -15,7 +15,7 @@ module I = struct
     { clock : 'a
     ; clear : 'a
     ; start : 'a
-    ; abort : 'a
+    ; abort_request : 'a
     ; base : 'a [@bits 40]
     ; records : 'a [@bits 32]
     ; ready : 'a
@@ -67,7 +67,9 @@ let create (scope : Scope.t) (i : Signal.t I.t) =
       (sel_bottom remaining.value ~width:5)
   in
   let%hw arvalid = sm.is Address &: ~:(i.clear) in
-  let%hw rready = sm.is Data &: (i.ready |: drain.value |: i.abort) &: ~:(i.clear) in
+  let%hw rready =
+    sm.is Data &: (i.ready |: drain.value |: i.abort_request) &: ~:(i.clear)
+  in
   let%hw read = rready &: i.rvalid in
   let%hw keep = i.rdata.:[71, 64] in
   let%hw last = i.rdata.:(72) in
@@ -77,17 +79,19 @@ let create (scope : Scope.t) (i : Signal.t I.t) =
   let%hw final_record = remaining.value ==:. 0 &: (beats.value ==:. 1) in
   let%hw record_ok = keep_ok &: (i.rdata.:[127, 73] ==:. 0) &: (~:final_record |: last) in
   let%hw response_ok = i.rresp ==:. 0 &: (i.rlast ==: (beats.value ==:. 1)) in
-  let%hw valid = read &: ~:(drain.value) &: ~:(i.abort) &: record_ok &: response_ok in
+  let%hw valid =
+    read &: ~:(drain.value) &: ~:(i.abort_request) &: record_ok &: response_ok
+  in
   let%hw ending = uresize i.base ~width:41 +: sll (uresize i.records ~width:41) ~by:4 in
   let%hw config_ok = i.base.:[7, 0] ==:. 0 &: ~:(ending.:(40)) in
   let finish = Always.[ done_ <--. 1; sm.set_next Idle ] in
   Always.(
     compile
-      [ when_ (~:(sm.is Idle) &: i.abort) [ drain <--. 1; aborted <--. 1 ]
+      [ when_ (~:(sm.is Idle) &: i.abort_request) [ drain <--. 1; aborted <--. 1 ]
       ; sm.switch
           [ ( Idle
             , [ when_
-                  (i.start &: i.ready &: ~:(i.abort))
+                  (i.start &: i.ready &: ~:(i.abort_request))
                   [ address <-- i.base
                   ; remaining <-- i.records
                   ; delivered <--. 0
@@ -121,7 +125,7 @@ let create (scope : Scope.t) (i : Signal.t I.t) =
                       i.rlast
                       [ if_
                           (drain.value
-                           |: i.abort
+                           |: i.abort_request
                            |: ~:response_ok
                            |: ~:record_ok
                            |: (remaining.value ==:. 0))
