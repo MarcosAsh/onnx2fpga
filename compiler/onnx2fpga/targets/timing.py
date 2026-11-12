@@ -78,3 +78,12 @@ ULTRASCALE_PLUS_2 = ultrascale_plus(
 ULTRASCALE_PLUS_2LV = ultrascale_plus(
     1.24, 644.0, 440.0, "DSP48E2 from DS925 at 0.72 V (-2LE), fabric assumed and scaled; "
                         "unverified until a Vivado run")
+
+
+ARTIX_7_1 = DelayModel(
+    register=0.5, net=1.15, lut=0.3, carry=0.3, carry_bit=0.045,
+    mux=0.65, tree=1.8, fanout=0.3,
+    multiply=(1000.0 / 257.47 - 0.5, 1000.0 / 464.25 - 0.5),
+    dsp=(25, 18), internal=1000.0 / 464.25, margin=0.15,
+    provenance="DSP48E1 from DS181 -1/-1LI; fabric calibrated against the "
+               "22-model Artix corpus at 100 and 200 MHz. Routed timing still required.")

@@ -33,7 +33,7 @@ when the generated RTL exactly matches the integer reference model.
 | K26 / KV260 | Shares the K26 device model | Project generator and stub tests; a real full build remains unverified | Pending |
 | ECP5-25K / Icepi Zero | Compiler, simulation and open-tool builds | Implemented | [Recorded MLP test](../getting-started.md#what-to-expect) |
 | VU9P, VU47P, ZU7EV, Zynq-7020 | Device profiles; evidence varies by model | No corresponding board integration in the board registry | Unverified here |
-| Artix-7 35T / 100T | [Three models routed on each part](artix-measurements.md) | Arty A7 MLP and tree builds pass at 100 MHz | Pending |
+| Artix-7 35T / 100T | [22 models routed on each part at 100 MHz](artix-measurements.md) | Arty A7 MLP and tree builds pass at 100 MHz | Pending |
 
 A device profile supplies budgets and estimation parameters. It does not
 establish that a board can be programmed or that a model meets timing.
@@ -78,9 +78,9 @@ python3 tools/report_corpus.py linear_regression --device a7_100t --frames 256 \
 This records measured resources, setup, hold and pulse-width slack, internal
 constraint checks, and hashes of the reports and routed checkpoint. Any failed
 timing check fails the model's report. This build is out of context: board I/O
-timing and physical operation remain unassessed. Artix profiles currently use
-a 100 MHz target without a calibrated pipeline delay model; omit `--clock-mhz`
-for these targets.
+timing and physical operation remain unassessed. Artix profiles use a 100 MHz
+default target and a [calibrated delay model](artix-measurements.md#pipeline-delay-calibration).
+Use `--clock-mhz` to select the pipeline target. Routed timing remains required.
 
 The [12 November 2026 report](../measurements/corpus-k26-2026-11-12.json),
 from clean revision `bef6835`, passes all 22 models. It used the command above

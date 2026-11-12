@@ -1,0 +1,277 @@
+{
+  "boards": [
+    {
+      "board": "arty_a7_35t",
+      "model": "mlp_regressor",
+      "part": "xc7a35ticsg324-1L",
+      "tool": "Vivado 2026.1",
+      "clock_mhz": 100,
+      "baseline_revision": "94c8fdda7a589c0fb9f8376d14017f78475f5d9f",
+      "built_from_precommit_worktree": true,
+      "scope": "Full board implementation including UART/reset; physical programming and I/O unverified",
+      "resources": {
+        "lut": 3310.0,
+        "ff": 2566.0,
+        "dsp": 17.0,
+        "bram36": 1.0
+      },
+      "timing": {
+        "scope": "internal paths; board I/O unassessed",
+        "checks": {
+          "no_clock": 0,
+          "unconstrained_internal_endpoints": 0,
+          "multiple_clock": 0,
+          "generated_clocks": 0,
+          "loops": 0,
+          "latch_loops": 0
+        },
+        "setup": {
+          "worst_slack_ns": 2.083,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 3666
+        },
+        "hold": {
+          "worst_slack_ns": 0.038,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 3666
+        },
+        "pulse_width": {
+          "worst_slack_ns": 4.5,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 2588
+        },
+        "passed": true
+      },
+      "critical_methodology_violations": 0,
+      "methodology_warnings": [
+        "SYNTH-6: UART RAM output registers not merged"
+      ],
+      "model_sha256": "c6fedbc42020b906bd3ab6367ad9a84ddff13d4c5214496919b4fca2d3d7a650",
+      "fixture_sha256": "6fc3ceaaaa85b29ad7325d2983e43d5b6d202811174c5d19f2dac655b7205d74",
+      "build_directory": "build/artix_timing_corpus_v2_100/mlp_regressor",
+      "sha256": {
+        "design.json": "bc64fd8ac565a23f8656b6e33021b4e927cde3fde7a184faf1aefe6da420aea6",
+        "manifest.json": "a3955006210c322ff4757b0ba6e900f78ceb1d38821b97fab36fb8f95e9f27d8",
+        "arty_a7_35t/arty_top.v": "640108068ac3ac974a075d3d99d42a50b46358f5d2327eb568163df7ebcd5942",
+        "arty_a7_35t/settings.tcl": "03b641afbe38eb49dace3577fe3c43bf2d9dd789ad5be2cc1723e47749ed0505",
+        "arty_a7_35t/arty.xdc": "de066d5b744c8bcfb9853c035d4d52b896d4b320bb121fc94880fbe4b92106ae",
+        "arty_a7_35t/build.tcl": "187f0bd7ae7435c14b897cc82fc79cd62ff705e5f8e5851890b505add3a8b8dd",
+        "arty_a7_35t/check_timing.tcl": "700a2d75200370875c9560152271d0cf1d6c7b8f8b0e9f8d80a7f43008aa0133",
+        "arty_a7_35t/timing_summary.rpt": "013810b5f403d1b4149228a118fe34fa5f70b455b96c98fdc9225f419e9a1baa",
+        "arty_a7_35t/utilization.rpt": "073d50a913d3f0aeab356408947b7338f69a8e93a616e6c6ab0266adb083d27a",
+        "arty_a7_35t/methodology.rpt": "f85e8055174016cb6636ae4ef7e23a0b19ec0a5fede20b1828724dfa5a9d6658",
+        "arty_a7_35t/routed.dcp": "0b18b03d3e85fbc16b375c30b9ce3f5fca50b5fcac92f1024c5938f577c79fff",
+        "arty_a7_35t/arty_a7_35t.bit": "db8eee4ce7e20b034a2cd64880ce19bd604ce6de1ecfe62e82360991a8ccf545"
+      }
+    },
+    {
+      "board": "arty_a7_35t",
+      "model": "xgb_small",
+      "part": "xc7a35ticsg324-1L",
+      "tool": "Vivado 2026.1",
+      "clock_mhz": 100,
+      "baseline_revision": "94c8fdda7a589c0fb9f8376d14017f78475f5d9f",
+      "built_from_precommit_worktree": true,
+      "scope": "Full board implementation including UART/reset; physical programming and I/O unverified",
+      "resources": {
+        "lut": 1066.0,
+        "ff": 1106.0,
+        "dsp": 0.0,
+        "bram36": 1.0
+      },
+      "timing": {
+        "scope": "internal paths; board I/O unassessed",
+        "checks": {
+          "no_clock": 0,
+          "unconstrained_internal_endpoints": 0,
+          "multiple_clock": 0,
+          "generated_clocks": 0,
+          "loops": 0,
+          "latch_loops": 0
+        },
+        "setup": {
+          "worst_slack_ns": 2.391,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 1947
+        },
+        "hold": {
+          "worst_slack_ns": 0.106,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 1947
+        },
+        "pulse_width": {
+          "worst_slack_ns": 4.5,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 1111
+        },
+        "passed": true
+      },
+      "critical_methodology_violations": 0,
+      "methodology_warnings": [
+        "SYNTH-6: UART RAM output registers not merged"
+      ],
+      "model_sha256": "dbd03c0a4ad5ea6a8377f7019121bfa049143a5b864070cf4e6f746d941ae93f",
+      "fixture_sha256": "2863135f7d257237901279891ad6a4cf7eea04a07ed31f22566b5aa4dd0b085e",
+      "build_directory": "build/artix_timing_corpus_v2_100/xgb_small",
+      "sha256": {
+        "design.json": "d5e3d3a42ca03ad09c988f43e3805c75a2d5cacdc27a618dcd469c606a086cee",
+        "manifest.json": "d4a485ac09d23983e3754e1a2247d296db44aad0ae99dcd55c14cbe24c96c2ae",
+        "arty_a7_35t/arty_top.v": "a121e3d45c8d093b9be177ec56a10ee6098e848cce14485e69bb98c589f1add3",
+        "arty_a7_35t/settings.tcl": "03b641afbe38eb49dace3577fe3c43bf2d9dd789ad5be2cc1723e47749ed0505",
+        "arty_a7_35t/arty.xdc": "de066d5b744c8bcfb9853c035d4d52b896d4b320bb121fc94880fbe4b92106ae",
+        "arty_a7_35t/build.tcl": "187f0bd7ae7435c14b897cc82fc79cd62ff705e5f8e5851890b505add3a8b8dd",
+        "arty_a7_35t/check_timing.tcl": "700a2d75200370875c9560152271d0cf1d6c7b8f8b0e9f8d80a7f43008aa0133",
+        "arty_a7_35t/timing_summary.rpt": "89d8694e1fd9ff99d3d9ea024d3a5860560daef165ecfe8293690f1b8f89d04d",
+        "arty_a7_35t/utilization.rpt": "48ba1e17e542f94028d912ea310df6a6d62ba3da9c583d5254aaddf35a4df29e",
+        "arty_a7_35t/methodology.rpt": "e5110562f9e31f946d945c11ef9dceededab71fcb2a08ec0fbcee6925a8cc3b9",
+        "arty_a7_35t/routed.dcp": "cc98443f183f4dfe142ae485cea05ea61be74423bded618546064cc951d1753b",
+        "arty_a7_35t/arty_a7_35t.bit": "34d2e5939bafa964d51f66f457ca0059cd67f933e031860c1eaddef5fbdd66ca"
+      }
+    },
+    {
+      "board": "arty_a7_100t",
+      "model": "mlp_regressor",
+      "part": "xc7a100tcsg324-1",
+      "tool": "Vivado 2026.1",
+      "clock_mhz": 100,
+      "baseline_revision": "94c8fdda7a589c0fb9f8376d14017f78475f5d9f",
+      "built_from_precommit_worktree": true,
+      "scope": "Full board implementation including UART/reset; physical programming and I/O unverified",
+      "resources": {
+        "lut": 3307.0,
+        "ff": 2566.0,
+        "dsp": 17.0,
+        "bram36": 1.0
+      },
+      "timing": {
+        "scope": "internal paths; board I/O unassessed",
+        "checks": {
+          "no_clock": 0,
+          "unconstrained_internal_endpoints": 0,
+          "multiple_clock": 0,
+          "generated_clocks": 0,
+          "loops": 0,
+          "latch_loops": 0
+        },
+        "setup": {
+          "worst_slack_ns": 2.037,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 3666
+        },
+        "hold": {
+          "worst_slack_ns": 0.064,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 3666
+        },
+        "pulse_width": {
+          "worst_slack_ns": 4.5,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 2588
+        },
+        "passed": true
+      },
+      "critical_methodology_violations": 0,
+      "methodology_warnings": [
+        "SYNTH-6: UART RAM output registers not merged"
+      ],
+      "model_sha256": "c6fedbc42020b906bd3ab6367ad9a84ddff13d4c5214496919b4fca2d3d7a650",
+      "fixture_sha256": "6fc3ceaaaa85b29ad7325d2983e43d5b6d202811174c5d19f2dac655b7205d74",
+      "build_directory": "build/artix100_timing_corpus_v2_100/mlp_regressor",
+      "sha256": {
+        "design.json": "bc64fd8ac565a23f8656b6e33021b4e927cde3fde7a184faf1aefe6da420aea6",
+        "manifest.json": "f0ceddc4362ea872f604d2432c7a192e9a6502caa590e9d5f1ba22ae31ed5662",
+        "arty_a7_100t/arty_top.v": "640108068ac3ac974a075d3d99d42a50b46358f5d2327eb568163df7ebcd5942",
+        "arty_a7_100t/settings.tcl": "0e1d1602b321cf4a8b8c1c9c6369c89c6f142dafcb0f7425427a2a0a0a826688",
+        "arty_a7_100t/arty.xdc": "de066d5b744c8bcfb9853c035d4d52b896d4b320bb121fc94880fbe4b92106ae",
+        "arty_a7_100t/build.tcl": "187f0bd7ae7435c14b897cc82fc79cd62ff705e5f8e5851890b505add3a8b8dd",
+        "arty_a7_100t/check_timing.tcl": "700a2d75200370875c9560152271d0cf1d6c7b8f8b0e9f8d80a7f43008aa0133",
+        "arty_a7_100t/timing_summary.rpt": "bff65625cf5ca3d546a3ea28755a8331943fb57b27990ff2e5e306e853de9593",
+        "arty_a7_100t/utilization.rpt": "dff09f15ff0e176c004c8f20a543ad4be3f62bbca2c96d5c0545ff810e04d791",
+        "arty_a7_100t/methodology.rpt": "dcc3228b119ff89a943ca0da251f98cc96d81387ad4ba8d3c75572dcbcc24f58",
+        "arty_a7_100t/routed.dcp": "8334c5ee89f297bee3227a5b5f7569352b2eb0fcf9e444f62fe90e5a4c137653",
+        "arty_a7_100t/arty_a7_100t.bit": "c4b0f61548d8b2a5286b903a1bedc2a867b5df7c91d8768688f8d17e90772ac3"
+      }
+    },
+    {
+      "board": "arty_a7_100t",
+      "model": "xgb_small",
+      "part": "xc7a100tcsg324-1",
+      "tool": "Vivado 2026.1",
+      "clock_mhz": 100,
+      "baseline_revision": "94c8fdda7a589c0fb9f8376d14017f78475f5d9f",
+      "built_from_precommit_worktree": true,
+      "scope": "Full board implementation including UART/reset; physical programming and I/O unverified",
+      "resources": {
+        "lut": 1068.0,
+        "ff": 1106.0,
+        "dsp": 0.0,
+        "bram36": 1.0
+      },
+      "timing": {
+        "scope": "internal paths; board I/O unassessed",
+        "checks": {
+          "no_clock": 0,
+          "unconstrained_internal_endpoints": 0,
+          "multiple_clock": 0,
+          "generated_clocks": 0,
+          "loops": 0,
+          "latch_loops": 0
+        },
+        "setup": {
+          "worst_slack_ns": 2.352,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 1947
+        },
+        "hold": {
+          "worst_slack_ns": 0.119,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 1947
+        },
+        "pulse_width": {
+          "worst_slack_ns": 4.5,
+          "total_negative_slack_ns": 0.0,
+          "failing_endpoints": 0,
+          "endpoints": 1111
+        },
+        "passed": true
+      },
+      "critical_methodology_violations": 0,
+      "methodology_warnings": [
+        "SYNTH-6: UART RAM output registers not merged"
+      ],
+      "model_sha256": "dbd03c0a4ad5ea6a8377f7019121bfa049143a5b864070cf4e6f746d941ae93f",
+      "fixture_sha256": "2863135f7d257237901279891ad6a4cf7eea04a07ed31f22566b5aa4dd0b085e",
+      "build_directory": "build/artix100_timing_corpus_v2_100/xgb_small",
+      "sha256": {
+        "design.json": "d5e3d3a42ca03ad09c988f43e3805c75a2d5cacdc27a618dcd469c606a086cee",
+        "manifest.json": "a041f90410994c92f39aafc4a771512f3dc5c776335bf5bf19e0c5d0c7de54ee",
+        "arty_a7_100t/arty_top.v": "a121e3d45c8d093b9be177ec56a10ee6098e848cce14485e69bb98c589f1add3",
+        "arty_a7_100t/settings.tcl": "0e1d1602b321cf4a8b8c1c9c6369c89c6f142dafcb0f7425427a2a0a0a826688",
+        "arty_a7_100t/arty.xdc": "de066d5b744c8bcfb9853c035d4d52b896d4b320bb121fc94880fbe4b92106ae",
+        "arty_a7_100t/build.tcl": "187f0bd7ae7435c14b897cc82fc79cd62ff705e5f8e5851890b505add3a8b8dd",
+        "arty_a7_100t/check_timing.tcl": "700a2d75200370875c9560152271d0cf1d6c7b8f8b0e9f8d80a7f43008aa0133",
+        "arty_a7_100t/timing_summary.rpt": "8aa375538a279b3e0ed8f8c195ef434cda9306c4d61176d844e6bbd834c0873f",
+        "arty_a7_100t/utilization.rpt": "385fd582752d8e08edf3010469f8e292bc9156866fe65b95f31472998ee115b0",
+        "arty_a7_100t/methodology.rpt": "dde94520ca91154bbe9c56f503c1a710f0656864d37e9b51498c4e5b7173a381",
+        "arty_a7_100t/routed.dcp": "fdc84133f53eb459d9057306cd12c17d7935b2f2f9561ae07f1c0fb4c7ad3fef",
+        "arty_a7_100t/arty_a7_100t.bit": "26fee8db2b86ec7bd19a7cf13ade9c77738eb60061466e8d411402b9993dbb7f"
+      }
+    }
+  ],
+  "profile_source_sha256": {
+    "compiler/onnx2fpga/targets/device.py": "d3a7c1cefef4a26e2c8015ff985750f3b03905fd9ffe09775464a0c20636a9be",
+    "compiler/onnx2fpga/targets/timing.py": "d6fb904bb58ecd2bbbf362cfa18a3628f27e596ca620bfcb4cdede3f643041af"
+  },
+  "generated_designs_match_production": true
+}

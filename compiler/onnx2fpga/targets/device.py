@@ -1,7 +1,7 @@
 """Target devices; "estimated" figures are working numbers, not for sizing a real build."""
 
 from .resources import Resources
-from .timing import ULTRASCALE_PLUS_2, ULTRASCALE_PLUS_2LV
+from .timing import ARTIX_7_1, ULTRASCALE_PLUS_2, ULTRASCALE_PLUS_2LV
 
 
 class Device:
@@ -118,16 +118,16 @@ Device.register(Device(
 Device.register(Device(
     name="a7_35t", part="xc7a35ticsg324-1L",
     budget=Resources(lut=20800, ff=41600, dsp=90, bram36=50),
-    fmax_mhz=100.0, dsp_generation="DSP48E1", provenance="vendor",
+    fmax_mhz=100.0, dsp_generation="DSP48E1", provenance="vendor", delays=ARTIX_7_1,
     notes="Arty A7-35 E.0 part; budgets from DS180. 100 MHz is a target, "
-          "not measured fmax. No calibrated delay model yet."))
+          "not measured fmax. Fabric delay estimates use routed corpus measurements."))
 
 Device.register(Device(
     name="a7_100t", part="xc7a100tcsg324-1",
     budget=Resources(lut=63400, ff=126800, dsp=240, bram36=135),
-    fmax_mhz=100.0, dsp_generation="DSP48E1", provenance="vendor",
+    fmax_mhz=100.0, dsp_generation="DSP48E1", provenance="vendor", delays=ARTIX_7_1,
     notes="Arty A7-100 E.0 part; budgets from DS180. 100 MHz is a target, "
-          "not measured fmax. No calibrated delay model yet."))
+          "not measured fmax. Fabric delay estimates use routed corpus measurements."))
 
 Device.register(Device(
     name="sim", part="verilator",
