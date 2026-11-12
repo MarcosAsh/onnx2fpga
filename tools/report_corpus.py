@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
 import platform
 import shutil
@@ -18,7 +19,7 @@ sys.path.insert(0, str(ROOT / "compiler"))
 
 import onnx2fpga as otf  # noqa: E402
 from onnx2fpga.p1_ingest import OnnxModel  # noqa: E402
-from onnx2fpga.measure import Subject, VivadoRunner, routed_timing  # noqa: E402
+from onnx2fpga.measure import Subject, VivadoRunner, YosysRunner, routed_timing  # noqa: E402
 from onnx2fpga.targets.device import Device  # noqa: E402
 from onnx2fpga.targets.resources import Resources  # noqa: E402
 
@@ -33,7 +34,7 @@ def command(*args):
     if not shutil.which(args[0]):
         return None
     result = subprocess.run(args, cwd=ROOT, capture_output=True, text=True, timeout=30)
-    return result.stdout.strip() if result.returncode == 0 else None
+    return (result.stdout.strip() or result.stderr.strip()) if result.returncode == 0 else None
 
 
 def metadata():
@@ -83,6 +84,22 @@ def compare(got, expected, labels):
 
 
 def implement(acc, out, clock):
+    if acc.device.nextpnr_args:
+        runner = YosysRunner(acc.device, implement=True, freq_mhz=clock)
+        resources, _ = runner.run(out)
+        routed = json.loads((out / "synth/route.json").read_text())
+        clocks = routed["fmax"]
+        if any(not math.isfinite(entry[key]) for entry in clocks.values()
+               for key in ("achieved", "constraint")):
+            raise ValueError("non-finite nextpnr frequency")
+        passed = len(clocks) == 1 and all(
+            entry["constraint"] == clock
+            and entry["achieved"] >= clock for entry in clocks.values())
+        files = ("top.json", "route.json", "commands.json", "yosys.log", "nextpnr.log")
+        return {"measured": {"part": acc.device.part, "stage": "impl", **vars(resources)},
+                "timing": {"passed": passed, "clocks": clocks,
+                           "scope": "nextpnr setup estimate; hold, pulse width and board I/O unassessed"},
+                "artifacts_sha256": {name: digest(out / "synth" / name) for name in files}}
     runner = VivadoRunner(acc.device.part, 1000 / clock, implement=True, clock="clock")
     result = runner.run(Subject(acc.name, "otf_top", {}, Resources(), acc.latency),
                         ["rtl/top.v"], out, "vivado")
@@ -183,14 +200,14 @@ def main(argv=None):
     parser.add_argument("--clock-mhz", type=float)
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--inspect-only", action="store_true")
-    parser.add_argument("--implement", action="store_true", help="run Vivado out-of-context place and route")
+    parser.add_argument("--implement", action="store_true", help="run device place and route")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "corpus_report")
     args = parser.parse_args(argv)
     if args.frames < 1:
         parser.error("--frames must be positive")
     if args.implement and (args.inspect_only or args.mode != "fixed"
-                           or Device.get(args.device).nextpnr_args or args.device == "sim"):
-        parser.error("--implement requires fixed mode on a Vivado target")
+                           or args.device == "sim"):
+        parser.error("--implement requires fixed mode on a physical device target")
     names = args.models or sorted(path.stem for path in CORPUS.glob("*.onnx"))
     known = {path.stem for path in CORPUS.glob("*.onnx")}
     if set(names) - known:
@@ -206,7 +223,12 @@ def main(argv=None):
     write_report(destination, report)
     report["environment"] = metadata()
     if args.implement:
-        report["environment"]["versions"]["vivado"] = command("vivado", "-version")
+        versions = report["environment"]["versions"]
+        if Device.get(args.device).nextpnr_args:
+            versions["yosys"] = command("yosys", "-V")
+            versions["nextpnr"] = command("nextpnr-ecp5", "--version")
+        else:
+            versions["vivado"] = command("vivado", "-version")
     write_report(destination, report)
     for name in names:
         row = report_model(CORPUS / (name + ".onnx"), args)

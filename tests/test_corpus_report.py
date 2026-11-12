@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -15,13 +16,35 @@ from tools import report_corpus as report
 
 
 class CorpusReport(unittest.TestCase):
-    def test_implementation_requires_vivado_fixed_mode(self):
+    def test_implementation_requires_fixed_device(self):
         for arguments in (("--inspect-only",), ("--mode", "stream"),
-                          ("--device", "icepi25"), ("--device", "sim")):
+                          ("--device", "sim")):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
                     report.main(["linear_regression", "--implement", *arguments])
                 self.assertEqual(error.exception.code, 2)
+
+    def test_ecp5_timing_gate(self):
+        acc = SimpleNamespace(device=report.Device.get("icepi25"))
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            (out / 'synth').mkdir()
+            for name in ('top.json', 'commands.json', 'yosys.log', 'nextpnr.log'):
+                (out / 'synth' / name).write_text('fixture')
+            for clocks, passed in (({}, False),
+                    ({'clock': {'constraint': 80, 'achieved': 79.99}}, False),
+                    ({'clock': {'constraint': 79, 'achieved': 90}}, False),
+                    ({'clock': {'constraint': 80, 'achieved': 80}}, True)):
+                with self.subTest(clocks=clocks):
+                    (out / 'synth/route.json').write_text(json.dumps({'fmax': clocks}))
+                    with patch.object(report.YosysRunner, 'run', return_value=(report.Resources(), 90)):
+                        result = report.implement(acc, out, 80)
+                    self.assertEqual(result['timing']['passed'], passed)
+            (out / 'synth/route.json').write_text(json.dumps({
+                'fmax': {'clock': {'constraint': 80, 'achieved': float('nan')}}}))
+            with patch.object(report.YosysRunner, 'run', return_value=(report.Resources(), 90)):
+                with self.assertRaisesRegex(ValueError, 'non-finite'):
+                    report.implement(acc, out, 80)
 
     def test_regression_and_labels(self):
         expected = np.array([[1.0], [2.0], [3.0]])

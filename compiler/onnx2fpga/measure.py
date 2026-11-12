@@ -297,16 +297,21 @@ class YosysRunner:
             "--freq", "%g" % self.freq_mhz, "--timing-allow-fail"]
         if not self.implement:
             place.append("--pack-only")
+        else:
+            place += ["--report", "synth/route.json"]
         return [synth, place]
 
     def run(self, build_dir):
         """Measured resources and, after place and route, fmax in MHz."""
         (pathlib.Path(build_dir) / "synth").mkdir(exist_ok=True)
         log = ""
-        for command in self.commands():
+        commands = self.commands()
+        (pathlib.Path(build_dir) / "synth/commands.json").write_text(json.dumps(commands, indent=2) + "\n")
+        for name, command in zip(("yosys", "nextpnr"), commands):
             completed = subprocess.run(command, cwd=build_dir, capture_output=True,
                                        text=True)
             log = completed.stdout + completed.stderr
+            (pathlib.Path(build_dir) / ("synth/" + name + ".log")).write_text(log)
             if completed.returncode != 0:
                 raise RuntimeError("%s failed\n%s" % (command[0], log[-3000:]))
         return self.parse(log)

@@ -68,19 +68,32 @@ separately. The report includes compiler resource estimates, cycle counts
 and throughput at the assumed clock. By default, implementation and physical
 board testing remain `not_run`.
 
-Add `--implement` to run Vivado place-and-route for a fixed-mode model:
+Add `--implement` to place and route a fixed-mode model:
 
 ```sh
 python3 tools/report_corpus.py linear_regression --device a7_100t --frames 256 \
     --implement --out build/artix_report
 ```
 
-This records measured resources, setup, hold and pulse-width slack, internal
+The Vivado flow records measured resources, setup, hold and pulse-width slack, internal
 constraint checks, and hashes of the reports and routed checkpoint. Any failed
 timing check fails the model's report. This build is out of context: board I/O
 timing and physical operation remain unassessed. Artix profiles use a 100 MHz
 default target and a [calibrated delay model](artix-measurements.md#pipeline-delay-calibration).
 Use `--clock-mhz` to select the pipeline target. Routed timing remains required.
+
+For ECP5 targets, the same option runs Yosys and nextpnr-ecp5:
+
+```sh
+python3 tools/report_corpus.py torch_layernorm_mlp --device icepi25 --clock-mhz 80 \
+    --frames 256 --implement --out build/layernorm_ecp5
+```
+
+The report records resource use, the requested and achieved clock frequency,
+tool versions and hashes of the synthesis netlist, commands and routing report.
+An absent clock, a different constraint or a frequency below the requested
+target fails implementation. nextpnr setup estimates do not establish hold,
+pulse-width or board I/O timing.
 
 The [12 November 2026 report](../measurements/corpus-k26-2026-11-12.json),
 from clean revision `bef6835`, passes all 22 models. It used the command above
