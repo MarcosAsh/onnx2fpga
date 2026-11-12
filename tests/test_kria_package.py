@@ -11,6 +11,7 @@ from unittest import mock
 import zipfile
 
 from tools.package_kria import package, verify_build
+from tools.install_kria import read_package
 from onnx2fpga.board import BoardError, KR260
 
 
@@ -58,6 +59,8 @@ class PackageTest(unittest.TestCase):
 
     def test_overlay_applies(self):
         self.run_package()
+        name, _ = read_package(self.destination, "kr260")
+        self.assertEqual(name, "onnx2fpga")
         record = json.loads((self.destination / "package.json").read_text())
         self.assertEqual(record["ps_clock_hz"], 99999001)
         for name, digest in record["sha256"].items():

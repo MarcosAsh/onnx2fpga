@@ -182,7 +182,7 @@ def package(build, board, destination, name="onnx2fpga", dtc="dtc"):
         (out / "shell.json").write_text(json.dumps({"shell_type": "XRT_FLAT", "num_slots": "1"}) + "\n")
         (out / "manifest.json").write_bytes(manifest_data)
         (out / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        record = {"board": board, "ps_clock_hz": rate, "register_base": base,
+        record = {"name": name, "board": board, "ps_clock_hz": rate, "register_base": base,
                   "xsa_sha256": hashlib.sha256(xsa_data).hexdigest(),
                   "physical_validation": "not_run",
                   "requires": ["fpga_full, amba, zynqmp_clk and zynqmp_reset DT symbols",

@@ -198,16 +198,34 @@ The package follows AMD's [Vivado deployment flow](https://xilinx.github.io/kria
 and derives interface settings using the mappings in AMD's
 [device-tree generator](https://github.com/Xilinx/system-device-tree-xlnx/tree/xlnx_rel_v2025.2/device_tree/data).
 
-On a matching board image, place the firmware application in
-`/lib/firmware/xilinx/onnx2fpga`, then use `xmutil unloadapp` and
-`xmutil loadapp onnx2fpga` with the privileges that image requires. Unloading
-stops the current PL application. Install the native `kria_regs` helper before
-connecting with `deploy(host=..., program=False)`.
+Copy the package and `tools/install_kria.py` to a matching board image. On the
+board, install with:
+
+```sh
+sudo python3 install_kria.py kr260_firmware --board kr260
+```
+
+The installer checks file hashes and the build record, then installs the
+application under `/lib/firmware/xilinx/<name>`. It refuses an existing
+application directory. The selected board must match the package; the tool
+does not detect the carrier automatically.
+
+Add `--program` to install and load in one command. Before installation, this
+checks the four device-tree symbols and runs `xmutil listapps`. After installation,
+it runs `xmutil unloadapp` followed by `xmutil loadapp <name>`, stopping on failure.
+Unloading stops the current PL application; stop all accelerator clients first.
+If loading fails, the installed package remains available for diagnosis and a
+manual `xmutil loadapp <name>` retry. Preflight does not establish driver or
+firmware compatibility.
+
+Install the native `kria_regs` helper before connecting with
+`deploy(host=..., program=False)`. Remote installation through `deploy()` and
+DMA-buffer driver provisioning remain unfinished.
 
 Package tests compile and apply the overlay to a test device tree and reject
-mismatched artifacts. They do not validate the board's Linux image, firmware,
-clock drivers or physical MMIO. Automatic installation and programming remain
-unfinished.
+mismatched artifacts. Installer tests use temporary directories and a mocked
+`xmutil`. They do not validate the board's Linux image, firmware, clock drivers
+or physical MMIO.
 
 ## Adding a board
 
