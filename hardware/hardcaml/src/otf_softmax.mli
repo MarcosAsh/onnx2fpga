@@ -1,4 +1,4 @@
-(** Softmax, LogSoftmax and L1, L2 and MAX normalisation across the lanes of a vector. *)
+(** Softmax, LogSoftmax and normalization across the lanes of a vector. *)
 
 open! Core
 open! Hardcaml
@@ -13,6 +13,7 @@ module Mode : sig
     | Log
     | Root
     | Max
+    | Center_root
   [@@deriving sexp_of]
 end
 
@@ -42,6 +43,9 @@ module type Config = sig
   val subtract_max : bool
 
   val mode : Mode.t
+
+  (** Center_root adds this to the variance numerator with eight fraction bits. *)
+  val epsilon : int
 
   (** Unsigned values summed across the lanes, [2 ** in_bits] of them. *)
   val sum_table : int array
@@ -81,7 +85,7 @@ module type Config = sig
 end
 
 module Make (_ : Config) : sig
-  (** Four cycles, one more with the max tree, plus the stages; three for Max. *)
+  (** Fixed datapath latency plus the configured pipeline stages. *)
   val latency : int
 
   module I : sig

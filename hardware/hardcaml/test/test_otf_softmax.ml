@@ -85,6 +85,7 @@ let config ?(stages = Otf_softmax.Stages.none) ~lanes kind : (module Otf_softmax
   (module struct
     let lanes = lanes
     let in_bits = 8
+    let epsilon = 0
 
     let subtract_max =
       match kind with
@@ -119,14 +120,14 @@ let config ?(stages = Otf_softmax.Stages.none) ~lanes kind : (module Otf_softmax
     let scale_bits =
       match mode with
       | Log -> signed_bits [ Array.last_exn scale_table + Array.last_exn exp_table ]
-      | Divide | Root | Max -> 18
+      | Divide | Root | Center_root | Max -> 18
     ;;
 
     let shift =
       match mode with
       | Log -> 6
       | Divide -> 10 + total_bits - 1
-      | Root -> 10 + ((total_bits - 1) / 2)
+      | Root | Center_root -> 10 + ((total_bits - 1) / 2)
       | Max -> 12
     ;;
 
@@ -135,7 +136,7 @@ let config ?(stages = Otf_softmax.Stages.none) ~lanes kind : (module Otf_softmax
     let out_zp =
       match mode with
       | Log -> 127
-      | Divide | Root | Max -> 0
+      | Divide | Root | Center_root | Max -> 0
     ;;
 
     let out_min = -128
@@ -172,6 +173,14 @@ module Make_test (Config : Otf_softmax.Config) = struct
       else List.map codes ~f:(fun code -> numer_table.(index code))
     in
     let s = List.sum (module Int) a ~f:Fn.id in
+    let s, b =
+      if Poly.equal mode Otf_softmax.Mode.Center_root
+      then (
+        let sum = List.sum (module Int) b ~f:Fn.id in
+        ( (((lanes * s) - (sum * sum)) lsl 8) + epsilon
+        , List.map b ~f:(fun value -> (lanes * value) - sum) ))
+      else s, b
+    in
     let k = if s = 0 then min_exp else Int.max min_exp (Int.floor_log2 s) in
     let m = mantissa s k in
     let rescale acc mult =
@@ -182,7 +191,7 @@ module Make_test (Config : Otf_softmax.Config) = struct
       match mode with
       | Divide ->
         rescale (b lsl (total_bits - 1 - k)) (if s = 0 then 0 else scale_table.(m))
-      | Root ->
+      | Root | Center_root ->
         let r = (k - min_exp) % 2 in
         rescale
           (b lsl (half - ((k - min_exp) / 2)))

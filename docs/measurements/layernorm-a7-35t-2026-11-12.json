@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-12T04:16:01.814629+00:00",
+    "revision": "bbe78d70799b82b4f0fd92d4974ab4af34bc2173",
+    "worktree_status": "M Makefile\n M compiler/onnx2fpga/p2_graph/onnx_importer.py\n M compiler/onnx2fpga/p3_ops/reductions.py\n M compiler/onnx2fpga/p4_quantize/reductions.py\n M compiler/onnx2fpga/reload.py\n M docs/guides/support.md\n M docs/specs/011-reductions-and-softmax.md\n M hardware/hardcaml/src/book_side.ml\n M hardware/hardcaml/src/order_book.ml\n M hardware/hardcaml/src/otf_softmax.ml\n M hardware/hardcaml/src/otf_softmax.mli\n M hardware/hardcaml/src/units.ml\n M hardware/hardcaml/test/test_otf_softmax.ml\n M tests/fixtures/make_corpus.py\n?? docs/measurements/layernorm-k26-2026-11-12.json\n?? tests/fixtures/corpus/torch_layernorm_mlp.npz\n?? tests/fixtures/corpus/torch_layernorm_mlp.onnx\n?? tests/test_layernorm.py",
+    "reporter_sha256": "9d1fdf66542ad50ac62b21bd3802e219d4c7af8b9d5e4a63bd83e74d4e727da1",
+    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox",
+      "vivado": "vivado v2026.1 (64-bit)\nTool Version Limit: 2026.06\nSW Build 6511674 on Tue Jun 16 11:01:26 MDT 2026\nIP Build 6504888 on Tue Jun 09 09:05:25 MDT 2026\nSharedData Build 6501428 on Mon Jun 08 17:34:18 MDT 2026\nCopyright 1986-2022 Xilinx, Inc. All Rights Reserved.\nCopyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved."
+    }
+  },
+  "configuration": {
+    "device": "a7_35t",
+    "mode": "fixed",
+    "clock_mhz": 100.0,
+    "frames": 256,
+    "implement": true,
+    "inspect_only": false,
+    "models": [
+      "torch_layernorm_mlp"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "torch_layernorm_mlp",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "bced7d1b36f81c22d376142310c9f77e66265434f254cbf888c40cf5d72a35ba",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.14.1",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              "batch",
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "LayerNormalization",
+            "attributes": [
+              "axis",
+              "epsilon"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gelu",
+            "attributes": [
+              "approximate"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "a7_35t",
+        "mode": "fixed",
+        "findings": [
+          {
+            "severity": "warning",
+            "code": "batch_shape",
+            "message": "input 'x' uses batch size 1 during import",
+            "node_index": null,
+            "node": null,
+            "op_type": null,
+            "domain": null,
+            "opset": null
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "117cb15b08db3acbbcaf2f2d545c81309e6567bc214a34cb8f8dc8e1b9b0f741",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 9347,
+          "ff": 6491,
+          "dsp": 34,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": 22,
+        "initiation_interval_cycles": 1,
+        "clock_assumption_mhz": 100.0,
+        "latency_ns_at_assumed_clock": 220.0,
+        "frames_per_second_at_assumed_clock": 100000000.0,
+        "predicted_fmax_mhz": 122.24938875305624
+      },
+      "generated_sha256": {
+        "rtl/top.v": "ae01e579d2955a77f9f87f5d154f7c7b1150c7ae7378b04fdc75b982b9bd2b9a"
+      },
+      "manifest_sha256": "c8807f00c9a91dac3ba2f32faaea1b9cc82793e3014a255b8e338376d7e2671c",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0025238817758741665,
+        "max_absolute_error": 0.00995347428413959,
+        "reference_std": 0.11717857350213069,
+        "normalized_mae": 0.021538765155118347,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "top": "otf_top",
+          "part": "xc7a35ticsg324-1L",
+          "stage": "impl",
+          "generics": "",
+          "period_ns": 10.0,
+          "wns_ns": 1.301,
+          "fmax_mhz": 114.96,
+          "lut": 4639,
+          "ff": 3123,
+          "dsp": 26,
+          "ramb36": 0,
+          "ramb18": 3,
+          "bram36": 1.5,
+          "uram": 0
+        },
+        "timing": {
+          "scope": "internal paths; board I/O unassessed",
+          "checks": {
+            "no_clock": 0,
+            "unconstrained_internal_endpoints": 0,
+            "multiple_clock": 0,
+            "generated_clocks": 0,
+            "loops": 0,
+            "latch_loops": 0
+          },
+          "setup": {
+            "worst_slack_ns": 1.301,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 4302
+          },
+          "hold": {
+            "worst_slack_ns": 0.038,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 4302
+          },
+          "pulse_width": {
+            "worst_slack_ns": 4.02,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 3235
+          },
+          "passed": true
+        },
+        "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+        "artifacts_sha256": {
+          "summary.json": "141dce9a313f68d518b4c9bfb9b0165583cbad9889b35ef6dd92314da8cf1c77",
+          "timing_impl.rpt": "de8b3268486387e9d0bcfabb4bec0bf659d7557e78a8485250fd39fa7004687c",
+          "utilization_impl.rpt": "182f2e78883ee1e27f9dc84238a935cd3e7bec7c64dd629225902550f382f062",
+          "routed.dcp": "a9d12f4ea6785938151c6db994baaffab4773aae660a42a30878aa924e261fa4"
+        }
+      }
+    }
+  ]
+}

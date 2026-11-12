@@ -631,13 +631,14 @@ let of_fixed_node ?(base = 0) (node : Design.Node.t) : (module Fixed_instance) =
           let in_bits = param "IN_BITS"
           let subtract_max = param "MAX" = 1
 
-          (* MODE counts Divide, Log, Root and Max; older designs only say LOG. *)
+          (* Older designs only specify LOG. *)
           let mode =
             List.nth_exn
-              [ Otf_softmax.Mode.Divide; Log; Root; Max ]
+              [ Otf_softmax.Mode.Divide; Log; Root; Max; Center_root ]
               (param ~default:(param "LOG") "MODE")
           ;;
 
+          let epsilon = param ~default:0 "EPSILON"
           let sum_table = ints ~signed:false "sum_table"
           let sum_bits = param "SUM_BITS"
           let numer_table = ints "numer_table"

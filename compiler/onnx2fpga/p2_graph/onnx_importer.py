@@ -16,7 +16,7 @@ from ..p3_ops.elementwise import FUNCTIONS, ConcatOp, ElementwiseOp, import_elem
 from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp,
                                ReluOp)
 from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce,
-                                 import_softmax)
+                                 import_softmax, import_layernorm)
 from ..p3_ops.trees import LEAF, MODES, Ensemble, TreeEnsembleOp
 from .constants import FOLD, LAYOUT, evaluate
 
@@ -574,6 +574,7 @@ BUILTIN = {
     "MatMulInteger": import_integer,
     "ConvInteger": import_integer, "DynamicQuantizeLinear": refuse_dynamic,
     "Identity": import_identity, "ZipMap": import_identity, "Cast": import_cast,
+    "LayerNormalization": import_layernorm,
     "Concat": import_concat, "BatchNormalization": import_batchnorm,
     "LinearRegressor": import_linear, "LinearClassifier": import_linear,
     "Scaler": import_scaler, "Binarizer": import_binarizer, "Normalizer": import_normalizer,

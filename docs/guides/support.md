@@ -13,7 +13,7 @@ unassessed properties separately; compilation and timing may still fail.
 | Conv, MaxPool | Stream | Spatial operators; grouped convolution is unsupported. Fixed mode rejects these units. |
 | Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
 | Other live elementwise operations | Fixed | See [elementwise functions and tables](../specs/010-lookup-tables-and-elementwise.md) for operations and broadcasting limits. |
-| Reductions, Softmax, Normalizer | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
+| Reductions, Softmax, Normalizer, LayerNormalization | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
 | Tree ensembles | Fixed | See [tree ensembles](../specs/005-tree-ensembles.md) and [multiclass trees](../specs/012-multiclass-trees.md) for branch modes and output semantics. |
 | Layout operations and constant arithmetic | Depends on the imported graph | Many fold away. Live views can become dense layers; live Concat can require fixed mode. See [import rules](../specs/009-operator-coverage.md). |
 | BatchNormalization and ONNX-ML linear operators | Depends on the imported graph | Inference BatchNormalization folds into arithmetic; training mode is rejected. LinearRegressor requires `post_transform=NONE`. |

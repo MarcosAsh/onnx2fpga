@@ -8,6 +8,7 @@ module Mode = struct
     | Log
     | Root
     | Max
+    | Center_root
   [@@deriving sexp_of]
 end
 
@@ -29,6 +30,7 @@ module type Config = sig
   val in_bits : int
   val subtract_max : bool
   val mode : Mode.t
+  val epsilon : int
   val sum_table : int array
   val sum_bits : int
   val numer_table : int array
@@ -54,16 +56,18 @@ module Make (Config : Config) = struct
   let exps = total_bits - min_exp
   let exp_bits = Int.max 1 (Int.ceil_log2 exps)
   let shared_numer = Array.is_empty numer_table
+  let centered = Poly.equal mode Mode.Center_root
 
   let latency =
     match mode with
     | Max -> 1 + stages.max + 1 + stages.table + 1 + stages.rescale
-    | Divide | Log | Root ->
+    | Divide | Log | Root | Center_root ->
       (if subtract_max then 1 + stages.max else 0)
       + 1
       + stages.table
       + 1
       + stages.sum
+      + (if centered then 3 else 0)
       + 1
       + stages.normalize
       + 1
@@ -77,7 +81,7 @@ module Make (Config : Config) = struct
   let acc_bits =
     match mode with
     | Divide -> numer_bits + exps - 1
-    | Root -> numer_bits + root_shifts
+    | Root | Center_root -> numer_bits + root_shifts
     | Log -> Int.max numer_bits scale_bits + 1
     | Max -> numer_bits
   ;;
@@ -93,7 +97,7 @@ module Make (Config : Config) = struct
     let scales =
       match mode with
       | Divide | Log -> 1 lsl mantissa_bits
-      | Root -> 1 lsl (mantissa_bits + 1)
+      | Root | Center_root -> 1 lsl (mantissa_bits + 1)
       | Max -> size
     in
     if lanes < 1
@@ -122,8 +126,8 @@ module Make (Config : Config) = struct
             (min_exp : int)];
     (match mode with
      | Divide -> ()
-     | Root ->
-       if subtract_max || min_exp % 2 <> 0
+     | Root | Center_root ->
+       if subtract_max || min_exp % 2 <> 0 || (centered && (epsilon <= 0 || shared_numer))
        then raise_s [%message "BUG: otf_softmax root needs no max and an even min_exp"]
      | Max ->
        if subtract_max || stages.sum <> 0 || stages.normalize <> 0
@@ -166,7 +170,7 @@ module Make (Config : Config) = struct
 
       let mult_bits =
         match mode with
-        | Divide | Root | Max -> scale_bits
+        | Divide | Root | Center_root | Max -> scale_bits
         | Log -> 2
       ;;
 
@@ -265,6 +269,38 @@ module Make (Config : Config) = struct
            (List.map looked_up ~f:(fun (a, _) -> uresize a ~width:total_bits)))
     in
     let numers = List.map looked_up ~f:(fun (_, b) -> delay (1 + stages.sum) b) in
+    let total, numers =
+      if not centered
+      then total, numers
+      else (
+        let%hw summed =
+          reg
+            (Otf_reduce.tree
+               i.clocking
+               ~cuts:(Otf_reduce.cuts ~levels ~stages:stages.sum)
+               ~f:( +: )
+               (List.map looked_up ~f:(fun (_, b) -> b)))
+        in
+        let%hw squared = reg (uresize (summed *+ summed) ~width:total_bits) in
+        let%hw weighted =
+          reg
+            (uresize
+               (total *: of_unsigned_int ~width:(num_bits_to_represent lanes) lanes)
+               ~width:total_bits)
+        in
+        let%hw variance = reg (weighted -: squared) in
+        let%hw adjusted = reg (sll variance ~by:8 +:. epsilon) in
+        let numers =
+          List.map numers ~f:(fun b ->
+            let weighted =
+              sresize
+                (b *+ of_signed_int ~width:(num_bits_to_represent lanes + 1) lanes)
+                ~width:numer_bits
+            in
+            delay 2 (reg (weighted -: summed)))
+        in
+        adjusted, numers)
+    in
     (* The leading one of [total] from [min_exp] up, as [k - min_exp], and its mantissa. *)
     let found =
       List.rev_map
@@ -295,13 +331,16 @@ module Make (Config : Config) = struct
       mux
         (sel_bottom
            normalized
-           ~width:(if Poly.equal mode Mode.Root then mantissa_bits + 1 else mantissa_bits))
+           ~width:
+             (if Poly.equal mode Mode.Root || centered
+              then mantissa_bits + 1
+              else mantissa_bits))
         (constants scale_table ~width:scale_bits ~signed:true)
     in
     let%hw scale =
       reg
         (match mode with
-         | Divide | Root | Max -> mux2 is_zero (zero scale_bits) looked
+         | Divide | Root | Center_root | Max -> mux2 is_zero (zero scale_bits) looked
          | Log -> looked +: pick exp (constants exp_table ~width:scale_bits ~signed:true))
     in
     let accs =
@@ -309,8 +348,8 @@ module Make (Config : Config) = struct
         let b = sresize b ~width:acc_bits in
         match mode with
         | Divide -> reg (pick exp (List.init exps ~f:(fun j -> sll b ~by:(exps - 1 - j))))
-        | Root when root_shifts = 0 -> reg b
-        | Root ->
+        | (Root | Center_root) when root_shifts = 0 -> reg b
+        | Root | Center_root ->
           reg
             (pick
                (drop_bottom exp ~width:1)
@@ -321,7 +360,7 @@ module Make (Config : Config) = struct
       List.map accs ~f:(fun acc ->
         let acc, mult =
           match mode with
-          | Divide | Root | Max -> acc, scale
+          | Divide | Root | Center_root | Max -> acc, scale
           | Log -> acc -: sresize scale ~width:acc_bits, of_signed_int ~width:2 1
         in
         reg (Requant.hierarchical scope { clocking = i.clocking; acc; mult }).out)
@@ -333,7 +372,7 @@ module Make (Config : Config) = struct
   let create scope i =
     match mode with
     | Max -> create_max scope i
-    | Divide | Log | Root -> create_summed scope i
+    | Divide | Log | Root | Center_root -> create_summed scope i
   ;;
 
   let hierarchical ?instance scope i =

@@ -329,3 +329,65 @@ All five are met.
 - yosys put the reciprocal table in block RAM. Vivado may do the same, and a
   block RAM read is slower than the LUT table the delay model prices; the
   normalize knob may need another cut once a timing report exists.
+
+## LayerNormalization
+
+`LayerNormalization` uses the Hardcaml backend in fixed mode for `(1, N)`
+inputs, with constant Scale and optional Bias. It accepts axes -2, -1, 0 and 1:
+with batch size one they normalize the same values. Epsilon must be finite
+and positive, and `stash_type` must be 1. Requested Mean or InvStdDev outputs
+are rejected. These restrictions apply to the
+[ONNX operator](https://onnx.ai/onnx/operators/onnx__LayerNormalization.html);
+they do not establish support for arbitrary tensor ranks.
+
+For integer input codes `x`, the numerator is `N*x - sum(x)` and the variance
+numerator is `N*sum(x*x) - sum(x)^2`. Both are computed before rounding, so a
+constant vector has an exactly zero numerator. The input zero point cancels.
+The variance uses eight fractional bits for epsilon, scaled by `N^2/s^2`
+where `s` is the input scale. Its epsilon code is rounded and kept at least
+one. Configurations needing more than 52 variance bits are rejected.
+
+A shared reciprocal-square-root table has nine mantissa bits and one exponent
+parity bit. The normalized result is quantized on a grid covering
+`[-sqrt(N-1), sqrt(N-1)]` (a unit bound for `N=1`), then a table per lane applies
+Scale and Bias onto the calibrated output grid. This adds an intermediate
+rounding step; nearly constant floating-point inputs can also lose differences
+when quantized at the model input. Calibration and independent accuracy checks
+remain necessary.
+
+The centered normalization unit takes seven cycles before optional pipeline
+stages. Its affine table adds another stage, and scheduling can add registers
+to meet the requested clock estimate. RTL checks cover constant and nearly
+constant inputs, one- and three-lane vectors, negative scale values and omitted
+bias. The corpus fixture `torch_layernorm_mlp` exports a seeded, untrained
+PyTorch LayerNorm/Linear/GELU/Linear network at opset 20. Its metadata records
+the exporter version and seed; its reference outputs come from ONNX Runtime.
+
+The [K26 measurement](../measurements/layernorm-k26-2026-11-12.json) passes
+256 bit-exact RTL vectors and the existing normalized-MAE limit of 0.025
+against ONNX Runtime (measured 0.02154). At 322.265625 MHz, the network takes
+27 cycles, or 83.78 ns, with an initiation interval of one cycle. Its routed
+core uses 4,536 LUTs, 3,093 registers, 26 DSPs and 4.5 RAMB36 equivalents.
+Setup, hold and pulse-width slack are +0.202, +0.059 and +0.789 ns respectively.
+These measurements exclude the board shell and physical I/O.
+
+```sh
+python3 tests/fixtures/make_corpus.py torch_layernorm_mlp
+python3 tools/report_corpus.py torch_layernorm_mlp --device k26 \
+    --clock-mhz 322.265625 --frames 256 --implement --out build/layernorm_k26
+```
+
+Weight reloads retain the normalization parameters and tables already in the
+bitstream. A new model that changes their integer representation is rejected.
+
+The same network passes [Artix-7 35T routing at 100 MHz](../measurements/layernorm-a7-35t-2026-11-12.json),
+with 22 cycles of latency, 4,639 LUTs, 3,123 registers, 26 DSPs and 1.5 RAMB36
+equivalents. Setup slack is +1.301 ns and hold slack is +0.038 ns. Its 256
+simulation inputs are bit-exact and meet the same numerical threshold.
+
+The full network is not accepted on ECP5-25K. At
+[100 MHz](../measurements/layernorm-icepi25-100-2026-11-12.json), the compiler
+rejects the normalization rescale's estimated delay. At
+[80 MHz](../measurements/layernorm-icepi25-80-2026-11-12.json), it rejects the
+34 estimated DSPs against the device's 28. These are compiler estimates,
+not measured hardware limits. No ECP5 implementation of this network is claimed.

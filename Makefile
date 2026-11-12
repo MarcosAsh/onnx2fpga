@@ -33,6 +33,7 @@ models:
 test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
+	$(PYTHON) -m unittest test_layernorm.Arithmetic -v
 	$(PYTHON) -m unittest discover -s tests -p "test_recorded_itch.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_trading_board.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_trading_runtime.py" -v
@@ -62,6 +63,7 @@ test-api: models
 	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_elementwise.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_reductions.py" -v
+	$(PYTHON) -m unittest test_layernorm.Hardware -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_board.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_runtime.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_arty_board.py" -v

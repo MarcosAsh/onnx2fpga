@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-12T04:18:30.084576+00:00",
+    "revision": "bbe78d70799b82b4f0fd92d4974ab4af34bc2173",
+    "worktree_status": "M Makefile\n M compiler/onnx2fpga/p2_graph/onnx_importer.py\n M compiler/onnx2fpga/p3_ops/reductions.py\n M compiler/onnx2fpga/p4_quantize/reductions.py\n M compiler/onnx2fpga/reload.py\n M docs/guides/support.md\n M docs/specs/011-reductions-and-softmax.md\n M hardware/hardcaml/src/book_side.ml\n M hardware/hardcaml/src/order_book.ml\n M hardware/hardcaml/src/otf_softmax.ml\n M hardware/hardcaml/src/otf_softmax.mli\n M hardware/hardcaml/src/units.ml\n M hardware/hardcaml/test/test_otf_softmax.ml\n M tests/fixtures/make_corpus.py\n?? docs/measurements/layernorm-k26-2026-11-12.json\n?? tests/fixtures/corpus/torch_layernorm_mlp.npz\n?? tests/fixtures/corpus/torch_layernorm_mlp.onnx\n?? tests/test_layernorm.py",
+    "reporter_sha256": "9d1fdf66542ad50ac62b21bd3802e219d4c7af8b9d5e4a63bd83e74d4e727da1",
+    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox"
+    }
+  },
+  "configuration": {
+    "device": "icepi25",
+    "mode": "fixed",
+    "clock_mhz": 80.0,
+    "frames": 256,
+    "implement": false,
+    "inspect_only": false,
+    "models": [
+      "torch_layernorm_mlp"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "torch_layernorm_mlp",
+      "status": "failed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "failed",
+        "reference": "not_run",
+        "simulation": "not_run",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "bced7d1b36f81c22d376142310c9f77e66265434f254cbf888c40cf5d72a35ba",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.14.1",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              "batch",
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "LayerNormalization",
+            "attributes": [
+              "axis",
+              "epsilon"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gelu",
+            "attributes": [
+              "approximate"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "icepi25",
+        "mode": "fixed",
+        "findings": [
+          {
+            "severity": "warning",
+            "code": "batch_shape",
+            "message": "input 'x' uses batch size 1 during import",
+            "node_index": null,
+            "node": null,
+            "op_type": null,
+            "domain": null,
+            "opset": null
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "117cb15b08db3acbbcaf2f2d545c81309e6567bc214a34cb8f8dc8e1b9b0f741",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "error": "the unrolled model needs 34 DSP, past the 28 allowed on icepi25 (largest layer /1/Gemm has 128 weights)"
+    }
+  ]
+}

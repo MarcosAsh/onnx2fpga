@@ -9,7 +9,7 @@ from .board import OFFSETS, BoardError
 from .errors import ConfigError
 from .p2_graph.onnx_importer import OnnxImporter
 from .p3_ops.elementwise import ElementwiseOp, EltwiseUnit, TableUnit
-from .p3_ops.reductions import ReduceOp, SoftmaxOp
+from .p3_ops.reductions import ReduceOp, SoftmaxOp, SoftmaxUnit
 from .p3_ops.hardware_ops import MatVecUnit
 from .p3_ops.onnx_ops import AddOp, ReluOp
 from .p4_quantize.calibrate import Calibrator
@@ -139,11 +139,15 @@ def _same_frozen(compiled, lowered):
     """Raises unless every table and elementwise unit comes out as it was compiled."""
     def frozen(graph):
         return [node for node in graph.topological_order()
-                if isinstance(node, (TableUnit, EltwiseUnit))]
+                if isinstance(node, (TableUnit, EltwiseUnit, SoftmaxUnit))]
 
     def values(unit):
         if isinstance(unit, TableUnit):
             return unit.rows().tolist()
+        if isinstance(unit, SoftmaxUnit):
+            return ({key: value for key, value in unit.sv_params(None).items()
+                     if not key.endswith("_STAGES")},
+                    {key: memory.array.tolist() for key, memory in unit.memories(None).items()})
         return (unit.op, [np.asarray(s).tolist() for s in unit.sources], unit.zero_points,
                 unit.mults, unit.mult, unit.shift, unit.out_zero_point,
                 [None if table is None else np.asarray(table).tolist() for table in unit.tables])

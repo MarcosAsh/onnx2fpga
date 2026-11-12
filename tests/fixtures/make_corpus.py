@@ -460,11 +460,29 @@ def brevitas_mlp(float_bias=False):
     save(name, model, x, qonnx_runner(model))
 
 
+def torch_layernorm_mlp():
+    import torch
+
+    torch.manual_seed(71)
+    x = np.random.default_rng(71).normal(size=(768, FEATURES)).astype(np.float32)
+    net = torch.nn.Sequential(torch.nn.LayerNorm(FEATURES), torch.nn.Linear(FEATURES, 16),
+                              torch.nn.GELU(), torch.nn.Linear(16, 1)).eval()
+    with tempfile.TemporaryDirectory() as folder:
+        path = pathlib.Path(folder) / "model.onnx"
+        torch.onnx.export(net, torch.tensor(x[:1]), str(path), input_names=["x"],
+                          output_names=["y"], dynamic_axes={"x": {0: "batch"}},
+                          dynamo=False, opset_version=20)
+        model = onnx.load(path)
+        onnx.helper.set_model_props(model, {"exporter": "torch", "torch_version": torch.__version__,
+                                            "seed": "71", "training": "none"})
+        save("torch_layernorm_mlp", model, x)
+
+
 MODELS = [linear_regression, ridge, logistic_binary, scaler_linear, scaler_logistic,
           logistic_multiclass, mlp_regressor, mlp_sigmoid, xgb_small, lgbm_small, torch_bn_mlp,
           ort_qoperator_mlp, ort_qdq_mlp, ort_qoperator_gemm, xgb_multiclass,
           lgbm_multiclass, forest_multiclass, forest_binary, xgb_small_v5,
-          normalizer_logistic, qonnx_mlp, brevitas_mlp]
+          normalizer_logistic, qonnx_mlp, brevitas_mlp, torch_layernorm_mlp]
 
 if __name__ == "__main__":
     chosen = sys.argv[1:] or [model.__name__ for model in MODELS]
