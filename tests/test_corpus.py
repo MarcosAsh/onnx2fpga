@@ -11,6 +11,7 @@ from support import ROOT, Fixtures, Hdl
 
 import onnx2fpga as otf
 from onnx2fpga.errors import UnsupportedOpError
+from onnx2fpga.p1_ingest import OnnxModel, TensorProto
 
 CORPUS = ROOT / "tests" / "fixtures" / "corpus"
 HARDCAML = Hdl.skip_reason("hardcaml")
@@ -32,6 +33,17 @@ def stored(name):
 
 
 class Corpus(unittest.TestCase):
+    def test_portable_quantized_weights(self):
+        for name in QUANTIZED:
+            model = OnnxModel.load(CORPUS / (name + ".onnx"))
+            weights = [model.initializer(t.name) for t in model.graph.initializer
+                       if t.data_type == TensorProto.INT8 and len(t.dims) == 2]
+            with self.subTest(name=name):
+                self.assertTrue(weights)
+                for weight in weights:
+                    self.assertGreaterEqual(int(weight.min()), -64)
+                    self.assertLessEqual(int(weight.max()), 64)
+
     def test_expected_failures(self):
         for name, op in EXPECTED_FAIL.items():
             with self.subTest(name), self.assertRaisesRegex(UnsupportedOpError, op):

@@ -303,9 +303,15 @@ def ort_static(name, quant_format, source=None):
     with tempfile.TemporaryDirectory() as folder:
         floating, quantized = pathlib.Path(folder) / "f.onnx", pathlib.Path(folder) / "q.onnx"
         onnx.save(source, floating)
+        # Seven-bit weights avoid U8S8 pairwise saturation on non-VNNI CPUs.
         quantize_static(str(floating), str(quantized), Reader(), quant_format=quant_format,
-                        activation_type=QuantType.QUInt8, weight_type=QuantType.QInt8)
-        save(name, onnx.load(quantized), x)
+                        activation_type=QuantType.QUInt8, weight_type=QuantType.QInt8,
+                        reduce_range=True)
+        model = onnx.load(quantized)
+        onnx.helper.set_model_props(model, {"fixture.quantizer": "onnxruntime",
+                                            "fixture.quantizer_version": onnxruntime.__version__,
+                                            "fixture.reduce_range": "true"})
+        save(name, model, x)
 
 
 def ort_qoperator_mlp():

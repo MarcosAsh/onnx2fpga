@@ -95,6 +95,14 @@ thresholds; applications need their own accuracy requirements. Reference
 outputs come from ONNX Runtime, or QONNX for the QONNX/Brevitas fixtures;
 this command does not regenerate or independently revalidate those outputs.
 
+The three `ort_*` fixtures use ONNX Runtime's `reduce_range=True` to keep signed
+weights within seven bits. This avoids the documented U8S8 pairwise saturation
+on [AVX2 CPUs without VNNI](https://onnxruntime.ai/docs/performance/model-optimizations/quantization.html).
+CI checks the stored outputs against ONNX Runtime with strict tolerances and
+checks the weight range. Quantizer version and range settings are stored in the
+models' metadata. Older measurement reports identify the hashes of their
+original eight-bit-weight fixtures.
+
 The JSON file is replaced after each model. `complete=false` means the run
 was interrupted, and any failed model causes a nonzero exit status. An
 inspection-only run records `inspected`, with later stages left `not_run`.

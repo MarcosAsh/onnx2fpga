@@ -77,6 +77,7 @@ jobs:
       - name: corpus fixtures against ONNX Runtime
         run: |
           python -c "import onnxruntime; print(onnxruntime.__version__)"
+          python -m unittest test_corpus.Corpus.test_portable_quantized_weights -v
           python -m unittest test_corpus.Corpus.test_fixtures_match_onnxruntime -v
       - name: quantized import, in simulation
         # Also runs in the unit job, but its simulation half skips there without verilator.
