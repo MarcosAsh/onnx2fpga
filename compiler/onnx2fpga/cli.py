@@ -10,6 +10,7 @@ import numpy as np
 
 from .api import load
 from .board import IcepiZero
+from .compatibility import check
 from .doctor import Doctor
 from .errors import Onnx2FpgaError, SimulationError, ToolchainError
 from .measure import (Characterizer, SynthesisResult, VivadoRunner, calibration_samples,
@@ -176,6 +177,12 @@ def run_devices(args):
     return 0
 
 
+def run_check(args):
+    report = check(args.model, device=args.device, mode=args.mode, clock_mhz=args.clock_mhz)
+    print(json.dumps(report.to_dict(), indent=2) if args.json else report.render())
+    return 0 if report.ok else 1
+
+
 def run_inspect(args):
     model = OnnxModel.load(args.model)
     print("producer %s %s, opset %d, ir_version %d"
@@ -207,6 +214,13 @@ def parser():
 
     sub = command("inspect", "print what the compiler sees in an ONNX file", run_inspect)
     sub.add_argument("model", type=pathlib.Path)
+
+    sub = command("check", "check model compatibility without generating hardware", run_check)
+    sub.add_argument("model", type=pathlib.Path)
+    sub.add_argument("--device", default="vu9p", choices=Device.names())
+    sub.add_argument("--mode", default="stream", choices=("stream", "fixed"))
+    sub.add_argument("--clock-mhz", type=float)
+    sub.add_argument("--json", action="store_true", help="print a structured report")
 
     sub = command("compile", "compile an ONNX model into a build directory", run_compile)
     sub.add_argument("model", type=pathlib.Path)

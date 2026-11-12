@@ -41,6 +41,8 @@ def tensor_from_numpy(array, name):
 
 class OnnxModel:
     def __init__(self, proto):
+        if proto.graph is None:
+            raise ValueError("ONNX model has no graph")
         self.proto = proto
         self._initializers = {t.name: t for t in proto.graph.initializer}
 

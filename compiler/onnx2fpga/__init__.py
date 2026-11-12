@@ -2,10 +2,11 @@
 
 from . import errors
 from .api import Accelerator, from_keras, load
+from .compatibility import CompatibilityReport, check
 from .errors import Onnx2FpgaError
 from .hardware_layer import HardwareLayer
 
 __version__ = "0.1.0"
 
-__all__ = ["Accelerator", "HardwareLayer", "Onnx2FpgaError", "errors", "from_keras",
-           "load"]
+__all__ = ["Accelerator", "CompatibilityReport", "HardwareLayer", "Onnx2FpgaError",
+           "check", "errors", "from_keras", "load"]

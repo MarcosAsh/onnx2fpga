@@ -8,6 +8,31 @@ import onnx2fpga as otf
 
 ## Loading
 
+### `otf.check(model, device="vu9p", mode="stream", clock_mhz=None)`
+
+Checks a path or `OnnxModel` before loading it as an accelerator. Returns a
+`CompatibilityReport` with `ok`, `findings`, `unchecked`, `render()` and
+`to_dict()`. It needs neither calibration samples nor external tools and
+does not write a build directory. Only built-in operator handlers are checked.
+
+```python
+report = otf.check("examples/models/mlp.onnx", device="k26", mode="fixed")
+print(report.render())
+```
+
+The report collects independent import errors. A failed node's dependents
+are marked unknown, and other branches are checked from clean importer state.
+Unknown non-batch dimensions and unassessed integer input semantics also
+produce unknown findings. Symbolic batch dimensions receive a warning that
+import uses batch size 1.
+
+`ok` is true when there are no error or unknown findings. It means ready to
+attempt compilation. The report lists the checks still needed, including full
+ONNX schema/opset validation, quantization, resource fit and routed timing.
+Declared opsets are reported as context; they are not a claim of conformance
+to every version of an operator. Invalid device, mode or clock arguments
+raise `ConfigError`; unreadable model files become report findings.
+
 ### `otf.load(model, custom_objects=None, name=None)`
 
 Reads an ONNX file (a path or an `OnnxModel`) and returns an `Accelerator`. The
