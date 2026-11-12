@@ -48,11 +48,11 @@ jobs:
           python-version: ${{ matrix.python }}
       # setuptools builds the wheel and is no longer bundled from 3.12 on.
       - run: pip install "numpy>=1.20" setuptools
-      - name: install tcl
-        # Without tclsh the stubbed Vivado script tests skip silently.
+      - name: install tcl and device-tree tools
+        # Keep the Vivado script and firmware package tests from skipping.
         run: |
           sudo apt-get update
-          sudo apt-get install -y tcl
+          sudo apt-get install -y tcl device-tree-compiler
       - run: make models
       - name: unit, determinism and vivado script tests
         run: make test-unit

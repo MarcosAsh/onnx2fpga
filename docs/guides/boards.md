@@ -96,7 +96,7 @@ the generated `kria_regs` under Verilator. `deploy(registers=regs, program=False
 opens a prediction session over that transport and checks the shell identity,
 widths and reset support. `reset()` discards pending inference while preserving
 weight banks. `deploy(host="user@kria.local", program=False)` uses the native
-`kria_regs` helper over SSH; see the [API reference](../api/reference.md#deploy-port-none-program-true-timeout-2-0-host-none-registers-none).
+`kria_regs` helper over SSH; see the [API reference](../api/reference.md).
 The helper and physical MMIO still need validation on a board. The example MLP does not
 fit reloadable on the K26, since every weight then needs a multiplier and the
 estimate is 1706 DSPs; the 16-32-8 MLP of the tests needs 424 DSPs and 24096
@@ -164,6 +164,43 @@ The output directory contains `kr260.bit`, `kr260.bin`, `kr260.xsa`,
 `model.onnx`, simulation vectors and manifest remain in the parent directory.
 The host runtime and Linux overlay still need validation on a board; the
 bitstream alone does not establish that Linux can access the accelerator.
+
+### Prepare a Linux firmware package
+
+After a successful build, install `device-tree-compiler` on the build machine and run:
+
+```sh
+python3 tools/package_kria.py build/kr260_runtime_reset build/kr260_firmware
+```
+
+Use the output directory of your own build as the first argument. `--board kv260`
+selects a KV260 build; `--name my_model` changes the firmware application name.
+The destination must not already exist.
+
+The package contains `onnx2fpga.bit.bin`, `onnx2fpga.dtbo`, `shell.json`, the
+overlay source, the model manifest and a hash record. It checks that the XSA
+contains the exported bitstream and that the binary is its payload. Register
+addresses, PS clock rate and AXI interface widths come from the XSA. The overlay
+enables PL0 through `xlnx,fclk` and configures the PS interfaces through
+`xlnx,afi-fpga`.
+
+This targets AMD Linux images with FPGA-manager overlays, `xmutil`/`dfx-mgr`,
+both drivers above, and device-tree symbols `fpga_full`, `amba`, `zynqmp_clk` and
+`zynqmp_reset`. Check those requirements on the intended image before loading.
+The package follows AMD's [Vivado deployment flow](https://xilinx.github.io/kria-apps-docs/creating_applications/2022.1/build/html/docs/vivado_accel_example.html)
+and derives interface settings using the mappings in AMD's
+[device-tree generator](https://github.com/Xilinx/system-device-tree-xlnx/tree/xlnx_rel_v2025.2/device_tree/data).
+
+On a matching board image, place the firmware application in
+`/lib/firmware/xilinx/onnx2fpga`, then use `xmutil unloadapp` and
+`xmutil loadapp onnx2fpga` with the privileges that image requires. Unloading
+stops the current PL application. Install the native `kria_regs` helper before
+connecting with `deploy(host=..., program=False)`.
+
+Package tests compile and apply the overlay to a test device tree and reject
+mismatched artifacts. They do not validate the board's Linux image, firmware,
+clock drivers or physical MMIO. Automatic installation and programming remain
+unfinished.
 
 ## Adding a board
 
