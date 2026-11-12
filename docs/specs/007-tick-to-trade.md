@@ -23,6 +23,25 @@ from DDR and feeds them into the parser at line rate, so the whole path from
 parser to decision runs and gets measured with no network at all. Today stage
 A runs in Verilator, with a C++ harness in the replayer's place.
 
+The standalone `ddr_replay` unit reads 128-bit records through an AXI4 master.
+Each record holds a 64-bit input beat in bits 63:0, `keep` in 71:64, `last` in
+bit 72 and zero padding above it. The Python `trading.replay_records` codec uses that
+layout. A buffer must end at a packet boundary.
+
+The base address is 256-byte aligned. Bursts contain at most 16 records, so
+they cannot cross a 4 KiB boundary. Only one burst is outstanding. The engine
+holds address requests under backpressure and waits for the consumer before
+accepting data. Bad AXI responses, masks, padding or burst endings stop output
+and drain the current burst. Abort also drains it before accepting another
+start. Hardware clear must reset the AXI interconnect too; software abort must
+not clear outstanding bus state.
+
+Randomized simulation covers address, data and consumer stalls across a 4 KiB
+boundary. Directed cases cover early/late `RLAST`, response and record errors,
+abort during address/data transfer, empty buffers, misalignment and address
+overflow. Connection to PS DDR, replay control registers and the integrated
+KR260 trading build remain unfinished.
+
 Stage B needs the KR260, the board with the SFP+ cage. It adds a 10G MAC and
 PCS so real frames come in from a PC with a 10G card and decisions go back out.
 
