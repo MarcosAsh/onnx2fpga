@@ -63,6 +63,12 @@ separately. The report includes compiler resource estimates, cycle counts
 and throughput at the assumed clock. It does not perform place-and-route or
 physical board testing; those stages remain `not_run`.
 
+The [12 November 2026 report](../measurements/corpus-k26-2026-11-12.json),
+from clean revision `bef6835`, passes all 22 models. It used the command above
+with `--frames 256`, for 5,632 bit-exact simulation vectors. Fixed pipeline
+latencies range from 4 to 22 cycles at the requested 322.265625 MHz clock.
+This run did not measure achievable clock frequency.
+
 Regression error must be below 2.5 percent of the reference output's standard
 deviation. A constant reference requires exact agreement. Classifier labels
 must agree on at least 98 percent of inputs. These are corpus regression
