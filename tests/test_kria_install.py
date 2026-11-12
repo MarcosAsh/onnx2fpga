@@ -1,14 +1,18 @@
 """Firmware installation and programming without board access."""
 
 import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
+import shlex
 import tempfile
 import unittest
 from unittest import mock
 
-from tools.install_kria import install
+from onnx2fpga.kria_install import install
+from onnx2fpga.kria_deploy import program, RECEIVE
+from onnx2fpga.board import BoardError
 
 
 class InstallTest(unittest.TestCase):
@@ -40,7 +44,7 @@ class InstallTest(unittest.TestCase):
         return install(self.source, "kr260", self.root, symbols=self.symbols, **kwargs)
 
     def test_copy_without_programming(self):
-        with mock.patch("tools.install_kria.subprocess.run") as run:
+        with mock.patch("onnx2fpga.kria_install.subprocess.run") as run:
             destination = self.install()
         run.assert_not_called()
         for path in self.source.iterdir():
@@ -78,8 +82,8 @@ class InstallTest(unittest.TestCase):
             self.install()
 
     def test_program_sequence(self):
-        with mock.patch("tools.install_kria.shutil.which", return_value="/usr/bin/xmutil"), \
-                mock.patch("tools.install_kria.subprocess.run") as run:
+        with mock.patch("onnx2fpga.kria_install.shutil.which", return_value="/usr/bin/xmutil"), \
+                mock.patch("onnx2fpga.kria_install.subprocess.run") as run:
             self.install(program=True)
         self.assertEqual(run.call_args_list, [
             mock.call(["/usr/bin/xmutil", "listapps"], check=True),
@@ -88,15 +92,15 @@ class InstallTest(unittest.TestCase):
 
     def test_preflight_before_installation(self):
         (self.symbols / "amba").unlink()
-        with mock.patch("tools.install_kria.subprocess.run") as run:
+        with mock.patch("onnx2fpga.kria_install.subprocess.run") as run:
             with self.assertRaisesRegex(ValueError, "missing device-tree symbol"):
                 self.install(program=True)
         run.assert_not_called()
         self.assertFalse(self.root.exists())
 
     def test_failed_unload_stops_programming(self):
-        with mock.patch("tools.install_kria.shutil.which", return_value="xmutil"), \
-                mock.patch("tools.install_kria.subprocess.run", side_effect=[
+        with mock.patch("onnx2fpga.kria_install.shutil.which", return_value="xmutil"), \
+                mock.patch("onnx2fpga.kria_install.subprocess.run", side_effect=[
                     subprocess.CompletedProcess([], 0), subprocess.CalledProcessError(1, "xmutil")]) as run:
             with self.assertRaises(subprocess.CalledProcessError):
                 self.install(program=True)
@@ -104,7 +108,61 @@ class InstallTest(unittest.TestCase):
         self.assertTrue((self.root / "demo" / "package.json").is_file())
 
     def test_missing_xmutil(self):
-        with mock.patch("tools.install_kria.shutil.which", return_value=None):
+        with mock.patch("onnx2fpga.kria_install.shutil.which", return_value=None):
             with self.assertRaisesRegex(ValueError, "xmutil is not installed"):
                 self.install(program=True)
         self.assertFalse(self.root.exists())
+
+    def test_reuse_requires_identical_package(self):
+        self.install()
+        self.install(reuse=True)
+        self.record["description"] = "another package"
+        self.write_record()
+        with self.assertRaisesRegex(ValueError, "differs"):
+            self.install(reuse=True)
+
+    def test_remote_package_roundtrip(self):
+        commands = []
+
+        def run(command, **kwargs):
+            if command[0] == "ssh":
+                self.assertEqual(command[1:7], ["-o", "BatchMode=yes", "-o",
+                                              "ConnectTimeout=300", "--", "kria.local"])
+                words = shlex.split(command[-1])
+                self.assertEqual(words[:4], ["sudo", "-n", "python3", "-c"])
+                source = words[4]
+                self.assertTrue(source.endswith(RECEIVE))
+                namespace = {}
+                exec(source[:-len(RECEIVE)], namespace)
+                remote_install = namespace["install"]
+                namespace["install"] = lambda source, board, **options: remote_install(
+                    source, board, root=self.root, symbols=self.symbols, **options)
+                with mock.patch("sys.stdin", io.StringIO(kwargs["input"])):
+                    exec(RECEIVE, namespace)
+            else:
+                commands.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch("onnx2fpga.kria_deploy.subprocess.run", side_effect=run), \
+                mock.patch("onnx2fpga.kria_install.shutil.which", return_value="xmutil"):
+            for _ in range(2):
+                program("kria.local", self.source, "kr260", self.source / "manifest.json")
+        self.assertEqual(commands, [["xmutil", "listapps"], ["xmutil", "unloadapp"],
+                                    ["xmutil", "loadapp", "demo"]] * 2)
+        self.assertEqual((self.root / "demo" / "demo.bit.bin").read_bytes(), b"payload")
+
+    def test_remote_validation_before_ssh(self):
+        other = self.source / "other.json"
+        other.write_text('{"different": true}')
+        with mock.patch("onnx2fpga.kria_deploy.subprocess.run") as run:
+            with self.assertRaisesRegex(BoardError, "compiled model"):
+                program("kria.local", self.source, "kr260", other)
+            with self.assertRaisesRegex(ValueError, "SSH host"):
+                program("host;bad", self.source, "kr260", self.source / "manifest.json")
+        run.assert_not_called()
+
+    def test_remote_failure_reported(self):
+        with mock.patch("onnx2fpga.kria_deploy.subprocess.run", return_value=
+                        subprocess.CompletedProcess([], 1, "", "load failed")):
+            with self.assertRaisesRegex(BoardError, "load failed"):
+                program("kria.local", self.source, "kr260", self.source / "manifest.json")

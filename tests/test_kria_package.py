@@ -11,7 +11,7 @@ from unittest import mock
 import zipfile
 
 from tools.package_kria import package, verify_build
-from tools.install_kria import read_package
+from onnx2fpga.kria_install import read_package
 from onnx2fpga.board import BoardError, KR260
 
 

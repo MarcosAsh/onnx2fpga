@@ -11,18 +11,24 @@ import time
 from .board import BoardError
 
 
-def connect(host, manifest, timeout=2.0):
-    """Connects to an installed kria_regs helper using the user's SSH configuration."""
+def ssh_command(host, timeout):
     if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:\[\]-]*", host):
         raise ValueError("invalid SSH host")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and positive")
+    return ["ssh", "-o", "BatchMode=yes", "-o",
+            "ConnectTimeout=%d" % max(1, math.ceil(timeout)), "--", host]
+
+
+def connect(host, manifest, timeout=2.0):
+    """Connects to an installed kria_regs helper using the user's SSH configuration."""
+    command = ssh_command(host, timeout)
     layout = manifest["registers"]
     base = layout["base"]
     if (layout["span"] != 0x10000 or not isinstance(base, int)
             or base < 0 or base % 4096):
         raise BoardError("invalid Kria register window")
-    return ProcessRegisters(["ssh", "-o", "BatchMode=yes", "-o",
-                             "ConnectTimeout=%d" % max(1, math.ceil(timeout)),
-                             "--", host, "kria_regs --base %x" % base], timeout)
+    return ProcessRegisters(command + ["kria_regs --base %x" % base], timeout)
 
 
 class ProcessRegisters:

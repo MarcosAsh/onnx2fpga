@@ -73,6 +73,8 @@ class Wheel(unittest.TestCase):
         self.assertEqual(len(modules), 10, modules)
         for suffix in ("synth_unit.tcl", "sim/harness.cpp", "otf/kernels.hpp"):
             self.assertTrue(any(n.endswith(suffix) for n in names), suffix)
+        for name in ("kria_install.py", "kria_deploy.py"):
+            self.assertIn("onnx2fpga/" + name, names)
         entry = next(n for n in names if n.endswith("entry_points.txt"))
         self.assertIn("onnx2fpga = onnx2fpga.cli:main", archive.read(entry).decode())
 

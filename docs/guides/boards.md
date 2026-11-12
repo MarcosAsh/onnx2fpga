@@ -198,11 +198,11 @@ The package follows AMD's [Vivado deployment flow](https://xilinx.github.io/kria
 and derives interface settings using the mappings in AMD's
 [device-tree generator](https://github.com/Xilinx/system-device-tree-xlnx/tree/xlnx_rel_v2025.2/device_tree/data).
 
-Copy the package and `tools/install_kria.py` to a matching board image. On the
-board, install with:
+Copy the package and this checkout to a matching board image with Python and
+NumPy installed. From the checkout on the board, install with:
 
 ```sh
-sudo python3 install_kria.py kr260_firmware --board kr260
+sudo python3 tools/install_kria.py kr260_firmware --board kr260
 ```
 
 The installer checks file hashes and the build record, then installs the
@@ -219,15 +219,37 @@ manual `xmutil loadapp <name>` retry. Preflight does not establish driver or
 firmware compatibility.
 
 Install the native `kria_regs` helper before connecting with
-`deploy(host=..., program=False)`. The `deploy()` API does not install or program
-Kria firmware. The trading demo's
+`deploy(host=..., program=False)`. The trading demo's
 [Linux setup](../specs/007-tick-to-trade.md#provision-linux-for-replay) includes
 the helper installation and persistent DMA-buffer provisioning commands.
 
+For an inference accelerator already built with `acc.build(board="kr260")`,
+the Python API can transfer and program its verified package:
+
+```python
+acc.deploy(host="user@kria.local", firmware="build/kr260_firmware")
+```
+
+The package's manifest must exactly match the compiled build. Deployment uses
+the user's SSH configuration in batch mode and invokes `sudo -n python3` on
+the board. The account needs existing permission for that command and access
+to `kria_regs`; deployment does not alter SSH or sudo configuration. The remote
+installer uses only the Python standard library. It verifies the transferred
+files again, installs the application and runs `xmutil unloadapp`/`loadapp`
+before opening the register session. Transfer and programming have a five-minute
+timeout; `deploy(timeout=...)` controls the register connection and requests.
+
+Repeating deployment reuses an identical installed package. A different package
+under the same name is rejected, so use a new package name when changing the
+model. Stop all accelerator clients before programming. The API closes its own
+session first and checks the hardware identity and register layout after loading.
+Programming failures leave the accelerator disconnected.
+
 Package tests compile and apply the overlay to a test device tree and reject
 mismatched artifacts. Installer tests use temporary directories and a mocked
-`xmutil`. They do not validate the board's Linux image, firmware, clock drivers
-or physical MMIO.
+`xmutil`, including the serialized SSH payload and receiver. API tests connect
+to the Verilator register model after a mocked programming call. They do not
+validate the board's Linux image, firmware, clock drivers or physical MMIO.
 
 ## Adding a board
 

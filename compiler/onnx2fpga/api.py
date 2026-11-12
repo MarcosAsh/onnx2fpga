@@ -23,6 +23,7 @@ from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
                      UnknownLayerError)
 from .hardware_layer import CustomOp, custom_passes
 from .kria_runtime import RegisterSession
+from .kria_deploy import program as program_kria
 from .register_transport import connect as connect_registers
 from .measure import TimingReport, calibration_samples
 from .p1_ingest import OnnxModel
@@ -804,14 +805,23 @@ class Accelerator:
         self.board = board
         return board.bitstream
 
-    def deploy(self, port=None, program=True, timeout=2.0, host=None, registers=None):
-        """Opens a serial or explicit register session; optionally programs serial boards."""
-        if host is not None and not program and registers is None:
+    def deploy(self, port=None, program=True, timeout=2.0, host=None, registers=None,
+               firmware=None):
+        """Opens a board session; Kria programming requires a matching firmware package."""
+        if firmware is not None and (not program or host is None or registers is not None):
+            raise ConfigError("firmware requires host= and program=True without registers=")
+        if host is not None and registers is None:
             self._require_compiled("deploy")
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ConfigError("timeout must be finite and positive")
             if not isinstance(self.board, Kria) or port is not None:
                 raise ConfigError("host deployment needs a Kria board without port=")
+            if program and firmware is None:
+                raise ConfigError("Kria programming needs firmware= with a verified package directory")
             manifest = json.loads((self.out_dir / "manifest.json").read_text())
             self.disconnect()
+            if program:
+                program_kria(host, firmware, self.board.NAME, self.out_dir / "manifest.json")
             transport = connect_registers(host, manifest, timeout)
             try:
                 self.session = RegisterSession(transport, manifest, timeout,
@@ -829,8 +839,7 @@ class Accelerator:
             self.session = RegisterSession(registers, manifest, timeout).open()
             return self
         if host is not None or isinstance(self.board, Kria):
-            raise NotImplementedError("automatic Kria programming is not implemented; "
-                                      "use host= or registers= with program=False")
+            raise ConfigError("Kria deployment needs host= or registers= with program=False")
         if self.board is None:
             raise NotCompiledError("deploy needs acc.build(board='icepi_zero') first")
         self._require_compiled("deploy")

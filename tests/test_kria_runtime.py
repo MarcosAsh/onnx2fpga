@@ -146,6 +146,23 @@ class RtlSessionTest(unittest.TestCase):
                 finally:
                     acc.disconnect()
                 remote.close.assert_called_once()
+            remote = Mock(read=bus.read, write=bus.write)
+            with patch("onnx2fpga.api.program_kria") as program, \
+                    patch("onnx2fpga.api.connect_registers", return_value=remote):
+                try:
+                    acc.deploy(host="kria.local", firmware="verified-package")
+                    program.assert_called_once_with("kria.local", "verified-package", "kr260",
+                                                    acc.out_dir / "manifest.json")
+                    np.testing.assert_array_equal(acc.predict(samples, quantized=True),
+                                                  acc.predict(samples, quantized=True, on="reference"))
+                finally:
+                    acc.disconnect()
+            with patch("onnx2fpga.api.program_kria", side_effect=BoardError("load failed")), \
+                    patch("onnx2fpga.api.connect_registers") as connect:
+                with self.assertRaisesRegex(BoardError, "load failed"):
+                    acc.deploy(host="kria.local", firmware="verified-package")
+                connect.assert_not_called()
+                self.assertFalse(acc.deployed)
             wrong = Mock()
             wrong.read.return_value = 0
             with patch("onnx2fpga.api.connect_registers", return_value=wrong):

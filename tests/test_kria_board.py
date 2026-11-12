@@ -234,7 +234,8 @@ class Flow(unittest.TestCase):
         memory.unlink()
 
     def test_deploy(self):
-        with self.assertRaisesRegex(NotImplementedError, "automatic Kria programming"):
+        self.acc.board = KV260(self.out)
+        with self.assertRaisesRegex(ConfigError, "firmware="):
             self.acc.deploy(host="kria.local")
         with self.assertRaisesRegex(ConfigError, "has frozen weights"):
             self.acc.load_weights(Fixtures.factory(8).mlp((16, 32, 8)))

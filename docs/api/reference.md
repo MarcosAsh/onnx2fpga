@@ -159,7 +159,7 @@ take only fixed latency designs compiled for `k26`, see
 [006](../specs/006-kv260.md). They write a Vivado project and run it if
 `vivado` is on PATH; otherwise they raise `ToolchainError` after writing it.
 
-### `deploy(port=None, program=True, timeout=2.0, host=None, registers=None)`
+### `deploy(port=None, program=True, timeout=2.0, host=None, registers=None, firmware=None)`
 
 Loads the bitstream into SRAM and opens the serial port. `program=False` only
 opens the port, for a board already loaded. `port` defaults to the board's USB
@@ -169,7 +169,13 @@ Offsets are bytes. The session checks the shell ID, bus widths, latency and
 reset capability before predicting. The caller retains ownership of `regs`.
 `host="user@kria.local", program=False` connects over SSH to an installed
 `kria_regs` helper. SSH uses batch mode and the user's existing host-key and
-authentication settings. Automatic Kria programming remains unimplemented.
+authentication settings. With `program=True`, supply `firmware=` pointing to a
+verified package directory whose manifest matches this build. Deployment transfers
+the package over SSH and uses `sudo -n python3` to install and load it through
+`xmutil`, then opens the register session. Existing packages are reused only when
+identical. The account needs those privileges already; deployment does not change
+permissions. See [Kria firmware packages](../guides/boards.md#prepare-a-linux-firmware-package)
+for requirements and the scope of testing.
 
 Register prediction polls status for up to `timeout` seconds; the transport's
 individual reads and writes must themselves return or raise on failure. A failed
