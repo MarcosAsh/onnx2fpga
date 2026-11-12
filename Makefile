@@ -43,6 +43,7 @@ test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_replay_compare.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_package.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_kria_install.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_provision_ddr.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_artix.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_compatibility.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_corpus_report.py" -v

@@ -219,8 +219,10 @@ manual `xmutil loadapp <name>` retry. Preflight does not establish driver or
 firmware compatibility.
 
 Install the native `kria_regs` helper before connecting with
-`deploy(host=..., program=False)`. Remote installation through `deploy()` and
-DMA-buffer driver provisioning remain unfinished.
+`deploy(host=..., program=False)`. The `deploy()` API does not install or program
+Kria firmware. The trading demo's
+[Linux setup](../specs/007-tick-to-trade.md#provision-linux-for-replay) includes
+the helper installation and persistent DMA-buffer provisioning commands.
 
 Package tests compile and apply the overlay to a test device tree and reject
 mismatched artifacts. Installer tests use temporary directories and a mocked

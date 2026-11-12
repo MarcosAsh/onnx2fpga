@@ -80,7 +80,8 @@ trading core to confirm it matches the simulated RTL. The board adds an AXI4-Lit
 control window at `0xA0000000` and a 128-bit read path to PS HP0. That path maps
 only low DDR, addresses `0` through `0x7fffffff`; OCM is excluded. A replay buffer
 must belong to a DMA allocation with the required cache synchronization and
-lifetime. Linux buffer allocation and host ownership are not implemented yet.
+lifetime. The host runtime and allocation helper are described below; physical
+DDR access still requires board validation.
 
 | Byte offset | Register | Meaning |
 |---|---|---|
@@ -378,6 +379,36 @@ responses, failed aborts and exclusive access. The host-to-RTL test drives the
 generated registers through stalled DDR reads, compares decision snapshots and
 counters with the software model, and checks timeout recovery and DDR errors.
 Cache coherency and physical DDR access still require board validation.
+
+### Provision Linux for replay
+
+The board image needs the out-of-tree
+[u-dma-buf driver](https://github.com/ikwzm/udmabuf#compile), built for its running
+kernel and installed in its module search path. This is distinct from Linux's
+`udmabuf` driver. Install the native register helper from this checkout on the
+board:
+
+```bash
+make -C runtime bin/kria_regs
+sudo install -m 0755 runtime/bin/kria_regs /usr/local/bin/kria_regs
+sudo python3 tools/provision_ddr.py --records records.bin
+```
+
+The provisioning helper rounds the file size to a page boundary. It loads an
+installed `u-dma-buf` module with `udmabuf0=<bytes>` and `dma_mask_bit=31`, then
+checks the allocation's size, alignment, address range, device identity and
+cache synchronization attributes. It rejects coherent allocations and an
+attached IOMMU group. The board image must still provide direct DMA addresses
+for HP0; these checks do not prove that mapping on an untested image.
+
+An existing `udmabuf0` is checked and retained. The helper does not resize it,
+unload a module, change permissions or touch buffer contents. If the module
+is already loaded without that device, loading fails. If allocation fails,
+check the kernel log and available contiguous memory on the board; the helper
+does not edit boot configuration or reserve arbitrary physical addresses.
+`--bytes 0x8000000` requests 128 MiB without a replay file. All allocation and
+module-loading tests use fixtures and mocked commands; no kernel module was
+loaded during these tests.
 
 On an already programmed board with the package's `manifest.json`, a provisioned
 `udmabuf0` and the native register helper installed, run:
