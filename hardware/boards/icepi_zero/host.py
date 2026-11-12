@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Runs a compiled model on an Icepi Zero over its USB serial port: host.py BUILD_DIR [--frames N]."""
+"""Runs a compiled model over USB UART: host.py BUILD_DIR [--board NAME] [--frames N]."""
 
 import argparse
 import importlib.util
@@ -61,6 +61,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("build", type=pathlib.Path,
                         help="the directory onnx2fpga bitstream wrote")
+    parser.add_argument("--board", default="icepi_zero")
     parser.add_argument("--port", default=None,
                         help="serial port (default the FT231X under /dev/serial/by-id, "
                              "else /dev/ttyUSB0)")
@@ -75,7 +76,7 @@ def main(argv=None):
                         help="seconds without output before giving up")
     args = parser.parse_args(argv)
 
-    link = Link.load(args.build)
+    link = Link.load(args.build, args.board)
     try:
         inputs = Link.frames(read_hex(args.input or args.build / "golden" / "input.hex"),
                              link.in_beats, "the input")

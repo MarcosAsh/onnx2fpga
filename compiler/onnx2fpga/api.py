@@ -14,7 +14,7 @@ import warnings
 import numpy as np
 
 from . import reload
-from .board import BOARDS, Kria
+from .board import BOARDS, ArtyA7, Kria
 from .compile import CompilationResult, Compiler
 from .doctor import TOOLS
 from .errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
@@ -755,21 +755,22 @@ class Accelerator:
         return ("golden/x_input.hex", "golden/" + expected_name)
 
     def build(self, board="icepi_zero", verbose=False, **options):
-        """A bitstream for `board`, an Icepi Zero with the open flow or a Kria with Vivado; compiles first if nothing is compiled yet."""
+        """Builds an Icepi, Kria or Arty bitstream; compiles first if needed."""
         if isinstance(board, str) and board not in BOARDS:
             raise ConfigError("unknown board %r, expected one of %s"
                               % (board, ", ".join(BOARDS)))
         board_class = BOARDS[board] if isinstance(board, str) else type(board)
         kria = issubclass(board_class, Kria)
+        arty = issubclass(board_class, ArtyA7)
         if self.result is None:
-            if kria:
+            if kria or arty:
                 self.compile(device=board_class.DEVICE, mode="fixed")
             else:
                 self.compile(device=board_class.DEVICE, hdl="hardcaml")
         self._require_compiled("build")
         name = board_class.NAME
         wanted = "fixed" if kria else "stream"
-        if self.mode != wanted:
+        if not arty and self.mode != wanted:
             raise ConfigError("build(board=%r) needs mode=%r" % (name, wanted))
         if self.device.name != board_class.DEVICE:
             raise ConfigError("%s carries %s, but this design was compiled for %s"
@@ -782,7 +783,7 @@ class Accelerator:
             raise ConfigError("the board writes to %s but the design is in %s"
                               % (board.out, self.out_dir))
         missing = board_class.missing_tools()
-        if missing and kria:
+        if missing and (kria or arty):
             board.write()
             raise ToolchainError("build(board=%r) wrote the Vivado project to %s but needs "
                                  "vivado on PATH to run it" % (name, board.build),

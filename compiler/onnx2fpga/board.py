@@ -1,4 +1,4 @@
-"""From a compiled design to a bitstream on a real board: the open ECP5 flow, or Vivado for Kria."""
+"""Board bitstreams through the open ECP5 flow or Vivado."""
 
 import json
 import pathlib
@@ -244,7 +244,105 @@ class KR260(Kria):
     SFP = True
 
 
-BOARDS = {board.NAME: board for board in (IcepiZero, KV260, KR260)}
+class ArtyA7:
+    """Arty A7 at 100 MHz with a USB UART link and frozen weights."""
+
+    NAME = None
+    DEVICE = None
+    DEPTH = 2048
+    BAUD = 1_000_000
+    FLOW_TIMEOUT = 3600
+
+    def __init__(self, out, generator=None):
+        self.out = pathlib.Path(out)
+        self.generator = generator or HardcamlGenerator()
+
+    @property
+    def directory(self):
+        if self.generator.project is None:
+            raise BoardError("no Hardcaml project, so no board files")
+        return self.generator.project.parent / "boards" / "arty_a7"
+
+    @property
+    def build(self):
+        return self.out / self.NAME
+
+    @property
+    def bitstream(self):
+        return self.build / (self.NAME + ".bit")
+
+    @property
+    def timing(self):
+        return self.build / "timing_summary.rpt"
+
+    @staticmethod
+    def tool(name):
+        return IcepiZero.tool(name)
+
+    @classmethod
+    def missing_tools(cls):
+        return [] if cls.tool("vivado") else ["vivado"]
+
+    def write(self):
+        from .targets.device import Device
+
+        self.build.mkdir(parents=True, exist_ok=True)
+        design = (self.out / "design.json").resolve()
+        (self.build / "arty_top.v").write_text(self.generator.verilog(design, "arty"))
+        for name in ("arty.xdc", "build.tcl", "check_timing.tcl"):
+            shutil.copyfile(self.directory / name, self.build / name)
+        (self.build / "settings.tcl").write_text(
+            "set board %s\nset part %s\n" % (self.NAME, Device.get(self.DEVICE).part))
+        (self.build / "board.json").write_text(json.dumps(
+            {"board": self.NAME, "mhz": 100, "baud": self.BAUD,
+             "rx_depth": self.DEPTH, "tx_depth": self.DEPTH}) + "\n")
+        return self.build / "build.tcl"
+
+    def run(self, target="bit"):
+        if target == "prog":
+            loader = self.tool("openFPGALoader")
+            if loader is None:
+                raise BoardError("openFPGALoader not found")
+            command = [loader, "-b", self.NAME, str(self.bitstream.resolve())]
+        elif target == "bit":
+            self.write()
+            vivado = self.tool("vivado")
+            if vivado is None:
+                raise BoardError("vivado not found")
+            command = [vivado, "-mode", "batch", "-nojournal", "-log", "vivado.log",
+                       "-source", "build.tcl"]
+        else:
+            raise BoardError("unknown Arty target %r" % target)
+        completed = subprocess.run(command, cwd=self.build, capture_output=True,
+                                   text=True, timeout=self.FLOW_TIMEOUT)
+        (self.build / (target + "_output.log")).write_text(completed.stdout + completed.stderr)
+        if completed.returncode:
+            raise BoardError("%s failed in %s:\n%s" % (
+                target, self.build, (completed.stdout + completed.stderr)[-3000:]))
+        return completed.stdout
+
+    def render_report(self):
+        from .measure import TimingReport
+
+        report = TimingReport.load(self.timing, "sys_clk")
+        return "clock 100 MHz, routed setup slack %.3f ns" % report.wns_ns
+
+    def host_command(self):
+        host = self.directory.parent / "icepi_zero" / "host.py"
+        return "python3 %s %s --board %s --port PORT" % (host, self.out, self.NAME)
+
+
+class ArtyA735(ArtyA7):
+    NAME = "arty_a7_35t"
+    DEVICE = "a7_35t"
+
+
+class ArtyA7100(ArtyA7):
+    NAME = "arty_a7_100t"
+    DEVICE = "a7_100t"
+
+
+BOARDS = {board.NAME: board for board in (IcepiZero, KV260, KR260, ArtyA735, ArtyA7100)}
 
 
 # Byte offsets of kria_regs.ml, which must agree with its Offset module.

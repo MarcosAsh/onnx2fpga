@@ -27,6 +27,26 @@ default, and v1.3 has the same pins), `mhz`, `baud` and `seeds`.
 Button 0 resets the design. LED 0 blinks as a heartbeat. LED 1 lights if a
 serial frame arrived broken or a buffer filled up.
 
+## Arty A7
+
+The `arty_a7_35t` and `arty_a7_100t` flows use Vivado, the 100 MHz board
+oscillator and USB UART at 1 Mbaud. Use devices `a7_35t` and `a7_100t`,
+respectively. Frozen-weight fixed and streaming models are supported.
+Physical board operation remains unverified.
+
+```python
+acc.compile(device="a7_35t", mode="fixed", calibration=x_train[:64])
+acc.build(board="arty_a7_35t")
+acc.deploy(port="/dev/ttyUSB1")  # use your board's UART port
+```
+
+Builds check setup, hold, pulse-width and internal constraints before writing
+a bitstream. The serial bridge buffers one fixed-mode inference at a time;
+its throughput differs from the accelerator's native throughput. Button 0
+resets the design, and a serial break resets framing. See the
+[Arty board guide](https://github.com/MarcosAsh/onnx2fpga/blob/main/hardware/boards/arty_a7/README.md)
+for build requirements and the serial protocol.
+
 ## KV260 and KR260
 
 Status: partial, see [006](../specs/006-kv260.md). A small KR260 inference

@@ -9,10 +9,10 @@ import sys
 import numpy as np
 
 from .api import load
-from .board import IcepiZero
+from .board import ArtyA735, ArtyA7100, BOARDS, IcepiZero
 from .compatibility import check
 from .doctor import Doctor
-from .errors import Onnx2FpgaError, SimulationError, ToolchainError
+from .errors import ConfigError, Onnx2FpgaError, SimulationError, ToolchainError
 from .measure import (Characterizer, SynthesisResult, VivadoRunner, calibration_samples,
                       open_flow, render)
 from .p1_ingest import OnnxModel
@@ -142,7 +142,29 @@ def run_synth(args):
 
 
 def run_bitstream(args):
-    options = {"rev": args.rev, "seeds": [int(s) for s in args.seeds.split()],
+    board_class = BOARDS[args.board]
+    if args.device is not None and args.device != board_class.DEVICE:
+        raise ConfigError("%s needs device %s" % (args.board, board_class.DEVICE))
+    args.device = board_class.DEVICE
+    if board_class is not IcepiZero:
+        if (args.rev not in (None, "E.0") or args.mhz not in (None, 100)
+                or args.baud not in (None, 1_000_000) or args.uart != "usb"
+                or args.seeds != "1 2 3 4 5 6 7 8"):
+            raise ConfigError("Arty uses revision E.0, 100 MHz and USB UART at 1000000 baud")
+        args.out = args.out or pathlib.Path("build") / (args.model.stem + "_" + args.board)
+        acc = load(args.model)
+        acc.compile(device=args.device, mode=args.mode or "fixed", hdl="hardcaml",
+                    target_cycles=args.target_cycles, out_dir=args.out,
+                    calibration=random_calibration(acc, args))
+        board = board_class(args.out)
+        acc.build(board=board)
+        print(board.render_report())
+        print("bitstream %s" % board.bitstream)
+        print("run       %s" % board.host_command())
+        return 0
+    if args.mode not in (None, "stream"):
+        raise ConfigError("Icepi Zero bitstream needs stream mode")
+    options = {"rev": args.rev or "v1.4", "seeds": [int(s) for s in args.seeds.split()],
                "uart": args.uart}
     if args.mhz:
         options["mhz"] = args.mhz
@@ -273,8 +295,10 @@ def parser():
                   "compile a model and build a bitstream that runs it on a board",
                   run_bitstream)
     add_model_options(sub)
-    sub.add_argument("--board", default=IcepiZero.NAME, choices=(IcepiZero.NAME,))
-    sub.add_argument("--rev", default="v1.4", help="board revision, from the silkscreen")
+    sub.add_argument("--board", default=IcepiZero.NAME,
+                     choices=(IcepiZero.NAME, ArtyA735.NAME, ArtyA7100.NAME))
+    sub.add_argument("--mode", choices=("stream", "fixed"), default=None)
+    sub.add_argument("--rev", default=None, help="board revision, from the silkscreen")
     sub.add_argument("--mhz", type=int, default=None,
                      help="clock from the PLL, a divisor of 480 (default 20)")
     sub.add_argument("--baud", type=int, default=None,
@@ -284,7 +308,7 @@ def parser():
     sub.add_argument("--uart", default="usb", choices=("usb", "header"),
                      help="usb: the board's own USB serial port; header: pins "
                           "8 (TX) and 10 (RX) for an external adapter")
-    sub.set_defaults(device="icepi25")
+    sub.set_defaults(device=None)
     return top
 
 

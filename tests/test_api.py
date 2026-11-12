@@ -697,7 +697,7 @@ class Board:
         self.names = graph.inputs[0], graph.outputs[0]
         self.source = StreamCodec(graph.tensor(self.names[0]))
         self.sink = StreamCodec(graph.tensor(self.names[1]))
-        self.link = Link.load(acc.out_dir)
+        self.link = Link.load(acc.out_dir, acc.board.NAME)
         self.frames = 0
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self.serve, daemon=True)

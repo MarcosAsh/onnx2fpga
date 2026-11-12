@@ -18,6 +18,7 @@ proc record {name arguments} {
 
 proc open_checkpoint {args} { record open_checkpoint $args }
 proc get_clocks {args} {
+    if {[info exists ::board] && [string match arty_a7_* $::board]} { return sys_clk }
     if {[lindex $args end] eq "otf_clk"} { return otf_clk }
     return clk
 }
@@ -32,7 +33,10 @@ proc write_checkpoint {args} {
 }
 
 proc read_verilog {args} { record read_verilog $args }
-proc read_xdc {args} { record read_xdc $args }
+proc read_xdc {args} {
+    record read_xdc $args
+    if {[lindex $args end] eq "arty.xdc"} { source arty.xdc }
+}
 proc synth_design {args} { record synth_design $args }
 proc opt_design {args} { record opt_design $args }
 proc place_design {args} { record place_design $args }
@@ -76,7 +80,7 @@ proc report_timing_summary {args} {
 }
 proc check_timing {args} {
     set report ""
-    foreach check {no_clock unconstrained_internal_endpoints generated_clocks loops} {
+    foreach check {no_clock unconstrained_internal_endpoints generated_clocks loops multiple_clock latch_loops} {
         set count 0
         if {[info exists ::env(OTF_TEST_BAD_CHECK)] && $::env(OTF_TEST_BAD_CHECK) eq $check} { set count 1 }
         append report "checking $check ($count)\n"
@@ -93,6 +97,10 @@ proc get_cells {args} {
     record get_cells $args
     set index [lsearch $args -filter]
     set filter [lindex $args [expr {$index + 1}]]
+    if {[string match *rxd_meta_reg* $filter]} {
+        if {[info exists ::env(OTF_TEST_BAD_SYNC)]} { return {} }
+        return {rx/rxd_meta_reg rx/rxd_0_reg}
+    }
     set count 0
     if {[info exists ::primitives($filter)]} { set count $::primitives($filter) }
     set cells {}
@@ -115,6 +123,10 @@ proc get_property {property object} {
         }
         PART { return $::env(OTF_PART) }
         PERIOD {
+            if {$object eq "sys_clk"} {
+                if {[info exists ::env(OTF_TEST_BOARD_PERIOD)]} { return $::env(OTF_TEST_BOARD_PERIOD) }
+                return 10.0
+            }
             if {$object eq "otf_clk"} {
                 if {[info exists ::env(OTF_TEST_BOARD_PERIOD)]} { return $::env(OTF_TEST_BOARD_PERIOD) }
                 return [expr {1000.0 / 322.265625}]
@@ -148,6 +160,12 @@ proc launch_runs {args} {
         close $handle
     }
 }
+
+proc write_bitstream {args} {
+    record write_bitstream $args
+    close [open [lindex $args end] w]
+}
+proc set_false_path {args} { record set_false_path $args }
 
 foreach command {
     create_project set_property get_files create_bd_design create_bd_cell

@@ -13,6 +13,7 @@ The command line is a thin layer over the Python API.
 | `onnx2fpga simulate MODEL [--sweep] [--hdl H]` | Compiles and checks the RTL in Verilator. |
 | `onnx2fpga synth MODEL --device D [--period NS] [--impl] [--dry-run]` | Measures real cost: Vivado for AMD parts such as `k26`, yosys and nextpnr for ECP5. `--period` defaults to the device's clock. |
 | `onnx2fpga bitstream MODEL --board icepi_zero` | Compiles and builds a bitstream. |
+| `onnx2fpga bitstream MODEL --board arty_a7_35t` | Builds an Arty A7 at 100 MHz; also accepts `arty_a7_100t`. Fixed mode is the default; use `--mode stream` for streaming models. |
 | `onnx2fpga devices` | Lists device models and their budgets. |
 
 Common options: `--samples` and `--seed` for random calibration, `--quiet`.
