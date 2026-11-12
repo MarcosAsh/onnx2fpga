@@ -55,6 +55,9 @@ if {$checkpoint ne ""} {
     }
 
     synth_design -top $top -part $part -mode out_of_context {*}$overrides
+    if {[llength [get_clocks -quiet clk]] != 1} {
+        error "missing synthesis clock on port $clock"
+    }
     report_utilization -file [file join $outdir utilization_synth.rpt]
     report_timing_summary -file [file join $outdir timing_synth.rpt]
     set stage synth

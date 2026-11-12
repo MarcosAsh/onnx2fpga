@@ -18,6 +18,7 @@ proc record {name arguments} {
 
 proc open_checkpoint {args} { record open_checkpoint $args }
 proc get_clocks {args} {
+    if {[info exists ::env(OTF_TEST_MISSING_CLOCK)]} { return {} }
     if {[info exists ::board] && [string match arty_a7_* $::board]} { return sys_clk }
     if {[lindex $args end] eq "otf_clk"} { return otf_clk }
     return clk

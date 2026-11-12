@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import unittest
+from unittest import mock
 
 from support import Fixtures, ROOT
 
@@ -172,6 +173,13 @@ class SynthScriptTest(unittest.TestCase):
         result = subprocess.run(['tclsh'], input=script, capture_output=True, text=True)
         self.assertEqual(result.stderr, '')
         self.assertEqual(result.stdout.strip(), clock)
+
+    def test_missing_clock_rejected(self):
+        with mock.patch.dict(os.environ, OTF_TEST_MISSING_CLOCK="1"):
+            out, completed, _ = run_stub("missing_clock")
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("missing synthesis clock", completed.stderr)
+        self.assertFalse((out / "summary.json").exists())
 
 
 if __name__ == "__main__":
