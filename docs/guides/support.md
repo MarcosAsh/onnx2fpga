@@ -68,7 +68,7 @@ separately. The report includes compiler resource estimates, cycle counts
 and throughput at the assumed clock. By default, implementation and physical
 board testing remain `not_run`.
 
-Add `--implement` to place and route a fixed-mode model:
+Add `--implement` to place and route a model:
 
 ```sh
 python3 tools/report_corpus.py linear_regression --device a7_100t --frames 256 \
@@ -95,6 +95,25 @@ An absent clock, a different constraint or a frequency below the requested
 target fails implementation. nextpnr setup estimates do not establish hold,
 pulse-width or board I/O timing.
 
+Stream mode shares arithmetic across cycles. To measure a model that exceeds
+the fixed pipeline's resource budget, request that mode explicitly:
+
+```sh
+python3 tools/report_corpus.py brevitas_mlp qonnx_mlp --device icepi25 \
+    --mode stream --frames 256 --implement --out build/quantized_ecp5_stream
+```
+
+Stream reports use the device's default clock assumption, 20 MHz for Icepi
+Zero, and record cycles per frame. `--clock-mhz` selects fixed-mode pipelining
+and cannot be used with stream mode. Throughput estimates assume that clock
+and continuous traffic without downstream stalls; physical throughput remains
+unmeasured.
+
+Both models pass [stream-mode routing](../measurements/quantized-ecp5-stream-2026-11-12.json)
+at 20 MHz and match 256 RTL vectors each. Brevitas uses 27 DSPs and reaches
+28.02 MHz; QONNX uses 28 DSPs and reaches 27.06 MHz. Both schedule 32 cycles
+per frame, or 625,000 frames/second at 20 MHz under the assumptions above.
+
 The [12 November 2026 report](../measurements/corpus-k26-2026-11-12.json),
 from clean revision `bef6835`, passes all 22 models. It used the command above
 with `--frames 256`, for 5,632 bit-exact simulation vectors. Fixed pipeline
@@ -115,6 +134,21 @@ CI checks the stored outputs against ONNX Runtime with strict tolerances and
 checks the weight range. Quantizer version and range settings are stored in the
 models' metadata. Older measurement reports identify the hashes of their
 original eight-bit-weight fixtures.
+
+The corpus now includes the PyTorch LayerNorm MLP. A regression run at
+`6d727c4` checked numerical accuracy and 256 RTL vectors per accepted model:
+
+| Target and scheduling clock | Passed | Refused before simulation | Report |
+|---|---|---|---|
+| K26, 322.265625 MHz | 23 | 0 | [K26](../measurements/corpus-regression-k26-2026-11-12.json) |
+| Artix-7 35T, 100 MHz | 23 | 0 | [Artix](../measurements/corpus-regression-a7_35t-2026-11-12.json) |
+| ECP5-25K, 80 MHz | 21 | 2 | [ECP5](../measurements/corpus-regression-ecp5-2026-11-12.json) |
+
+Both ECP5 refusals are fixed-mode DSP limits: `brevitas_mlp` and `qonnx_mlp`
+each need 49 DSPs against a budget of 28. These runs do not establish routed
+timing. Their metadata records four uncommitted trading files; the inference
+compiler and corpus match the recorded revision. Reproduce each row with
+`--device`, `--clock-mhz` and `--frames 256`, omitting `--implement`.
 
 The JSON file is replaced after each model. `complete=false` means the run
 was interrupted, and any failed model causes a nonzero exit status. An

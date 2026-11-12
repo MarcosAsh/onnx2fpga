@@ -1,0 +1,521 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-12T05:28:22.790257+00:00",
+    "revision": "6d727c48856ac28f9a28856049ce2d5838b0c1e2",
+    "worktree_status": "M docs/guides/support.md\n M hardware/boards/kria/build.tcl\n M hardware/hardcaml/src/book_side.ml\n M hardware/hardcaml/src/order_book.ml\n M hardware/hardcaml/src/order_quantity.ml\n M tests/test_corpus_report.py\n M tools/report_corpus.py\n?? docs/measurements/corpus-regression-a7_35t-2026-11-12.json\n?? docs/measurements/corpus-regression-ecp5-2026-11-12.json\n?? docs/measurements/corpus-regression-k26-2026-11-12.json",
+    "reporter_sha256": "0a15b4794d1b213c2b6746148adab410fa34ea09b7d9fa6d1a36dc7dbd1f1099",
+    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox",
+      "yosys": "Yosys 0.52 (git sha1 fee39a3284c90249e1d9684cf6944ffbbcbb8f90)",
+      "nextpnr": "\"nextpnr-ecp5\" -- Next Generation Place and Route (Version 0.9-3)"
+    }
+  },
+  "configuration": {
+    "device": "icepi25",
+    "mode": "stream",
+    "clock_mhz": null,
+    "frames": 256,
+    "implement": true,
+    "inspect_only": false,
+    "models": [
+      "brevitas_mlp",
+      "qonnx_mlp"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "brevitas_mlp",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "35bb21e479ab234b7620f4edde54ebb323d1dfe36106462eba146e9aa4171f3a",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.14.1+cpu",
+        "ir_version": 9,
+        "opsets": {
+          "qonnx.custom_op.general": 2,
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "input",
+            "shape": [
+              1,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transA",
+              "transB"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transA",
+              "transB"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transA",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "icepi25",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "91fdd7d3e1e8fd9f27a535855fc0a9d2ac849122c1f7567b41298290e7d6dba4",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored QONNX outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1928.6,
+          "ff": 278.4,
+          "dsp": 28,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 32,
+        "clock_assumption_mhz": 20.0,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 625000.0,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "827e4243dba7767a0b3199967e24550dce7adfc4bad7dfcf15c1218ae6a59e86"
+      },
+      "manifest_sha256": "66a1a396cbb694849d063e4b4914a3ef84404d27668a91cc2ff7bedc1fdb4542",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 6.935830532475706e-08,
+        "max_absolute_error": 5.68424307623161e-07,
+        "reference_std": 1.9127165192027193,
+        "normalized_mae": 3.626167528143052e-08,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "part": "LFE5U-25F-6CABGA256",
+          "stage": "impl",
+          "lut": 1836,
+          "ff": 363,
+          "dsp": 27,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "timing": {
+          "passed": true,
+          "clocks": {
+            "$glbnet$clk$TRELLIS_IO_IN": {
+              "achieved": 28.022977828979492,
+              "constraint": 20
+            }
+          },
+          "scope": "nextpnr setup estimate; hold, pulse width and board I/O unassessed"
+        },
+        "artifacts_sha256": {
+          "top.json": "d836f5876f3f72108afca3bc47edb5f3a3445ade082ded04ff62c79ef48c34a0",
+          "route.json": "1e15bad617d8229a2bb89d93e4afa80641a51f146247350e0ef734259a1e3a69",
+          "commands.json": "4bd6e1c467e8e95c178139c541db40b676e87454a72168e1dd7ce514bd30fccf",
+          "yosys.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "nextpnr.log": "db72614969c49acce63111fd344d4268460782b4bc80367e6c8b965cf8050f2e"
+        }
+      }
+    },
+    {
+      "model": "qonnx_mlp",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "190d5f37a7c725df570c5cb8e8cc72af8754c3ab46e9516c93aec053e637762a",
+      "onnx": {
+        "producer": "",
+        "producer_version": "",
+        "ir_version": 9,
+        "opsets": {
+          "": 13,
+          "qonnx.custom_op.general": 1
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "MatMul",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Add",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "MatMul",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Add",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "MatMul",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Add",
+            "attributes": []
+          },
+          {
+            "domain": "qonnx.custom_op.general",
+            "op_type": "Quant",
+            "attributes": [
+              "narrow",
+              "rounding_mode",
+              "signed"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "icepi25",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "d807f59277a03b29fb343911ea723170e2035e1d9442f4d191a7a2f64a7d0456",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored QONNX outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1928.6,
+          "ff": 275.4,
+          "dsp": 28,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 32,
+        "clock_assumption_mhz": 20.0,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 625000.0,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "67e4c3600161cdcca823590a81f6f2fd7af0fe7ba83d8849f4a48d8506d4058e"
+      },
+      "manifest_sha256": "c198261291bc3aa4796a37cce67a92c7ebb6fed39e44f8078f80f6b08d6b75e7",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 3.800960257649422e-08,
+        "max_absolute_error": 2.384185791015625e-07,
+        "reference_std": 2.019511949771432,
+        "normalized_mae": 1.8821182306346908e-08,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256
+      },
+      "implementation": {
+        "measured": {
+          "part": "LFE5U-25F-6CABGA256",
+          "stage": "impl",
+          "lut": 1948,
+          "ff": 396,
+          "dsp": 28,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "timing": {
+          "passed": true,
+          "clocks": {
+            "$glbnet$clk$TRELLIS_IO_IN": {
+              "achieved": 27.057008743286133,
+              "constraint": 20
+            }
+          },
+          "scope": "nextpnr setup estimate; hold, pulse width and board I/O unassessed"
+        },
+        "artifacts_sha256": {
+          "top.json": "83844577bddde6909ef0bb99bccd98827eefdaeea574a62c1d5c1b1d9eb636a3",
+          "route.json": "cb4c4249bdfe96a3668b0db63980d2bf391bf36d47afc552e6d0902a1fc928c3",
+          "commands.json": "4bd6e1c467e8e95c178139c541db40b676e87454a72168e1dd7ce514bd30fccf",
+          "yosys.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "nextpnr.log": "37106781c31c9676fd783dea399aedf58b71884e98f9bf40b268786dc64e21b3"
+        }
+      }
+    }
+  ]
+}

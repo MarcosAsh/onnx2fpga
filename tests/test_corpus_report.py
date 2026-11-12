@@ -16,13 +16,21 @@ from tools import report_corpus as report
 
 
 class CorpusReport(unittest.TestCase):
-    def test_implementation_requires_fixed_device(self):
-        for arguments in (("--inspect-only",), ("--mode", "stream"),
-                          ("--device", "sim")):
+    def test_implementation_requires_device(self):
+        for arguments in (("--inspect-only",), ("--device", "sim")):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit) as error:
                     report.main(["linear_regression", "--implement", *arguments])
                 self.assertEqual(error.exception.code, 2)
+
+    def test_implementation_clock_port(self):
+        acc = SimpleNamespace(device=report.Device.get("k26"), name="fixture", latency=1)
+        for mode, port in (("fixed", "clock"), ("stream", "clk")):
+            with self.subTest(mode=mode), patch.object(report, "VivadoRunner") as runner:
+                runner.return_value.run.side_effect = RuntimeError("stop before synthesis")
+                with self.assertRaisesRegex(RuntimeError, "stop before synthesis"):
+                    report.implement(acc, Path("unused"), 100, mode)
+                self.assertEqual(runner.call_args.kwargs["clock"], port)
 
     def test_ecp5_timing_gate(self):
         acc = SimpleNamespace(device=report.Device.get("icepi25"))

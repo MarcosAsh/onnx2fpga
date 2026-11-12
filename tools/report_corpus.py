@@ -83,7 +83,7 @@ def compare(got, expected, labels):
             "maximum_normalized_mae": 0.025}
 
 
-def implement(acc, out, clock):
+def implement(acc, out, clock, mode="fixed"):
     if acc.device.nextpnr_args:
         runner = YosysRunner(acc.device, implement=True, freq_mhz=clock)
         resources, _ = runner.run(out)
@@ -100,7 +100,8 @@ def implement(acc, out, clock):
                 "timing": {"passed": passed, "clocks": clocks,
                            "scope": "nextpnr setup estimate; hold, pulse width and board I/O unassessed"},
                 "artifacts_sha256": {name: digest(out / "synth" / name) for name in files}}
-    runner = VivadoRunner(acc.device.part, 1000 / clock, implement=True, clock="clock")
+    runner = VivadoRunner(acc.device.part, 1000 / clock, implement=True,
+                          clock="clock" if mode == "fixed" else "clk")
     result = runner.run(Subject(acc.name, "otf_top", {}, Resources(), acc.latency),
                         ["rtl/top.v"], out, "vivado")
     if result.stage != "impl" or result.payload["part"] != acc.device.part:
@@ -173,7 +174,7 @@ def report_model(path, args):
             row["error"] = simulation.first.output[-2000:]
         if args.implement and simulation.ok and row["numerical_comparison"]["passed"]:
             stage = "implementation"
-            row["implementation"] = implement(acc, out, clock)
+            row["implementation"] = implement(acc, out, clock, args.mode)
             row["stages"][stage] = "passed" if row["implementation"]["timing"]["passed"] else "failed"
         required = ["inspection", "compilation", "reference", "simulation"]
         if args.implement:
@@ -205,9 +206,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.frames < 1:
         parser.error("--frames must be positive")
-    if args.implement and (args.inspect_only or args.mode != "fixed"
-                           or args.device == "sim"):
-        parser.error("--implement requires fixed mode on a physical device target")
+    if args.implement and (args.inspect_only or args.device == "sim"):
+        parser.error("--implement requires compilation on a physical device target")
     names = args.models or sorted(path.stem for path in CORPUS.glob("*.onnx"))
     known = {path.stem for path in CORPUS.glob("*.onnx")}
     if set(names) - known:
