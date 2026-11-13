@@ -30,6 +30,11 @@ Tensors are channel last, so a beat holds consecutive channels of one pixel.
 The number of elements per beat is set by folding; width converters
 (`otf_dwc`) sit between units that disagree.
 
+Packing emits a word one cycle after its final input beat. Unpacking emits its
+first slice one cycle after accepting a word. The converter can accept the next
+input while transferring the previous word's final output; stalls preserve
+pending data. Equal widths pass through without registers.
+
 ## Buffers
 
 FIFOs on each edge are sized by analysis, not guessed. On a chain a couple of

@@ -33,7 +33,7 @@ module otf_dwc #(
             logic [UP_W-1:0] fill;
             logic full;
 
-            assign s_tready = !full;
+            assign s_tready = !full || m_tready;
             assign m_tvalid = full;
             assign m_tdata  = shreg;
 
@@ -43,7 +43,7 @@ module otf_dwc #(
                     full <= 1'b0;
                 end else begin
                     if (full && m_tready) full <= 1'b0;
-                    if (s_tvalid && !full) begin
+                    if (s_tvalid && s_tready) begin
                         shreg[fill*IN_ELEMS*ELEM_BITS +: IN_ELEMS*ELEM_BITS] <= s_tdata;
                         if (fill == UP_W'(UP - 1)) begin
                             fill <= '0;
@@ -59,7 +59,8 @@ module otf_dwc #(
             logic [DN_W-1:0] slot;
             logic loaded;
 
-            assign s_tready = !loaded;
+            wire last_slot = (slot == DN_W'(DOWN - 1));
+            assign s_tready = !loaded || (last_slot && m_tready);
             assign m_tvalid = loaded;
             assign m_tdata  = holding[slot*OUT_ELEMS*ELEM_BITS +: OUT_ELEMS*ELEM_BITS];
 
@@ -67,18 +68,15 @@ module otf_dwc #(
                 if (!rst_n) begin
                     slot   <= '0;
                     loaded <= 1'b0;
-                end else if (!loaded) begin
-                    if (s_tvalid) begin
+                end else begin
+                    if (loaded && m_tready) begin
+                        slot <= last_slot ? '0 : slot + 1'b1;
+                        if (last_slot) loaded <= 1'b0;
+                    end
+                    if (s_tvalid && s_tready) begin
                         holding <= s_tdata;
                         loaded  <= 1'b1;
                         slot    <= '0;
-                    end
-                end else if (m_tready) begin
-                    if (slot == DN_W'(DOWN - 1)) begin
-                        loaded <= 1'b0;
-                        slot   <= '0;
-                    end else begin
-                        slot <= slot + 1'b1;
                     end
                 end
             end

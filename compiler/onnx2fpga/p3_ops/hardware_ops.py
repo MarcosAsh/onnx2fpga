@@ -1151,8 +1151,9 @@ class WidthConverter(StreamingNode):
     def output_schedule(self, graph, index=0):
         beats = self.output_beats(graph, index)
         if self.out_elems > self.in_elems:
-            return [k * self.ratio + self.ratio - 1 for k in range(beats)]
-        return list(range(beats))
+            return [(k + 1) * self.ratio for k in range(beats)]
+        delay = int(self.in_elems != self.out_elems)
+        return list(range(delay, beats + delay))
 
     def amd_resources(self, device):
         return Resources(lut=max(self.in_elems, self.out_elems) * self.elem_bits * 0.4,

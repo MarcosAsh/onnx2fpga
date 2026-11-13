@@ -54,7 +54,8 @@ module Make (Config : Config) = struct
     let spec = Clocking.to_spec i.clocking in
     let spec_no_clear = Clocking.to_spec_no_clear i.clocking in
     let%hw full = wire 1 in
-    let%hw take = i.s.valid &: ~:full in
+    let%hw ready = ~:full |: i.m.ready in
+    let%hw take = i.s.valid &: ready in
     let%hw fill = Sv_int.wrapping_counter spec ~advance:take ~count:up in
     let%hw filled = take &: Sv_int.is_last fill ~count:up in
     full <-- reg spec (mux2 full ~:(i.m.ready) filled);
@@ -63,7 +64,7 @@ module Make (Config : Config) = struct
         reg spec_no_clear ~enable:(take &: (fill ==:. k) &: ~:(i.clocking.clear)) i.s.data)
     in
     let%hw shreg = concat_lsb segments in
-    { O.s = { ready = ~:full }; m = { data = shreg; valid = full } }
+    { O.s = { ready }; m = { data = shreg; valid = full } }
   ;;
 
   (* Holds one input beat and hands it out [down] slices at a time, lowest first. *)
@@ -71,14 +72,15 @@ module Make (Config : Config) = struct
     let spec = Clocking.to_spec i.clocking in
     let spec_no_clear = Clocking.to_spec_no_clear i.clocking in
     let%hw loaded = wire 1 in
-    let%hw load = ~:loaded &: i.s.valid in
     let%hw step = loaded &: i.m.ready in
     let%hw slot = Sv_int.wrapping_counter spec ~advance:step ~count:down in
     let%hw drained = step &: Sv_int.is_last slot ~count:down in
-    loaded <-- reg spec (mux2 loaded ~:drained load);
+    let%hw ready = ~:loaded |: drained in
+    let%hw load = ready &: i.s.valid in
+    loaded <-- reg spec (loaded &: ~:drained |: load);
     let%hw holding = reg spec_no_clear ~enable:(load &: ~:(i.clocking.clear)) i.s.data in
     let%hw slice = mux slot (split_lsb ~part_width:(out_elems * elem_bits) holding) in
-    { O.s = { ready = ~:loaded }; m = { data = slice; valid = loaded } }
+    { O.s = { ready }; m = { data = slice; valid = loaded } }
   ;;
 
   let create (scope : Scope.t) (i : Signal.t I.t) =

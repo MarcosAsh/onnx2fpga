@@ -11,7 +11,7 @@ from test_cpp_contract import MatVecFixture
 from onnx2fpga.compile import Compiler
 from onnx2fpga.p1_ingest import ModelBuilder
 from onnx2fpga.p2_graph.datatype import INT8
-from onnx2fpga.p3_ops.hardware_ops import StreamFifo
+from onnx2fpga.p3_ops.hardware_ops import StreamFifo, WidthConverter
 from onnx2fpga.p6_emit.stream_io import StreamCodec
 from onnx2fpga.simulate import SimulationRunner
 
@@ -87,6 +87,23 @@ class SimulationCases:
         self.assertTrue(restarted.ok, restarted.output)
         self.assertEqual(restarted.resets, 1)
         self.assertEqual(len(restarted.frames), 3)
+
+    def test_width_timing(self):
+        for incoming, outgoing in [(3, 9), (9, 3), (3, 3)]:
+            with self.subTest(incoming=incoming, outgoing=outgoing):
+                unit = WidthConverter("dwc", ["x"], ["y"], incoming, outgoing, 8, 36)
+                build = Fixtures.build_dir("width_%d_%d_%s" % (incoming, outgoing, self.HDL))
+                SingleUnitProject(unit, (1, 36), INT8, hdl=self.HDL).write(
+                    build, np.arange(108) - 54)
+                runner = SimulationRunner(build)
+                built = runner.build()
+                self.assertEqual(built.returncode, 0, built.stderr)
+                result = runner.once()
+                self.assertTrue(result.ok, result.output)
+                delay = int(incoming != outgoing)
+                self.assertEqual(result.frames, [(i * 12, i * 12 + 11 + delay)
+                                                 for i in range(3)])
+                self.assertEqual(result.cycles, 36 + delay)
 
     def test_identity(self):
         model = (ModelBuilder("identity").add_input("x", (1, 4))
