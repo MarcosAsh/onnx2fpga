@@ -101,7 +101,7 @@ let stream (node : Design.Node.t) (module M : Stream_unit) : (module Instance) =
 ;;
 
 let of_node (node : Design.Node.t) : (module Instance) =
-  let param = Design.Node.param node in
+  let param ?default name = Design.Node.param ?default node name in
   let words = Design.Node.words node in
   let instance = node.instance in
   match node.kind with
@@ -213,27 +213,19 @@ let of_node (node : Design.Node.t) : (module Instance) =
   | "otf_pool" ->
     stream
       node
-      (module struct
-        include Otf_pool.Make (struct
-            let channels = param "CHANNELS"
-            let pe = param "PE"
-            let window = param "WINDOW"
-            let data_bits = param "DATA_BITS"
-            let data_min = param "DATA_MIN"
-          end)
-
-        module In = Beat
-        module Out = Beat
-      end)
-  | "otf_sum_pool" ->
-    stream
-      node
-      (module Otf_sum_pool.Make (struct
+      (module Otf_pool.Make (struct
           let channels = param "CHANNELS"
           let pe = param "PE"
           let window = param "WINDOW"
           let data_bits = param "DATA_BITS"
-          let out_bits = param "OUT_BITS"
+          let sum = param ~default:0 "SUM" <> 0
+          let data_min = param ~default:(-128) "DATA_MIN"
+
+          let out_bits =
+            param
+              ~default:(data_bits + if sum then Int.ceil_log2 window else 0)
+              "OUT_BITS"
+          ;;
         end))
   | "otf_mvau" ->
     stream

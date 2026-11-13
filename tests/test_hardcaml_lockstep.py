@@ -66,9 +66,9 @@ CASES = (
        for c, p, w, b, lo in ((4, 1, 4, 8, -128), (8, 2, 9, 8, -128),
                               (6, 3, 1, 8, -128), (4, 4, 2, 8, -128),
                               (3, 1, 3, 4, -8))]
-    + [("sum_pool_c%d_p%d_w%d" % (c, p, w), "otf_sum_pool",
+    + [("sum_pool_c%d_p%d_w%d" % (c, p, w), "otf_pool",
         {"CHANNELS": c, "PE": p, "WINDOW": w, "DATA_BITS": 8,
-         "OUT_BITS": 8 + (w - 1).bit_length()}, {})
+         "OUT_BITS": 8 + (w - 1).bit_length(), "SUM": 1}, {})
        for c, p, w in ((4, 1, 15), (6, 3, 1), (4, 4, 64), (3, 1, 3))]
     + [("act_" + name,) + act(*args, **kwargs) for name, args, kwargs in (
         ("folded", (8, 1), {"in_zp": 3, "out_zp": -5}),
@@ -157,9 +157,7 @@ class Pair:
         if kind == "otf_dwc":
             return p["IN_ELEMS"] * p["ELEM_BITS"], p["OUT_ELEMS"] * p["ELEM_BITS"]
         if kind == "otf_pool":
-            return p["PE"] * p["DATA_BITS"], p["PE"] * p["DATA_BITS"]
-        if kind == "otf_sum_pool":
-            return p["PE"] * p["DATA_BITS"], p["PE"] * p["OUT_BITS"]
+            return p["PE"] * p["DATA_BITS"], p["PE"] * p.get("OUT_BITS", p["DATA_BITS"])
         if kind in ("otf_act", "otf_add"):
             return p["PE"] * p["IN_BITS"], p["PE"] * p["OUT_BITS"]
         if kind == "otf_mvau":

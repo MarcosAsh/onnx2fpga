@@ -1,4 +1,4 @@
-(** Max reduction over {!Otf_swu} windows, one cycle per input beat. *)
+(** Per-channel signed max or sum over fixed windows. *)
 
 open! Core
 open! Hardcaml
@@ -8,11 +8,21 @@ module type Config = sig
   val pe : int
   val window : int
   val data_bits : int
+  val out_bits : int
   val data_min : int
+  val sum : bool
 end
 
 module Make (_ : Config) : sig
-  module Beat : sig
+  module In : sig
+    type 'a t =
+      { data : 'a
+      ; valid : 'a
+      }
+    [@@deriving hardcaml]
+  end
+
+  module Out : sig
     type 'a t =
       { data : 'a
       ; valid : 'a
@@ -23,7 +33,7 @@ module Make (_ : Config) : sig
   module I : sig
     type 'a t =
       { clocking : 'a Clocking.t
-      ; s : 'a Beat.t
+      ; s : 'a In.t
       ; m : 'a Stream.Dest.t
       }
     [@@deriving hardcaml]
@@ -32,7 +42,7 @@ module Make (_ : Config) : sig
   module O : sig
     type 'a t =
       { s : 'a Stream.Dest.t
-      ; m : 'a Beat.t
+      ; m : 'a Out.t
       }
     [@@deriving hardcaml]
   end

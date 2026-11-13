@@ -887,6 +887,7 @@ class PoolUnit(ChannelUnit):
     """Max over the windows a SlidingWindowUnit produces."""
 
     module = "otf_pool"
+    sum = False
 
     def __init__(self, name, inputs, outputs, channels, window_size, windows, dtype):
         self.window_size = int(window_size)
@@ -927,7 +928,7 @@ class PoolUnit(ChannelUnit):
 
 
 class SumPoolUnit(PoolUnit):
-    module = "otf_sum_pool"
+    sum = True
 
     def __init__(self, name, inputs, outputs, channels, window_size, dtype,
                  spatial_shape=(1, 1)):
@@ -954,7 +955,7 @@ class SumPoolUnit(PoolUnit):
 
     def sv_params(self, graph):
         return {"CHANNELS": self.channels, "PE": self.pe, "WINDOW": self.window_size,
-                "DATA_BITS": self.dtype.bits, "OUT_BITS": self.out_dtype.bits}
+                "DATA_BITS": self.dtype.bits, "OUT_BITS": self.out_dtype.bits, "SUM": 1}
 
 
 class AddUnit(ChannelUnit):

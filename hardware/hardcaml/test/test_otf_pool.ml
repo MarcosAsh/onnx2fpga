@@ -16,8 +16,8 @@ module Make_test (Config : Otf_pool.Config) = struct
       List.init nf_count ~f:(fun nf ->
         List.filteri passes ~f:(fun index _ -> index % nf_count = nf)
         |> List.map ~f:(Stream_bench.signed_lanes ~lane_bits:data_bits)
-        |> List.reduce_exn ~f:(List.map2_exn ~f:Int.max)
-        |> Stream_bench.of_signed_lanes ~lane_bits:data_bits))
+        |> List.reduce_exn ~f:(List.map2_exn ~f:(if sum then ( + ) else Int.max))
+        |> Stream_bench.of_signed_lanes ~lane_bits:out_bits))
   ;;
 
   let random_traffic ~seed ~windows ~in_duty ~out_duty () =
@@ -28,8 +28,30 @@ module Make_test (Config : Otf_pool.Config) = struct
       (fun (h @ local) ~inputs ~outputs ->
          let o = Before_and_after_edge.before_edge outputs in
          Stream_bench.clear h inputs.clocking.clear;
+         inputs.s.valid := Bits.vdd;
+         inputs.s.data := Bits.ones (pe * data_bits);
+         inputs.m.ready := Bits.gnd;
+         Hardcaml_lws.Lws.cycle ~n:(Int.max 1 ((window - 1) * nf_count)) h;
+         inputs.s.valid := Bits.gnd;
+         Stream_bench.clear h inputs.clocking.clear;
          let sent =
-           Stream_bench.beats ~rng ~width:(pe * data_bits) (windows * window * nf_count)
+           let extremes =
+             if not sum
+             then []
+             else
+               List.concat_map
+                 [ -(1 lsl (data_bits - 1)); (1 lsl (data_bits - 1)) - 1 ]
+                 ~f:(fun value ->
+                   List.init (window * nf_count) ~f:(fun _ ->
+                     Stream_bench.of_signed_lanes
+                       ~lane_bits:data_bits
+                       (List.init pe ~f:(fun _ -> value))))
+           in
+           extremes
+           @ Stream_bench.beats
+               ~rng
+               ~width:(pe * data_bits)
+               ((windows * window * nf_count) - List.length extremes)
          in
          let source =
            Stream_bench.Source.create
@@ -71,6 +93,8 @@ let%expect_test "max over windows under random backpressure" =
           let window = window
           let data_bits = data_bits
           let data_min = data_min
+          let out_bits = data_bits
+          let sum = false
         end)
       in
       let cycles =
@@ -88,4 +112,26 @@ let%expect_test "max over windows under random backpressure" =
     ((channels 4) (pe 4) (window 2) (cycles (40 131 192 115)))
     ((channels 3) (pe 1) (window 3) (cycles (180 474 983 425)))
     |}]
+;;
+
+let%expect_test "channel sums after reset under backpressure" =
+  List.iter
+    [ 4, 1, 15; 6, 3, 1; 4, 4, 64; 3, 1, 3 ]
+    ~f:(fun (channels, pe, window) ->
+      let module T =
+        Make_test (struct
+          let channels = channels
+          let pe = pe
+          let window = window
+          let data_bits = 8
+          let out_bits = data_bits + Int.ceil_log2 window
+          let data_min = -128
+          let sum = true
+        end)
+      in
+      List.iter
+        [ 100, 100; 50, 50; 20, 90; 90, 20 ]
+        ~f:(fun (in_duty, out_duty) ->
+          ignore (T.random_traffic ~seed:channels ~windows:20 ~in_duty ~out_duty () : int)));
+  [%expect {| |}]
 ;;

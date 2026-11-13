@@ -1,4 +1,4 @@
-// Max reduction over otf_swu windows, one cycle per input beat with no drain phase.
+// Per-channel signed max or sum over fixed windows.
 `default_nettype none
 
 module otf_pool #(
@@ -6,14 +6,16 @@ module otf_pool #(
     parameter int PE        = 1,
     parameter int WINDOW    = 4,
     parameter int DATA_BITS = 8,
-    parameter int DATA_MIN  = -128
+    parameter int DATA_MIN  = -128,
+    parameter bit SUM       = 0,
+    parameter int OUT_BITS  = DATA_BITS + (SUM ? $clog2(WINDOW) : 0)
 ) (
     input  wire                     clk,
     input  wire                     rst_n,
     input  wire  [PE*DATA_BITS-1:0] s_tdata,
     input  wire                     s_tvalid,
     output logic                    s_tready,
-    output logic [PE*DATA_BITS-1:0] m_tdata,
+    output logic [PE*OUT_BITS-1:0] m_tdata,
     output logic                    m_tvalid,
     input  wire                     m_tready
 );
@@ -21,22 +23,24 @@ module otf_pool #(
     localparam int NF_W = (NF <= 1) ? 1 : $clog2(NF);
     localparam int WN_W = (WINDOW <= 1) ? 1 : $clog2(WINDOW);
 
-    logic [PE*DATA_BITS-1:0] running [0:NF-1];
+    logic [PE*OUT_BITS-1:0] running [0:NF-1];
     logic [NF_W-1:0] nf;
     logic [WN_W-1:0] w;
 
     wire first_pass = (w == '0);
     wire last_pass  = (w == WN_W'(WINDOW - 1));
 
-    logic [PE*DATA_BITS-1:0] merged;
+    logic [PE*OUT_BITS-1:0] merged;
     always_comb begin
         for (int q = 0; q < PE; q = q + 1) begin
             logic signed [DATA_BITS-1:0] incoming;
-            logic signed [DATA_BITS-1:0] held;
+            logic signed [OUT_BITS-1:0] held;
             incoming = $signed(s_tdata[q*DATA_BITS +: DATA_BITS]);
-            held = first_pass ? DATA_BITS'(DATA_MIN)
-                              : $signed(running[nf][q*DATA_BITS +: DATA_BITS]);
-            merged[q*DATA_BITS +: DATA_BITS] = (incoming > held) ? incoming : held;
+            held = first_pass ? (SUM ? '0 : OUT_BITS'(DATA_MIN))
+                              : $signed(running[nf][q*OUT_BITS +: OUT_BITS]);
+            if (SUM) merged[q*OUT_BITS +: OUT_BITS] = OUT_BITS'(incoming) + held;
+            else merged[q*OUT_BITS +: OUT_BITS] = (OUT_BITS'(incoming) > held)
+                                                   ? OUT_BITS'(incoming) : held;
         end
     end
 
