@@ -145,7 +145,8 @@ def report_model(path, args):
                     raise ValueError("fixture provenance mismatch")
         model = OnnxModel.load(path)
         row["onnx"] = model_info(model)
-        check = otf.check(model, device=args.device, mode=args.mode, clock_mhz=args.clock_mhz)
+        check = otf.check(model, device=args.device, mode=args.mode,
+                          clock_mhz=args.clock_mhz if args.mode == "fixed" else None)
         row["compatibility"] = check.to_dict()
         row["stages"][stage] = "passed" if check.ok else "blocked_or_unknown"
         if not check.ok:

@@ -33,7 +33,7 @@ class CorpusReport(unittest.TestCase):
                 patch.object(report, "metadata", return_value={}), \
                 contextlib.redirect_stdout(io.StringIO()):
             status = report.main(["maxpool", "grouped", "--corpus-dir", str(corpus),
-                                  "--mode", "stream", "--inspect-only", "--out", directory])
+                                  "--mode", "stream", "--clock-mhz", "100", "--inspect-only", "--out", directory])
             self.assertEqual(status, 0)
             data = json.loads((Path(directory) / "report.json").read_text())
             self.assertEqual([row["status"] for row in data["models"]], ["inspected", "inspected"])
