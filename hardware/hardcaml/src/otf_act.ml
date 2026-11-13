@@ -57,8 +57,8 @@ module Make (Config : Config) = struct
   end
 
   module Requant = Otf_requant.Make (struct
-      let acc_bits = in_bits + 2
-      let mult_bits = mult_bits
+      let acc_bits = in_bits + 2 + mult_bits
+      let mult_bits = 2
       let shift = shift
       let out_bits = out_bits
       let out_min = out_min
@@ -68,7 +68,11 @@ module Make (Config : Config) = struct
 
   let create (scope : Scope.t) (i : Signal.t I.t) =
     let spec = Clocking.to_spec i.clocking in
-    let%hw fire = i.s.valid &: i.m.ready in
+    let%hw valid = wire 1 in
+    let%hw go = ~:valid |: i.m.ready in
+    let%hw product_valid = reg spec ~enable:go i.s.valid in
+    valid <-- reg spec ~enable:go product_valid;
+    let%hw fire = i.s.valid &: go in
     let%hw nf = Sv_int.wrapping_counter spec ~advance:fire ~count:nf_count in
     let lanes = split_lsb ~part_width:in_bits i.s.data in
     let tables = List.chunks_of mult ~length:nf_count in
@@ -78,9 +82,16 @@ module Make (Config : Config) = struct
           sresize lane ~width:(in_bits + 2) -: Sv_int.cast ~width:(in_bits + 2) in_zp
         in
         let mult = Sv_int.table ~address:nf table in
-        (Requant.hierarchical scope { acc; mult }).out)
+        let product =
+          reg (Clocking.to_spec_no_clear i.clocking) ~enable:go (acc *+ mult)
+        in
+        (Requant.hierarchical scope { acc = product; mult = of_signed_int ~width:2 1 })
+          .out)
     in
-    { O.s = { ready = i.m.ready }; m = { data = concat_lsb data; valid = i.s.valid } }
+    let%hw out_data =
+      reg (Clocking.to_spec_no_clear i.clocking) ~enable:go (concat_lsb data)
+    in
+    { O.s = { ready = go }; m = { data = out_data; valid } }
   ;;
 
   let hierarchical ?instance scope i =

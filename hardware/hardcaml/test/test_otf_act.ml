@@ -32,7 +32,6 @@ module Make_test (Config : Params) = struct
       |> Stream_bench.of_signed_lanes ~lane_bits:out_bits)
   ;;
 
-  (* The data path is a wire, so the handshake is too: checked on every cycle. *)
   let random_traffic ~seed ~beats ~in_duty ~out_duty () =
     let rng = Random.State.make [| seed |] in
     Harness.run
@@ -58,13 +57,7 @@ module Make_test (Config : Params) = struct
              ~duty:out_duty
              ~wanted:beats
          in
-         let each_cycle () =
-           [%test_result: Bits.t] !(o.s.ready) ~expect:!(inputs.m.ready);
-           [%test_result: Bits.t] !(o.m.valid) ~expect:!(inputs.s.valid)
-         in
-         let cycles =
-           Stream_bench.run h ~rng ~each_cycle ~sources:[ source ] ~sinks:[ sink ] ()
-         in
+         let cycles = Stream_bench.run h ~rng ~sources:[ source ] ~sinks:[ sink ] () in
          [%test_result: Bits.t list]
            (Stream_bench.Sink.received sink)
            ~expect:(expected sent);
@@ -109,6 +102,7 @@ let%expect_test "per channel rescale under random backpressure" =
     [ "folded", config ~channels:8 ~pe:1 ~in_zp:3 ~out_zp:(-5) 1
     ; "pe4", config ~channels:8 ~pe:4 ~shift:0 ~in_zp:(-7) 2
     ; "unfolded relu", config ~channels:6 ~pe:6 ~out_min:0 ~shift:30 3
+    ; "large shift", config ~channels:8 ~pe:2 ~shift:40 5
     ; ( "narrow"
       , config
           ~channels:3
@@ -132,9 +126,10 @@ let%expect_test "per channel rescale under random backpressure" =
       print_s [%message name (cycles : int list)]);
   [%expect
     {|
-    (folded (cycles (240 935 1286 1197)))
-    (pe4 (cycles (240 827 1298 1239)))
-    ("unfolded relu" (cycles (240 982 1338 1173)))
-    (narrow (cycles (240 935 1286 1197)))
+    (folded (cycles (242 748 1210 1100)))
+    (pe4 (cycles (242 648 1190 1089)))
+    ("unfolded relu" (cycles (242 760 1251 1074)))
+    ("large shift" (cycles (242 722 1209 1073)))
+    (narrow (cycles (242 748 1210 1100)))
     |}]
 ;;

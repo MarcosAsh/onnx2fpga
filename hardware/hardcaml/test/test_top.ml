@@ -100,7 +100,7 @@ let%expect_test "a design description elaborates into a working accelerator" =
          (Model.elements ~bits:8 (Stream_bench.Sink.received sink))
          ~expect:(expected values);
        print_s [%message (cycles : int)]);
-  [%expect {| (cycles 733) |}]
+  [%expect {| (cycles 718) |}]
 ;;
 
 let%expect_test "the top level keeps the harness's port names" =

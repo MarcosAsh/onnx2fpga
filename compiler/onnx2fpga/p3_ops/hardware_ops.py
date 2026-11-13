@@ -870,7 +870,11 @@ class ActivationUnit(ChannelUnit):
     def amd_resources(self, device):
         dsp = self.pe if self.in_dtype.bits > 18 else 0
         return Resources(lut=self.pe * self.in_dtype.bits * 2.0,
-                         ff=self.pe * self.out_dtype.bits, dsp=dsp)
+                         ff=self.pe * (self.in_dtype.bits + 2 + self.mult_bits + self.out_dtype.bits) + 2,
+                         dsp=dsp)
+
+    def output_schedule(self, graph, index=0):
+        return [cycle + 2 for cycle in super().output_schedule(graph, index)]
 
     def infer(self, graph):
         source = graph.tensor(self.inputs[0])

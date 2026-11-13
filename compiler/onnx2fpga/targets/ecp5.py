@@ -145,7 +145,7 @@ class Ecp5CostModel:
         pe = node.pe
         acc = node.in_dtype.bits + 2
         dsp = pe * self._requant_multipliers(acc, node.mult_bits, node.requant.shift)
-        return Resources(lut=pe * (2 * acc + 60) + 20, ff=pe * node.out_dtype.bits + 10,
+        return Resources(lut=pe * (2 * acc + 60) + 20, ff=pe * (acc + node.mult_bits + node.out_dtype.bits) + 12,
                          dsp=dsp)
 
     def otf_add(self, node):
