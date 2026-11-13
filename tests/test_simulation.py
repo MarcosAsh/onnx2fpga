@@ -9,8 +9,10 @@ from support import Fixtures, Hdl, SingleUnitProject, run
 from test_cpp_contract import MatVecFixture
 
 from onnx2fpga.compile import Compiler
+from onnx2fpga.p1_ingest import ModelBuilder
 from onnx2fpga.p2_graph.datatype import INT8
 from onnx2fpga.p3_ops.hardware_ops import StreamFifo
+from onnx2fpga.p6_emit.stream_io import StreamCodec
 from onnx2fpga.simulate import SimulationRunner
 
 BACKPRESSURE = [(100, 100), (50, 50), (30, 90), (90, 30), (20, 20), (10, 100), (100, 10)]
@@ -85,6 +87,25 @@ class SimulationCases:
         self.assertTrue(restarted.ok, restarted.output)
         self.assertEqual(restarted.resets, 1)
         self.assertEqual(len(restarted.frames), 3)
+
+    def test_identity(self):
+        model = (ModelBuilder("identity").add_input("x", (1, 4))
+                 .add_node("Identity", ["x"], ["y"])
+                 .add_output("y", (1, 4)).build())
+        build = Fixtures.build_dir("identity_" + self.HDL)
+        result = Compiler(hdl=self.HDL).compile(model, Fixtures.samples((1, 4)), build)
+        image = StreamCodec(result.hardware_graph.tensor("x")).to_image(np.arange(-32, 32))
+        for path in SimulationRunner.GOLDEN:
+            image.write(build / path)
+        runner = SimulationRunner(build)
+        built = runner.build()
+        self.assertEqual(built.returncode, 0, built.stderr)
+        for duty, reset in [((100, 100), None), ((30, 10), 2)]:
+            with self.subTest(duty=duty):
+                result = runner.once(duty=duty, reset_after=reset)
+                self.assertTrue(result.ok, result.output)
+                self.assertEqual(len(result.frames), 16)
+                self.assertEqual(result.resets, int(reset is not None))
 
     def test_tiny_multiplier(self):
         """The C++ contract layer through the RTL, where the rounding constant used to overflow and negatives came out one low."""

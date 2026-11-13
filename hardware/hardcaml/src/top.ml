@@ -44,7 +44,12 @@ module Make (Config : Config) = struct
         in
         let port : Units.Port.t =
           if String.equal name design.input
-          then { data = i.s_tdata; valid = i.s_tvalid; ready = net "tready" 1 }
+          then
+            { data = i.s_tdata
+            ; valid = i.s_tvalid
+            ; ready =
+                (if String.equal name design.output then i.m_tready else net "tready" 1)
+            }
           else if String.equal name design.output
           then { data = net "tdata" width; valid = net "tvalid" 1; ready = i.m_tready }
           else

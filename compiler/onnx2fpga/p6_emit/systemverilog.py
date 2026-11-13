@@ -58,6 +58,11 @@ def render_top(graph, name):
                 lines.append("    logic %s;" % net(tensor, "tvalid"))
                 lines.append("    logic %s;" % net(tensor, "tready"))
     lines.append("")
+    if graph.inputs[0] == graph.outputs[0]:
+        lines += ["    wire unused = &{1'b0, clk, rst_n};",
+                  "    assign m_tdata = s_tdata;",
+                  "    assign m_tvalid = s_tvalid;",
+                  "    assign s_tready = m_tready;", ""]
     for node in nodes:
         lines.append(instance(node.module, "u_" + identifier(node.name),
                               node.sv_params(graph), node.sv_connections(graph, net)))
