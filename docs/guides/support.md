@@ -94,9 +94,12 @@ normalized mean absolute errors are 0.00754 and 0.01014, below the existing
 other branch shapes still need their own checks. CNN routing and physical
 measurements remain unverified.
 
-The simulation report records total run cycles and time to the first output
-beat. That first beat is not a complete frame. Compiler cycles per frame are
-schedule estimates; stalls and pipeline fill affect measured throughput.
+Stream reports include total cycles, time to the first output beat, per-frame
+latency from first accepted input to final accepted output, and the mean
+interval between completed frames. Every stall run retains these measurements.
+A separate run resets halfway through the first input frame under backpressure,
+then checks all replayed frames. Its cycle counts begin after reset. Compiler
+cycles per frame remain schedule estimates; physical throughput is unmeasured.
 
 ### Grouped convolution
 

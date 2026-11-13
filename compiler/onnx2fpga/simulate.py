@@ -35,6 +35,15 @@ class SimulationResult:
     def latency(self):
         return self._number(self.LATENCY)
 
+    @property
+    def frames(self):
+        return [(int(start), int(end)) for start, end in
+                re.findall(r"^frame \d+ (\d+) (\d+)$", self.output, re.M)]
+
+    @property
+    def resets(self):
+        return self._number(re.compile(r"^resets (\d+)$", re.M))
+
     def render(self):
         state = "pass" if self.ok else "FAIL"
         detail = "" if self.cycles is None else "  %d cycles" % self.cycles
@@ -60,10 +69,12 @@ class SimulationRunner:
     def _duty(self, duty):
         return ["--input-duty", str(duty[0]), "--output-duty", str(duty[1])]
 
-    def once(self, duty=(100, 100), seed=1, quiet=False):
+    def once(self, duty=(100, 100), seed=1, quiet=False, reset_after=0):
         command = (["./obj_dir/V" + self.top, "--input", self.vectors[0],
                     "--expected", self.vectors[1]]
                    + self._duty(duty) + ["--seed", str(seed)])
+        if reset_after:
+            command += ["--reset-after", str(reset_after)]
         if quiet:
             command.append("--quiet")
         completed = subprocess.run(command, cwd=self.build_dir, capture_output=True,
@@ -72,7 +83,7 @@ class SimulationRunner:
                                 completed.stdout + completed.stderr)
 
     def sweep(self, seeds=(1, 2, 3)):
-        return [self.once(duty, seed, quiet=True)
+        return [self.once(duty, seed)
                 for duty in self.SWEEP for seed in seeds]
 
 

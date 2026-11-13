@@ -239,3 +239,10 @@ class Simulation(unittest.TestCase):
                 self.assertEqual(row["status"], "passed", row)
                 self.assertEqual(len(row["simulation"]["runs"]), 16)
                 self.assertTrue(all(run["passed"] for run in row["simulation"]["runs"]))
+                for run in row["simulation"]["runs"]:
+                    self.assertEqual(run["frames"], 16)
+                    self.assertGreater(run["frame_latency_cycles"]["min"], 0)
+                    self.assertGreater(run["mean_completion_interval_cycles"], 0)
+                self.assertTrue(row["simulation"]["reset"]["passed"])
+                self.assertEqual(row["simulation"]["reset"]["resets"], 1)
+                self.assertEqual(row["simulation"]["reset"]["frames"], 16)

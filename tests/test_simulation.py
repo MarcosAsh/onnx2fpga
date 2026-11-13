@@ -3,11 +3,15 @@
 import shutil
 import unittest
 
+import numpy as np
+
 from support import Fixtures, Hdl, SingleUnitProject, run
 from test_cpp_contract import MatVecFixture
 
 from onnx2fpga.compile import Compiler
 from onnx2fpga.p2_graph.datatype import INT8
+from onnx2fpga.p3_ops.hardware_ops import StreamFifo
+from onnx2fpga.simulate import SimulationRunner
 
 BACKPRESSURE = [(100, 100), (50, 50), (30, 90), (90, 30), (20, 20), (10, 100), (100, 10)]
 
@@ -64,6 +68,23 @@ class SimulationCases:
                                       "--seed", str(seed), "--quiet"], cwd=build)
                         self.assertEqual(result.returncode, 0,
                                          result.stdout + result.stderr)
+
+    def test_frame_timing(self):
+        build = Fixtures.build_dir("frame_timing_" + self.HDL)
+        fifo = StreamFifo("fifo", ["x"], ["y"], depth=2, width=8)
+        SingleUnitProject(fifo, (1, 4), INT8, hdl=self.HDL).write(
+            build, np.arange(12, dtype=np.int64))
+        runner = SimulationRunner(build)
+        built = runner.build()
+        self.assertEqual(built.returncode, 0, built.stderr)
+        result = runner.once()
+        self.assertTrue(result.ok, result.output)
+        self.assertEqual(result.frames, [(0, 4), (4, 8), (8, 12)])
+        self.assertEqual(result.cycles, 13)
+        restarted = runner.once(duty=(50, 10), reset_after=2)
+        self.assertTrue(restarted.ok, restarted.output)
+        self.assertEqual(restarted.resets, 1)
+        self.assertEqual(len(restarted.frames), 3)
 
     def test_tiny_multiplier(self):
         """The C++ contract layer through the RTL, where the rounding constant used to overflow and negatives came out one low."""

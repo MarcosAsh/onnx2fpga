@@ -83,6 +83,21 @@ def compare(got, expected, labels):
             "maximum_normalized_mae": 0.025}
 
 
+def simulation_run(run):
+    result = {"input_duty": run.duty[0], "output_duty": run.duty[1],
+              "seed": run.seed, "passed": run.ok, "cycles": run.cycles,
+              "latency_cycles": run.latency, "resets": run.resets}
+    frames = run.frames
+    if frames:
+        latencies = [end - start for start, end in frames]
+        result["frames"] = len(frames)
+        result["frame_latency_cycles"] = {"min": min(latencies), "max": max(latencies),
+                                           "mean": float(np.mean(latencies))}
+        if len(frames) > 1:
+            result["mean_completion_interval_cycles"] = (frames[-1][1] - frames[0][1]) / (len(frames) - 1)
+    return result
+
+
 def implement(acc, out, clock, mode="fixed"):
     if acc.device.nextpnr_args:
         runner = YosysRunner(acc.device, implement=True, freq_mhz=clock)
@@ -174,17 +189,21 @@ def report_model(path, args):
         row["numerical_comparison"] = compare(acc.predict(samples), expected, acc._labels)
         row["stages"][stage] = "passed" if row["numerical_comparison"]["passed"] else "failed"
         stage = "simulation"
-        simulation = acc.simulate(samples[:args.frames], sweep=args.sweep)
+        reset = args.mode == "stream" and acc.result.hardware_graph.tensor(
+            acc.result.hardware_graph.inputs[0]).beats > 1
+        simulation = acc.simulate(samples[:args.frames], sweep=args.sweep, reset=reset)
         row["simulation"] = {"bit_exact": bool(simulation.ok), "frames": simulation.frames,
                              "latency_scope": ("fixed pipeline" if args.mode == "fixed"
                                                else "simulation start to first output beat"),
-                             "runs": [{"input_duty": run.duty[0], "output_duty": run.duty[1],
-                                       "seed": run.seed, "passed": run.ok,
-                                       "cycles": run.cycles, "latency_cycles": run.latency}
-                                      for run in [simulation.first, *simulation.sweep]]}
+                             "frame_latency_scope": ("first accepted input to last accepted output"
+                                                     if args.mode == "stream" else None),
+                             "runs": [simulation_run(run)
+                                      for run in [simulation.first, *simulation.sweep]],
+                             "reset": simulation_run(simulation.reset) if simulation.reset else None}
         row["stages"][stage] = "passed" if simulation.ok else "failed"
         if not simulation.ok:
-            failed = next(run for run in [simulation.first, *simulation.sweep] if not run.ok)
+            failed = next(run for run in [simulation.first, *simulation.sweep, simulation.reset]
+                          if run is not None and not run.ok)
             row["error"] = failed.output[-2000:]
         if args.implement and simulation.ok and row["numerical_comparison"]["passed"]:
             stage = "implementation"

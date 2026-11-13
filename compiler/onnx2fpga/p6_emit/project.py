@@ -156,6 +156,10 @@ class ProjectWriter:
         hardcaml = self.hdl == "hardcaml"
         fixed = self.latency is not None
         reload = " -DOTF_RELOAD" if reloadable_units(self.graph) else ""
+        if not fixed:
+            reload += " -DOTF_INPUT_BEATS=%d -DOTF_OUTPUT_BEATS=%d" % (
+                self.graph.tensor(self.graph.inputs[0]).beats,
+                self.graph.tensor(self.graph.outputs[0]).beats)
         return MAKEFILE_TEMPLATE % {
             "top": self.name,
             "root": self.assets.root,

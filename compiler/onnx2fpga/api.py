@@ -687,11 +687,18 @@ class Accelerator:
         return np.concatenate([sink.from_words(words)
                                for words in self.session.run(frames)])
 
-    def simulate(self, x=None, sweep=False, reload=None, commits=None):
-        """Builds the design with Verilator and checks every output against the integer reference; in fixed mode `reload` fills the idle bank and `commits` flips it."""
+    def simulate(self, x=None, sweep=False, reload=None, commits=None, reset=False):
+        """Verify RTL outputs; reset replays a partial stream frame, reload/commits exercise fixed-mode banks."""
         self._require_compiled("simulate")
         _require_tools(("verilator", "g++", "make"), "simulate")
         out, top = self.out_dir, self.settings["top"]
+        reset_beats = 0
+        if reset:
+            if self.mode == "fixed":
+                raise ConfigError("mid-frame reset requires stream mode")
+            reset_beats = self.result.hardware_graph.tensor(self.result.hardware_graph.inputs[0]).beats // 2
+            if not reset_beats:
+                raise ConfigError("mid-frame reset requires at least two input beats")
         if self.mode == "fixed":
             inputs = self._fixed_inputs(x)
             flags = [] if reload is None else self._reload_flags(reload, commits, inputs)
@@ -712,7 +719,10 @@ class Accelerator:
                                   built.stdout, built.stderr)
         first = runner.once()
         runs = runner.sweep() if sweep and first.ok else []
-        return SimulationReport(first, runs, frames)
+        restarted = None
+        if reset and first.ok:
+            restarted = runner.once(duty=(50, 10), reset_after=reset_beats)
+        return SimulationReport(first, runs, frames, restarted)
 
     def _fixed_inputs(self, x):
         """Quantized inputs for x, or FIXED_VECTORS random vectors covering the whole input grid."""
@@ -914,16 +924,18 @@ class Accelerator:
 
 
 class SimulationReport:
-    """What a simulate() run found: `first` at full throughput, `sweep` under backpressure."""
+    """Full-rate, backpressured and optional partial-frame-reset simulation results."""
 
-    def __init__(self, first, sweep, frames):
+    def __init__(self, first, sweep, frames, reset=None):
         self.first = first
         self.sweep = list(sweep)
         self.frames = frames
+        self.reset = reset
 
     @property
     def ok(self):
-        return self.first.ok and all(run.ok for run in self.sweep)
+        return (self.first.ok and all(run.ok for run in self.sweep)
+                and (self.reset is None or self.reset.ok))
 
     @property
     def cycles(self):

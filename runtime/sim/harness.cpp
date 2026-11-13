@@ -19,6 +19,7 @@ public:
     std::string input_path = "golden/input.hex";
     std::string expected_path = "golden/expected.hex";
     int output_beats = 0;  // set instead of --expected to skip checking
+    size_t reset_after = 0;
     unsigned seed = 1;
     int input_duty = 100;   // percent of cycles the producer offers data
     int output_duty = 100;  // percent of cycles the consumer accepts data
@@ -43,6 +44,7 @@ public:
                 options.output_beats = std::stoi(next());
                 options.expected_path.clear();
             }
+            else if (flag == "--reset-after") options.reset_after = std::stoull(next());
             else if (flag == "--seed") options.seed = std::stoul(next());
             else if (flag == "--input-duty") options.input_duty = std::stoi(next());
             else if (flag == "--output-duty") options.output_duty = std::stoi(next());
@@ -68,10 +70,22 @@ public:
         reset();
         size_t sent = 0;
         std::vector<otf::Beat> collected;
+        std::vector<uint64_t> starts, ends;
+        bool restarted = false;
+        bool pending = false;
+        if (stimulus.size() % OTF_INPUT_BEATS || wanted_beats % OTF_OUTPUT_BEATS
+            || stimulus.size() / OTF_INPUT_BEATS != wanted_beats / OTF_OUTPUT_BEATS) {
+            std::cerr << "incomplete or unequal frame counts\n";
+            return 2;
+        }
+        if (options_.reset_after >= stimulus.size()) {
+            std::cerr << "reset must precede the last input beat\n";
+            return 2;
+        }
 
         while (collected.size() < wanted_beats && cycles_ < options_.timeout) {
             design_.clk = 0;
-            const bool offer = sent < stimulus.size() && gate(options_.input_duty);
+            const bool offer = pending || (sent < stimulus.size() && gate(options_.input_duty));
             design_.s_tvalid = offer;
             if (offer) otf::port_write(design_.s_tdata, stimulus[sent]);
             design_.m_tready = gate(options_.output_duty);
@@ -85,12 +99,42 @@ public:
             design_.clk = 1;
             design_.eval();
 
-            if (input_fires) ++sent;
+            pending = offer && !input_fires;
+            if (input_fires) {
+                if (sent % OTF_INPUT_BEATS == 0) starts.push_back(cycles_);
+                ++sent;
+            }
             if (output_fires) {
                 if (collected.empty()) first_output_cycle_ = cycles_;
                 collected.push_back(std::move(sampled));
+                if (collected.size() % OTF_OUTPUT_BEATS == 0) ends.push_back(cycles_);
             }
             ++cycles_;
+            if (options_.reset_after && !restarted && sent == options_.reset_after) {
+                reset();
+                restarted = true;
+                sent = 0;
+                pending = false;
+                cycles_ = 0;
+                first_output_cycle_ = 0;
+                collected.clear();
+                starts.clear();
+                ends.clear();
+            }
+        }
+        if (!options_.quiet) {
+            for (size_t i = 0; i < ends.size(); ++i) {
+                if (i >= starts.size()) {
+                    std::cerr << "output frame precedes input\n";
+                    return 1;
+                }
+                std::cout << "frame " << i << " " << starts[i] << " " << ends[i] << "\n";
+            }
+            std::cout << "resets " << restarted << "\n";
+        }
+        if (options_.reset_after && !restarted) {
+            std::cerr << "reset point was not reached\n";
+            return 1;
         }
 
         if (!options_.dump_path.empty()) dump(collected, out_words * 8);
