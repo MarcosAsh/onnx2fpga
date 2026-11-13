@@ -929,9 +929,12 @@ class PoolUnit(ChannelUnit):
 class SumPoolUnit(PoolUnit):
     module = "otf_sum_pool"
 
-    def __init__(self, name, inputs, outputs, channels, window_size, dtype):
+    def __init__(self, name, inputs, outputs, channels, window_size, dtype,
+                 spatial_shape=(1, 1)):
+        self.spatial_shape = tuple(spatial_shape)
         self.out_dtype = IntType(dtype.bits + (window_size - 1).bit_length(), True)
-        super().__init__(name, inputs, outputs, channels, window_size, 1, dtype)
+        super().__init__(name, inputs, outputs, channels, window_size,
+                         math.prod(self.spatial_shape), dtype)
 
     def amd_resources(self, device):
         bits = self.out_dtype.bits
@@ -941,12 +944,13 @@ class SumPoolUnit(PoolUnit):
     def infer(self, graph):
         super().infer(graph)
         out = graph.tensor(self.outputs[0])
-        out.shape = (graph.tensor(self.inputs[0]).shape[0], 1, 1, self.channels)
+        out.shape = (graph.tensor(self.inputs[0]).shape[0], *self.spatial_shape, self.channels)
         out.dtype = self.out_dtype
 
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64)
-        return [x.sum(axis=(1, 2), keepdims=True)]
+        total = x.reshape(-1, self.window_size, self.channels).sum(axis=1)
+        return [total.reshape(graph.tensor(self.outputs[0]).shape)]
 
     def sv_params(self, graph):
         return {"CHANNELS": self.channels, "PE": self.pe, "WINDOW": self.window_size,

@@ -1,0 +1,594 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-13T14:59:38.169596+00:00",
+    "revision": "7a279194dadaa3daa7b2d77faa2937ad6810c94d",
+    "worktree_status": "M compiler/onnx2fpga/p2_graph/onnx_importer.py\n M compiler/onnx2fpga/p3_ops/hardware_ops.py\n M compiler/onnx2fpga/p3_ops/onnx_ops.py\n M compiler/onnx2fpga/p4_quantize/lower.py\n M tests/test_cnn.py\n M tests/test_cnn_sim.py\n M tests/test_corpus_report.py",
+    "reporter_sha256": "acd9f6b893c3f580e9e60f6870a2d7b4dfaa7a4a00e5f1735bd77d0c98318f8e",
+    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox"
+    }
+  },
+  "configuration": {
+    "device": "k26",
+    "mode": "stream",
+    "corpus_dir": "tests/fixtures/cnn",
+    "clock_mhz": null,
+    "frames": 256,
+    "sweep": true,
+    "implement": false,
+    "inspect_only": false,
+    "models": [
+      "average",
+      "global_average"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "average",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "0d7aaacc5db5d3ff715ec32db51acb55ad27bc6b690f4090bd93fadf7f1d0db5",
+      "provenance": {
+        "model": "average",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "average.onnx": "0d7aaacc5db5d3ff715ec32db51acb55ad27bc6b690f4090bd93fadf7f1d0db5",
+          "average.npz": "e8e3ab469ebf55f4700200f99e61bca53422dd53a2279b03978593a3372f1932"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "b188da2b5fd5bcf20ba6fdb9711067d0da119dc32574d61eeea09ce140a1f183",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "AveragePool",
+            "attributes": [
+              "ceil_mode",
+              "count_include_pad",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "e8e3ab469ebf55f4700200f99e61bca53422dd53a2279b03978593a3372f1932",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1646.0,
+          "ff": 1197,
+          "dsp": 29.5,
+          "bram36": 1,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 192,
+        "clock_assumption_mhz": 322.265625,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 1678466.796875,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "9c53b586f67171b6991db93ddd9479f67cf04d2ffaa8c7381ea97a4d9ece19da"
+      },
+      "manifest_sha256": "3251b560557305c289c9b60d34dfce13e94ed031feda6af917c7b6648d1f38b0",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0010950151955819371,
+        "max_absolute_error": 0.004549003705728985,
+        "reference_std": 0.1476641446352005,
+        "normalized_mae": 0.007415579444062991,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256,
+        "latency_scope": "simulation start to first output beat",
+        "runs": [
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 56720,
+            "latency_cycles": 236
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          }
+        ]
+      }
+    },
+    {
+      "model": "global_average",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+      "provenance": {
+        "model": "global_average",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "global_average.onnx": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+          "global_average.npz": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "317e991be2dec506e835e1ea5f6df3563a0eb678943f51b5c1a767115156f077",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "GlobalAveragePool",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1358.0,
+          "ff": 978,
+          "dsp": 28.5,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 192,
+        "clock_assumption_mhz": 322.265625,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 1678466.796875,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "7301d9718fcd865fc929ae33a395c817c7224d4d590d78acc887acee767183fa"
+      },
+      "manifest_sha256": "e34e47aa9d0626da81de7fcfb34aa59036bda90bee5e5bce440bf5e1c42fffde",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0007707143742865455,
+        "max_absolute_error": 0.003036926867008627,
+        "reference_std": 0.19454585015773773,
+        "normalized_mae": 0.003961607886581237,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256,
+        "latency_scope": "simulation start to first output beat",
+        "runs": [
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 49183,
+            "latency_cycles": 214
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          }
+        ]
+      }
+    }
+  ]
+}

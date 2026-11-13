@@ -32,7 +32,7 @@ class CorpusReport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(report, "metadata", return_value={}), \
                 contextlib.redirect_stdout(io.StringIO()):
-            status = report.main(["maxpool", "average", "--corpus-dir", str(corpus),
+            status = report.main(["maxpool", "grouped", "--corpus-dir", str(corpus),
                                   "--mode", "stream", "--inspect-only", "--out", directory])
             self.assertEqual(status, 1)
             data = json.loads((Path(directory) / "report.json").read_text())

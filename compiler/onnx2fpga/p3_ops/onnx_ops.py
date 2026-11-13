@@ -150,6 +150,31 @@ class MaxPoolOp(FrontendNode):
         return [cols.reshape(n, out_h, out_w, kh * kw, channels).max(axis=3)]
 
 
+class AveragePoolOp(MaxPoolOp):
+    op_type = "AveragePool"
+
+    def counts(self, graph):
+        window = self.window()
+        shape = graph.tensor(self.inputs[0]).shape
+        out_h, out_w = window.output_extent(shape[1], shape[2])
+        if self.attrs["count_include_pad"]:
+            return np.full((out_h, out_w, 1), np.prod(window.kernel), dtype=np.int64)
+        counts = []
+        for axis, length in enumerate((out_h, out_w)):
+            starts = np.arange(length)[:, None] * window.strides[axis] - window.pads[axis]
+            positions = starts + np.arange(window.kernel[axis]) * window.dilations[axis]
+            counts.append(((positions >= 0) & (positions < shape[axis + 1])).sum(axis=1))
+        return (counts[0][:, None] * counts[1][None, :])[..., None]
+
+    def execute(self, graph, values):
+        x = values[self.inputs[0]]
+        window = self.window()
+        cols = window.apply(x)
+        n, h, w, _ = cols.shape
+        total = cols.reshape(n, h, w, np.prod(window.kernel), x.shape[-1]).sum(axis=3)
+        return [total / self.counts(graph)]
+
+
 class GlobalAveragePoolOp(FrontendNode):
     op_type = "GlobalAveragePool"
 

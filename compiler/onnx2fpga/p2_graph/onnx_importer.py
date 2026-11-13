@@ -13,7 +13,7 @@ from ..p2_graph.graph import Graph
 from ..p2_graph.layout import LayoutAdapter
 from ..p2_graph.tensor import Tensor
 from ..p3_ops.elementwise import FUNCTIONS, ConcatOp, ElementwiseOp, import_elementwise
-from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp,
+from ..p3_ops.onnx_ops import (AddOp, AveragePoolOp, BinarizerOp, ConvOp, FlattenOp, GemmOp,
                                GlobalAveragePoolOp, MaxPoolOp, ReluOp)
 from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce,
                                  import_softmax, import_layernorm)
@@ -424,6 +424,43 @@ def import_maxpool(node, importer):
                             **window_attrs(node, importer, (2, 2))))
 
 
+def import_average_pool(node, importer):
+    attrs = node.attributes()
+    allowed = {"kernel_shape", "strides", "pads", "dilations", "auto_pad",
+               "ceil_mode", "count_include_pad"}
+    if set(attrs) - allowed:
+        refuse(node, "has unsupported attributes")
+    source = importer.rename(node.input[0])
+    shape = importer.graph.tensor(source).shape
+    if shape is None or len(shape) != 4 or any(d is None or d < 1 for d in shape) or shape[0] != 1:
+        refuse(node, "requires a static batch-one 2D image")
+    if int(attrs.get("ceil_mode", 0)) != 0:
+        refuse(node, "requires ceil_mode=0")
+    include = int(attrs.get("count_include_pad", 0))
+    if include not in (0, 1):
+        refuse(node, "requires count_include_pad=0 or 1")
+    for key in ("kernel_shape", "strides", "dilations"):
+        values = attrs.get(key, () if key == "kernel_shape" else (1, 1))
+        if len(values) != 2 or any(int(v) < 1 for v in values):
+            refuse(node, "requires two positive %s values" % key)
+    pads = attrs.get("pads", (0, 0, 0, 0))
+    if len(pads) != 4 or any(int(v) < 0 for v in pads):
+        refuse(node, "requires four nonnegative pads")
+    auto = attrs.get("auto_pad", "NOTSET")
+    if auto not in ("NOTSET", "VALID", "SAME_UPPER", "SAME_LOWER"):
+        refuse(node, "has invalid auto_pad")
+    if auto != "NOTSET" and "pads" in attrs:
+        refuse(node, "cannot combine auto_pad and pads")
+    pool = AveragePoolOp(node.name or "average_pool", [source],
+                         [importer.rename(node.output[0])], count_include_pad=include,
+                         **window_attrs(node, importer, (1, 1)))
+    if min(pool.window().output_extent(shape[1], shape[2])) < 1:
+        refuse(node, "has no output windows")
+    if np.any(pool.counts(importer.graph) == 0):
+        refuse(node, "has an empty pooling window")
+    importer.emit(pool)
+
+
 def import_global_average_pool(node, importer):
     source = importer.rename(node.input[0])
     shape = importer.graph.tensor(source).shape
@@ -585,6 +622,7 @@ BUILTIN = {
     "Conv": import_conv, "Gemm": import_gemm, "MatMul": import_gemm,
     "Relu": import_relu, "MaxPool": import_maxpool, "Add": import_add,
     "GlobalAveragePool": import_global_average_pool,
+    "AveragePool": import_average_pool,
     "QuantizeLinear": import_qdq, "DequantizeLinear": import_qdq,
     "Quant": import_quant, "IntQuant": import_quant,
     **dict.fromkeys(QLINEAR, import_qlinear), "QLinearConcat": import_qconcat,

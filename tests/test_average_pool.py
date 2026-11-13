@@ -1,4 +1,4 @@
-"""Global pooling arithmetic and importer boundaries."""
+"""Average pooling arithmetic and importer boundaries."""
 
 import shutil
 import unittest
@@ -23,7 +23,96 @@ def model(shape=(1, 3, 3, 5), **attrs):
             .add_output("y", (1, shape[1], 1, 1)).build())
 
 
+def local_model(include=0, output_shape=(1, 2, 2, 3), **attrs):
+    options = dict(kernel_shape=[2, 3], strides=[2, 2], pads=[1, 1, 0, 1],
+                   count_include_pad=include)
+    options.update(attrs)
+    return (ModelBuilder("local_average", opset=20).add_input("x", (1, 2, 3, 5))
+            .add_node("AveragePool", ["x"], ["y"], **options)
+            .add_output("y", output_shape).build())
+
+
+def local_reference(x, include):
+    result = np.empty((len(x), 2, 3, 2))
+    for h in range(2):
+        for w in range(3):
+            rows = [i for i in range(2 * h - 1, 2 * h + 1) if 0 <= i < 3]
+            cols = [i for i in range(2 * w - 1, 2 * w + 2) if 0 <= i < 5]
+            values = x[:, :, rows, :][:, :, :, cols]
+            result[:, h, w] = values.sum(axis=(2, 3)) / (6 if include else len(rows) * len(cols))
+    return result
+
+
 class Arithmetic(unittest.TestCase):
+    def test_local_edges(self):
+        x = np.arange(-15, 15, dtype=np.float32).reshape(1, 2, 3, 5)
+        for include in (0, 1):
+            graph = OnnxImporter(local_model(include)).run()
+            got = GraphRunner(graph).run({"x": x.transpose(0, 2, 3, 1)})[graph.outputs[0]]
+            np.testing.assert_allclose(got, local_reference(x, include))
+
+    def test_local_ort(self):
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            self.skipTest("onnxruntime is not installed")
+        x = np.random.default_rng(21).normal(size=(1, 2, 3, 5)).astype(np.float32)
+        for include in (0, 1):
+            fixture = local_model(include)
+            session = ort.InferenceSession(fixture.proto.encode(), providers=["CPUExecutionProvider"])
+            got = session.run(["y"], {"x": x})[0].transpose(0, 2, 3, 1)
+            np.testing.assert_allclose(got, local_reference(x, include), atol=1e-6)
+
+    def test_local_refusals(self):
+        for attrs in ({"ceil_mode": 1}, {"kernel_shape": [0, 2]}, {"strides": [1]},
+                      {"pads": [-1, 0, 0, 0]}, {"count_include_pad": 2},
+                      {"auto_pad": "SAME_UPPER"}, {"axes": [2, 3]}):
+            with self.subTest(attrs=attrs):
+                self.assertFalse(otf.check(local_model(**attrs), mode="stream").ok)
+
+    def test_dilated_reference(self):
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            self.skipTest("onnxruntime is not installed")
+        x = np.random.default_rng(32).normal(size=(1, 2, 3, 5)).astype(np.float32)
+        for include in (0, 1):
+            fixture = local_model(include, output_shape=(1, 2, 3, 5), kernel_shape=[2, 2],
+                                  strides=[1, 1], dilations=[2, 2], pads=[1, 1, 1, 1])
+            graph = OnnxImporter(fixture).run()
+            got = GraphRunner(graph).run({"x": x.transpose(0, 2, 3, 1)})[graph.outputs[0]]
+            session = ort.InferenceSession(fixture.proto.encode(), providers=["CPUExecutionProvider"])
+            expected = session.run(["y"], {"x": x})[0].transpose(0, 2, 3, 1)
+            np.testing.assert_allclose(got, expected, atol=1e-6)
+
+    def test_auto_padding(self):
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            self.skipTest("onnxruntime is not installed")
+        x = np.random.default_rng(33).normal(size=(1, 2, 3, 5)).astype(np.float32)
+        for auto in ("SAME_UPPER", "SAME_LOWER"):
+            fixture = (ModelBuilder("auto_average", opset=20).add_input("x", x.shape)
+                       .add_node("AveragePool", ["x"], ["y"], kernel_shape=[2, 2],
+                                 strides=[2, 2], auto_pad=auto)
+                       .add_output("y", (1, 2, 2, 3)).build())
+            graph = OnnxImporter(fixture).run()
+            got = GraphRunner(graph).run({"x": x.transpose(0, 2, 3, 1)})[graph.outputs[0]]
+            session = ort.InferenceSession(fixture.proto.encode(), providers=["CPUExecutionProvider"])
+            expected = session.run(["y"], {"x": x})[0].transpose(0, 2, 3, 1)
+            np.testing.assert_allclose(got, expected, atol=1e-6)
+
+    def test_local_zero_point(self):
+        x = np.random.default_rng(5).integers(-128, 128, (1, 2, 3, 5))
+        for include in (0, 1):
+            graph = OnnxImporter(local_model(include)).run()
+            plan = QuantizationPlan.from_annotations({
+                "x": QuantSpec(0.125, -17), "y": QuantSpec(0.25, 11)})
+            graph = LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
+            got = GraphRunner(graph).run({"x": x.transpose(0, 2, 3, 1)})[graph.outputs[0]]
+            expected = np.clip(np.floor(local_reference((x + 17) / 2, include) + 0.5) + 11, -128, 127)
+            np.testing.assert_allclose(got, expected, atol=1, rtol=0)
+
     def test_grids(self):
         codes = np.random.default_rng(1).integers(-128, 128, (1, 3, 5, 3))
         for zero in (0, -17, 63):
@@ -60,6 +149,21 @@ class Arithmetic(unittest.TestCase):
 
 
 class Simulation(unittest.TestCase):
+    @unittest.skipIf(Hdl.skip_reason("hardcaml"), "Hardcaml unavailable")
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
+    def test_local_edges(self):
+        x = np.random.default_rng(11).uniform(-1, 1, (5, 2, 3, 5)).astype(np.float32)
+        x[0], x[1], x[2] = -1, 1, 0
+        for include in (0, 1):
+            for hdl in ("sv", "hardcaml"):
+                with self.subTest(include=include, hdl=hdl):
+                    acc = otf.load(local_model(include))
+                    acc.compile(device="k26", mode="stream", hdl=hdl, calibration=x,
+                                out_dir=Fixtures.build_dir("average_%s_%s" % (include, hdl)))
+                    np.testing.assert_allclose(acc.predict(x), local_reference(x, include), atol=2 / 127)
+                    report = acc.simulate(x, sweep=True)
+                    self.assertTrue(report.ok, report)
+
     @unittest.skipIf(Hdl.skip_reason("hardcaml"), "Hardcaml unavailable")
     @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
     def test_nonzero_grids(self):

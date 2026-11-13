@@ -37,7 +37,7 @@ class CnnSimulation(unittest.TestCase):
         args = argparse.Namespace(device="k26", mode="stream", clock_mhz=None,
                                   frames=16, sweep=True, inspect_only=False, implement=False,
                                   out=Fixtures.build_dir("cnn"))
-        for name in ("maxpool", "residual", "global_average"):
+        for name in ("maxpool", "residual", "global_average", "average"):
             with self.subTest(model=name):
                 row = report_corpus.report_model(ROOT / "tests/fixtures/cnn" / (name + ".onnx"), args)
                 self.assertEqual(row["status"], "passed", row)

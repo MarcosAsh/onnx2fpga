@@ -14,8 +14,7 @@ from onnx2fpga.reference.runner import GraphRunner
 
 
 CORPUS = ROOT / "tests/fixtures/cnn"
-BLOCKED = {"average": "AveragePool",
-           "grouped": "grouped convolution", "depthwise": "grouped convolution"}
+BLOCKED = {"grouped": "grouped convolution", "depthwise": "grouped convolution"}
 
 
 def negative_pool():
@@ -44,7 +43,7 @@ class Cnn(unittest.TestCase):
 
     def test_provenance(self):
         self.assertEqual({path.stem for path in CORPUS.glob("*.json")},
-                         {"maxpool", "residual", "global_average", *BLOCKED})
+                         {"maxpool", "residual", "global_average", "average", *BLOCKED})
         for path in sorted(CORPUS.glob("*.json")):
             with self.subTest(model=path.stem):
                 record = json.loads(path.read_text())

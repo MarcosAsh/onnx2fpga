@@ -5,7 +5,7 @@ import numpy as np
 from ..p2_graph.datatype import INT32, IntType, QuantSpec
 from ..p2_graph.tensor import Tensor
 from ..p3_ops.elementwise import ConcatOp, ElementwiseOp
-from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp,
+from ..p3_ops.onnx_ops import (AddOp, AveragePoolOp, BinarizerOp, ConvOp, FlattenOp, GemmOp,
                                GlobalAveragePoolOp, MaxPoolOp, ReluOp)
 from ..p3_ops.hardware_ops import (ActivationUnit, AddUnit, MatVecUnit, PoolUnit,
                                    SlidingWindowUnit, SumPoolUnit)
@@ -177,26 +177,39 @@ def lower_maxpool(node, ctx):
     return [window, pool]
 
 
-def lower_global_average_pool(node, ctx):
+def lower_average_pool(node, ctx):
     source = ctx.graph.tensor(node.inputs[0])
-    count = source.shape[1] * source.shape[2]
     channels = source.shape[3]
+    units = []
+    inputs = node.inputs
+    spatial_shape = (1, 1)
+    count = source.shape[1] * source.shape[2]
+    divisors = np.array([count])
+    if isinstance(node, AveragePoolOp):
+        window = ctx.window(node, node.attrs["kernel_shape"], node.attrs["dilations"])
+        units.append(window)
+        inputs, spatial_shape = window.outputs, window.ofm_dim
+        count = int(np.prod(window.kernel))
+        divisors = node.counts(ctx.graph).reshape(-1)
     for name in (node.inputs[0], node.outputs[0]):
         if ctx.plan.spec(name).scale.size != 1 or ctx.plan.spec(name).zero_point.size != 1:
-            raise NotImplementedError("GlobalAveragePool requires per-tensor grids")
+            raise NotImplementedError("%s requires per-tensor grids" % node.op_type)
     summed = ctx.stage_tensor(node.name + "_sum")
-    pool = SumPoolUnit(node.name + "_sum", node.inputs, [summed], channels, count,
-                       ctx.plan.act_dtype)
+    pool = SumPoolUnit(node.name + "_sum", inputs, [summed], channels, count,
+                       ctx.plan.act_dtype, spatial_shape)
     if pool.out_dtype.bits > 32:
-        raise NotImplementedError("GlobalAveragePool sum exceeds 32 bits")
-    ratio = ctx.scale(node.inputs[0]) / (count * ctx.scale(node.outputs[0]))
+        raise NotImplementedError("%s sum exceeds 32 bits" % node.op_type)
+    elements = int(np.prod(spatial_shape)) * channels
+    if np.all(divisors == divisors[0]):
+        divisors = divisors[:1]
+    ratios = np.repeat(ctx.scale(node.inputs[0]) / (divisors * ctx.scale(node.outputs[0])), channels)
     requant = Requantizer.from_real_multipliers(
-        np.full(channels, ratio), ctx.plan.act_dtype, ctx.plan.mult_bits,
+        ratios, ctx.plan.act_dtype, ctx.plan.mult_bits,
         zero_point=ctx.zero_point(node.outputs[0]))
-    rescale = ActivationUnit(node.name, [summed], node.outputs, channels, channels,
+    rescale = ActivationUnit(node.name, [summed], node.outputs, len(ratios), elements,
                              requant, pool.out_dtype, ctx.plan.act_dtype,
                              in_zero_point=count * ctx.zero_point(node.inputs[0]))
-    return [pool, rescale]
+    return [*units, pool, rescale]
 
 
 def lower_relu(node, ctx):
@@ -248,7 +261,7 @@ def lower_flatten(node, ctx):
 
 
 BUILTIN = {GemmOp: lower_gemm, ConvOp: lower_conv, MaxPoolOp: lower_maxpool,
-           GlobalAveragePoolOp: lower_global_average_pool,
+           GlobalAveragePoolOp: lower_average_pool, AveragePoolOp: lower_average_pool,
            ReluOp: lower_relu, AddOp: lower_add, FlattenOp: lower_flatten,
            BinarizerOp: lower_binarizer, TreeEnsembleOp: lower_trees,
            ElementwiseOp: lower_elementwise, ConcatOp: lower_concat, ReduceOp: lower_reduce,

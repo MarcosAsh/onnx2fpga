@@ -12,6 +12,7 @@ unassessed properties separately; compilation and timing may still fail.
 | Gemm, MatMul | Stream and fixed | Constant weights; Gemm `transA` is unsupported. |
 | Conv, MaxPool | Stream | Grouped convolution, MaxPool ceil mode and indices output are unsupported. Fixed mode rejects these units. |
 | GlobalAveragePool | Stream | Static batch-one 2D images, per-tensor activation grids, sums up to 32 bits. |
+| AveragePool | Stream | Static batch-one 2D images, floor output sizes, either padding-count mode. |
 | Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
 | Other live elementwise operations | Fixed | See [elementwise functions and tables](../specs/010-lookup-tables-and-elementwise.md) for operations and broadcasting limits. |
 | Reductions, Softmax, Normalizer, LayerNormalization | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
@@ -66,7 +67,7 @@ python3 tools/report_corpus.py maxpool residual --corpus-dir tests/fixtures/cnn 
 
 Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
 without those packages. The full inspection currently returns failure for
-local average pooling and grouped/depthwise convolution.
+grouped/depthwise convolution.
 They remain separate from the passing vector corpus.
 
 The [baseline report](../measurements/cnn-baseline-2026-11-13.json) records
@@ -80,6 +81,28 @@ measurements remain unverified.
 The simulation report records total run cycles and time to the first output
 beat. That first beat is not a complete frame. Compiler cycles per frame are
 schedule estimates; stalls and pipeline fill affect measured throughput.
+
+### Average pooling
+
+`AveragePool` supports 2D kernels, positive strides and dilations, nonnegative
+asymmetric padding, and `SAME_UPPER`, `SAME_LOWER` or `VALID` auto padding.
+Explicit and automatic padding cannot be combined. Only `ceil_mode=0` is
+supported. Missing strides default to one. The image shape must be static
+with batch size one.
+
+With `count_include_pad=1`, each sum is divided by the kernel area. With the
+default value of zero, only input pixels inside the image count toward the
+divisor, following the [ONNX definition](https://onnx.ai/onnx/operators/onnx__AveragePool.html).
+The compiler stores a multiplier for each output position when edge-window
+divisors differ. Sliding windows use the input zero point for padding; the
+rescale subtracts the full kernel area's zero-point contribution before
+applying the divisor. Per-channel activation grids are unsupported.
+
+The [pooling regression report](../measurements/average-pool-2026-11-13.json)
+records local and global average CNNs passing the existing numerical limit
+and 256-frame stall sweeps. Separate tests compare asymmetric edge windows,
+dilation and auto padding against ONNX Runtime. Both HDL backends pass padded
+negative and constant images. These results do not establish routed timing.
 
 ### Global average pooling
 
