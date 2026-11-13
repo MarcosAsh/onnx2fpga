@@ -33,54 +33,29 @@ models:
 test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
-	$(PYTHON) -m unittest test_average_pool.Arithmetic -v
-	$(PYTHON) -m unittest test_layernorm.Arithmetic -v
-	$(PYTHON) -m unittest discover -s tests -p "test_recorded_itch.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_trading_board.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_trading_runtime.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_trading_dma.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_run_ddr.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_replay_records.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_replay_compare.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_kria_package.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_kria_install.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_provision_ddr.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_artix.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_compatibility.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_corpus_report.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_cnn.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_numerics.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_determinism.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_quantized_import.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_operators.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_characterize.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_packaging.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_synth_script.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_hardcaml_backend.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_ecp5.py" -v
+	$(PYTHON) -m unittest -v \
+	  test_average_pool.Arithmetic test_layernorm.Arithmetic test_recorded_itch \
+	  test_trading_board test_trading_runtime test_trading_dma \
+	  test_run_ddr test_replay_records test_replay_compare \
+	  test_kria_package test_kria_install test_provision_ddr \
+	  test_artix test_compatibility test_corpus_report \
+	  test_cnn.Cnn test_ingest test_numerics \
+	  test_pipeline test_determinism test_quantized_import \
+	  test_operators test_characterize test_packaging \
+	  test_synth_script test_hardcaml_backend test_ecp5
 
 # API tests skip what this machine cannot run and name what is missing.
 test-api: models
-	$(PYTHON) -m unittest test_average_pool.Simulation -v
-	$(PYTHON) -m unittest discover -s tests -p "test_cnn_sim.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_elementwise.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_reductions.py" -v
-	$(PYTHON) -m unittest test_layernorm.Hardware -v
-	$(PYTHON) -m unittest discover -s tests -p "test_kria_board.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_kria_runtime.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_arty_board.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_trees.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_reload.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_corpus.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_qonnx.py" -v
+	$(PYTHON) -m unittest -v \
+	  test_average_pool.Simulation test_cnn.Simulation test_api \
+	  test_fixed_latency test_elementwise test_reductions \
+	  test_layernorm.Hardware test_kria_board test_kria_runtime \
+	  test_arty_board test_trees test_reload \
+	  test_corpus test_qonnx
 
 test-cpp: runtime
-	$(PYTHON) -m unittest discover -s tests -p "test_cpp_contract.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_register_transport.py" -v
+	$(PYTHON) -m unittest -v \
+	  test_cpp_contract test_register_transport
 
 test-flaky:
 	$(PYTHON) tools/flakecheck.py --repeat 5 --fast
@@ -89,14 +64,10 @@ test-flaky-all:
 	$(PYTHON) tools/flakecheck.py --repeat 3
 
 test-sim:
-	$(PYTHON) -m unittest discover -s tests -p "test_trading_host_rtl.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_ddr_trading.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_residual.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_sliding_window.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_simulation.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_hardcaml_lockstep.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_icepi_board.py" -v
-	$(PYTHON) -m unittest discover -s tests -p "test_tick_to_trade.py" -v
+	$(PYTHON) -m unittest -v \
+	  test_trading_host_rtl test_ddr_trading test_residual \
+	  test_sliding_window test_simulation test_hardcaml_lockstep \
+	  test_icepi_board test_tick_to_trade
 
 # Hardcaml tests skip where dune is missing.
 test-hardcaml:

@@ -84,53 +84,32 @@ schedule estimates; stalls and pipeline fill affect measured throughput.
 
 ### Average pooling
 
-`AveragePool` supports 2D kernels, positive strides and dilations, nonnegative
-asymmetric padding, and `SAME_UPPER`, `SAME_LOWER` or `VALID` auto padding.
-Explicit and automatic padding cannot be combined. Only `ceil_mode=0` is
-supported. Missing strides default to one. The image shape must be static
-with batch size one.
+Both average-pool operators require stream mode, static batch-one 2D images,
+per-tensor activation grids and sums that fit in 32 bits.
 
-With `count_include_pad=1`, each sum is divided by the kernel area. With the
-default value of zero, only input pixels inside the image count toward the
-divisor, following the [ONNX definition](https://onnx.ai/onnx/operators/onnx__AveragePool.html).
-The compiler stores a multiplier for each output position when edge-window
-divisors differ. Sliding windows use the input zero point for padding; the
-rescale subtracts the full kernel area's zero-point contribution before
-applying the divisor. Per-channel activation grids are unsupported.
+[`AveragePool`](https://onnx.ai/onnx/operators/onnx__AveragePool.html) accepts
+positive strides and dilations, nonnegative asymmetric padding, and
+`SAME_UPPER`, `SAME_LOWER` or `VALID` auto padding. Explicit and automatic
+padding cannot be combined. Strides default to one; only `ceil_mode=0` is
+supported. `count_include_pad=1` divides by the kernel area; the default
+excludes padded positions from the divisor.
 
-The [pooling regression report](../measurements/average-pool-2026-11-13.json)
-records local and global average CNNs passing the existing numerical limit
-and 256-frame stall sweeps. Separate tests compare asymmetric edge windows,
-dilation and auto padding against ONNX Runtime. Both HDL backends pass padded
-negative and constant images. These results do not establish routed timing.
+[`GlobalAveragePool`](https://onnx.ai/onnx/operators/onnx__GlobalAveragePool.html)
+reduces height and width to one value per channel, retaining both spatial axes.
+It accepts no attributes.
 
-### Global average pooling
+Both use signed sums followed by integer rescaling with zero-point correction,
+rounding and clamping. Output stalls preserve pending results; reset discards
+the partial frame. Tests cover partial-frame reset, signed extremes, odd and
+one-pixel images. ONNX Runtime comparisons cover asymmetric edges, dilation
+and auto padding; both HDL backends pass padded negative and constant images.
 
-`GlobalAveragePool` reduces the height and width of an NCHW image to one value
-per channel, preserving both spatial axes with size one, as specified by
-[ONNX](https://onnx.ai/onnx/operators/onnx__GlobalAveragePool.html).
-The importer currently accepts static batch-one 2D inputs and no attributes.
-Other ranks and fixed execution mode are rejected.
-
-The stream unit accumulates signed input codes with
-`input_bits + ceil(log2(height * width))` bits. It stores one partial sum per
-channel. The final rescale subtracts `height * width * input_zero_point`,
-multiplies by an integer approximation of
-`input_scale / (height * width * output_scale)`, rounds halfway values toward
-positive infinity, then adds the output zero point and clamps. Activation
-grids must be per tensor, and sums wider than 32 bits are rejected.
-
-Input stalls preserve the current channel and pixel counters. Output stalls
-hold the final pixel's handshake until its result can be consumed. Reset
-discards the partial frame; the next frame overwrites the stored sums on its
-first pixel. The global-average CNN passes the existing 0.025 numerical
-threshold and 256-image RTL stall sweeps. Odd image sizes, one-pixel images,
-signed extremes and partial-frame reset have separate regression tests.
-
-The [first Artix-7 35T build](../measurements/global-average-a7-2026-11-13.json)
-fails the 100 MHz target with setup slack of -10.279 ns. The worst path runs
-through the convolution arithmetic and rescale. Its numerical and simulation
-stages pass; the routed design is not timing-qualified.
+The [pooling report](../measurements/average-pool-2026-11-13.json) records both
+CNNs passing the 0.025 numerical limit and 256-frame stall sweeps.
+The [Artix-7 35T global-average build](../measurements/global-average-a7-2026-11-13.json)
+fails 100 MHz timing with -10.279 ns setup slack through the convolution
+arithmetic and rescale. Its numerical and simulation stages pass. Physical
+operation remains unverified.
 
 ### Vector corpus
 

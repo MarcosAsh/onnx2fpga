@@ -15,11 +15,14 @@ from onnx2fpga import assets
 from onnx2fpga.assets import AssetError, AssetLocator
 
 
+RTL = {path.name for path in (ROOT / "hardware/rtl").glob("*.sv")}
+
+
 class Locator(unittest.TestCase):
     def test_checkout(self):
         locator = AssetLocator()
         self.assertTrue(locator.rtl_dir.is_dir())
-        self.assertEqual(len(locator.rtl_sources()), 10)
+        self.assertEqual({path.name for path in locator.rtl_sources()}, RTL)
         self.assertTrue(locator.synth_script.is_file())
         self.assertTrue((locator.runtime_dir / "sim" / "harness.cpp").is_file())
         self.assertEqual(AssetLocator(ROOT).root, ROOT)
@@ -70,7 +73,7 @@ class Wheel(unittest.TestCase):
         archive = zipfile.ZipFile(self.wheel)
         names = archive.namelist()
         modules = [n for n in names if n.endswith(".sv")]
-        self.assertEqual(len(modules), 10, modules)
+        self.assertEqual({pathlib.Path(name).name for name in modules}, RTL)
         for suffix in ("synth_unit.tcl", "sim/harness.cpp", "otf/kernels.hpp"):
             self.assertTrue(any(n.endswith(suffix) for n in names), suffix)
         for name in ("kria_install.py", "kria_deploy.py"):
@@ -96,6 +99,8 @@ class Wheel(unittest.TestCase):
 
     def run_command(self, command, folder):
         work = Fixtures.build_dir(folder)
+        shutil.rmtree(work)
+        work.mkdir()
         shutil.copyfile(ROOT / "examples" / "models" / "mlp.onnx", work / "mlp.onnx")
         completed = self.installed("-m", "onnx2fpga", command, "mlp.onnx", "--out", "out",
                                    "--target-cycles", "64", "--quiet", cwd=work)
@@ -106,7 +111,7 @@ class Wheel(unittest.TestCase):
         out, _ = self.run_command("compile", "packaging_work")
         for relative in ("rtl/top.sv", "Makefile", "manifest.json"):
             self.assertTrue((out / relative).exists(), relative)
-        self.assertEqual(len(list((out / "rtl").glob("otf_*.sv"))), 10)
+        self.assertEqual({path.name for path in (out / "rtl").glob("otf_*.sv")}, RTL)
 
     @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
     def test_simulate(self):
