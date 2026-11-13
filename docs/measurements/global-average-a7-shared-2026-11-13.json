@@ -1,0 +1,517 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-13T16:23:01.805406+00:00",
+    "revision": "c8364e87d82f47cd62be9ec4d4a701fb2be4120e",
+    "worktree_status": "M compiler/onnx2fpga/p3_ops/hardware_ops.py\n M compiler/onnx2fpga/targets/ecp5.py\n M hardware/hardcaml/src/otf_act.ml\n M hardware/hardcaml/test/test_otf_act.ml\n M hardware/hardcaml/test/test_top.ml\n M hardware/rtl/otf_act.sv",
+    "reporter_sha256": "60ee8c0cca86fbb0efe86842d2c89c136a2dc44a488afbb6127c66f2dd4ea46d",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox",
+      "vivado": "vivado v2026.1 (64-bit)\nTool Version Limit: 2026.06\nSW Build 6511674 on Tue Jun 16 11:01:26 MDT 2026\nIP Build 6504888 on Tue Jun 09 09:05:25 MDT 2026\nSharedData Build 6501428 on Mon Jun 08 17:34:18 MDT 2026\nCopyright 1986-2022 Xilinx, Inc. All Rights Reserved.\nCopyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved."
+    }
+  },
+  "configuration": {
+    "device": "a7_35t",
+    "mode": "stream",
+    "corpus_dir": "tests/fixtures/cnn",
+    "clock_mhz": null,
+    "frames": 256,
+    "sweep": true,
+    "target_cycles": 768,
+    "implement": true,
+    "inspect_only": false,
+    "models": [
+      "global_average"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "global_average",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+      "provenance": {
+        "model": "global_average",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "global_average.onnx": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+          "global_average.npz": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "317e991be2dec506e835e1ea5f6df3563a0eb678943f51b5c1a767115156f077",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "GlobalAveragePool",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "a7_35t",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 653.0,
+          "ff": 996,
+          "dsp": 14.0,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 768,
+        "clock_assumption_mhz": 100.0,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 130208.33333333333,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "50d814c35594c0f740ddd9376199bae86603403df86230debb9ca2c40aced654"
+      },
+      "manifest_sha256": "9537b6e1c47d6f7cec2e3e66d0c86792c42a1ea48556e5d75f7ae175864eefb4",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0006979976745101615,
+        "max_absolute_error": 0.002474949932398718,
+        "reference_std": 0.19454585015773773,
+        "normalized_mae": 0.0035878312179068593,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256,
+        "latency_scope": "simulation start to first output beat",
+        "frame_latency_scope": "first accepted input to last accepted output",
+        "runs": [
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 196641,
+            "latency_cycles": 792,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 800,
+              "max": 1066,
+              "mean": 1064.9609375
+            },
+            "mean_completion_interval_cycles": 768.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 196641,
+            "latency_cycles": 792,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 800,
+              "max": 1066,
+              "mean": 1064.9609375
+            },
+            "mean_completion_interval_cycles": 768.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": 196641,
+            "latency_cycles": 792,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 800,
+              "max": 1066,
+              "mean": 1064.9609375
+            },
+            "mean_completion_interval_cycles": 768.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": 196641,
+            "latency_cycles": 792,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 800,
+              "max": 1066,
+              "mean": 1064.9609375
+            },
+            "mean_completion_interval_cycles": 768.0
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 1,
+            "passed": true,
+            "cycles": 196648,
+            "latency_cycles": 797,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 810,
+              "max": 1075,
+              "mean": 1066.1328125
+            },
+            "mean_completion_interval_cycles": 767.9882352941177
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 2,
+            "passed": true,
+            "cycles": 196652,
+            "latency_cycles": 804,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 813,
+              "max": 1076,
+              "mean": 1066.265625
+            },
+            "mean_completion_interval_cycles": 767.9921568627451
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 3,
+            "passed": true,
+            "cycles": 196659,
+            "latency_cycles": 809,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 818,
+              "max": 1077,
+              "mean": 1066.3671875
+            },
+            "mean_completion_interval_cycles": 767.9960784313726
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 1,
+            "passed": true,
+            "cycles": 196697,
+            "latency_cycles": 840,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 843,
+              "max": 1120,
+              "mean": 1073.0703125
+            },
+            "mean_completion_interval_cycles": 768.0274509803921
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 2,
+            "passed": true,
+            "cycles": 196688,
+            "latency_cycles": 835,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 850,
+              "max": 1102,
+              "mean": 1072.6484375
+            },
+            "mean_completion_interval_cycles": 767.9843137254902
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 3,
+            "passed": true,
+            "cycles": 196680,
+            "latency_cycles": 828,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 843,
+              "max": 1097,
+              "mean": 1072.51171875
+            },
+            "mean_completion_interval_cycles": 767.964705882353
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 1,
+            "passed": true,
+            "cycles": 196702,
+            "latency_cycles": 805,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 840,
+              "max": 1175,
+              "mean": 1087.76171875
+            },
+            "mean_completion_interval_cycles": 768.0823529411765
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 2,
+            "passed": true,
+            "cycles": 196647,
+            "latency_cycles": 797,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 803,
+              "max": 1151,
+              "mean": 1086.0078125
+            },
+            "mean_completion_interval_cycles": 768.0117647058823
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 3,
+            "passed": true,
+            "cycles": 196677,
+            "latency_cycles": 795,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 855,
+              "max": 1137,
+              "mean": 1086.98828125
+            },
+            "mean_completion_interval_cycles": 767.9254901960784
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 196819,
+            "latency_cycles": 917,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 909,
+              "max": 1070,
+              "mean": 1048.3671875
+            },
+            "mean_completion_interval_cycles": 768.2078431372549
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": 196823,
+            "latency_cycles": 872,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 878,
+              "max": 1094,
+              "mean": 1045.16015625
+            },
+            "mean_completion_interval_cycles": 768.4
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": 196754,
+            "latency_cycles": 881,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 866,
+              "max": 1066,
+              "mean": 1043.67578125
+            },
+            "mean_completion_interval_cycles": 768.0941176470589
+          }
+        ],
+        "reset": {
+          "input_duty": 50,
+          "output_duty": 10,
+          "seed": 1,
+          "passed": true,
+          "cycles": 196688,
+          "latency_cycles": 819,
+          "resets": 1,
+          "frames": 256,
+          "frame_latency_cycles": {
+            "min": 882,
+            "max": 1162,
+            "mean": 1088.1875
+          },
+          "mean_completion_interval_cycles": 767.8627450980392
+        }
+      },
+      "implementation": {
+        "measured": {
+          "top": "otf_top",
+          "part": "xc7a35ticsg324-1L",
+          "stage": "impl",
+          "generics": "",
+          "period_ns": 10.0,
+          "wns_ns": 0.552,
+          "fmax_mhz": 105.84,
+          "lut": 1976,
+          "ff": 585,
+          "dsp": 3,
+          "ramb36": 0,
+          "ramb18": 1,
+          "bram36": 0.5,
+          "uram": 0
+        },
+        "timing": {
+          "scope": "internal paths; board I/O unassessed",
+          "checks": {
+            "no_clock": 0,
+            "unconstrained_internal_endpoints": 0,
+            "multiple_clock": 0,
+            "generated_clocks": 0,
+            "loops": 0,
+            "latch_loops": 0
+          },
+          "setup": {
+            "worst_slack_ns": 0.552,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 3206
+          },
+          "hold": {
+            "worst_slack_ns": 0.027,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 3206
+          },
+          "pulse_width": {
+            "worst_slack_ns": 3.75,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 945
+          },
+          "passed": true
+        },
+        "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+        "artifacts_sha256": {
+          "summary.json": "05798a21ef43672df845b88059beacafb42cab4d3fdd9532086fe526e6c3b45e",
+          "timing_impl.rpt": "af75145391fc9f8ec399b7b1100292332592a0e97bed07ca4350ab101e0a6ba0",
+          "utilization_impl.rpt": "0301601896a694b9a14c0cba4cecc85883bd68955e0aa73fc678a14cf721a110",
+          "routed.dcp": "5f43a3e3d34ec6f9e7f886c7b75686affeffe1cc23d3b58ad0348e2ddea8fb8f"
+        }
+      }
+    }
+  ],
+  "source_verification": {
+    "revision": "28d4ba46bcd46b595fc0bcfa9b9671ca79e10ceb",
+    "check": "regenerated RTL and manifest match recorded hashes",
+    "report_sha256": "1341b64cf769203cd6128d3ccb9b9123595a78a786711d41bc54719b0108c1d7"
+  }
+}

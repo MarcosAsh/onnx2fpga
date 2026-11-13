@@ -1,4 +1,4 @@
-(** Per channel rescale and clamp, with no register on the data path. *)
+(** Two-stage per-channel rescale; stalls hold results and reset discards pending beats. *)
 
 open! Core
 open! Hardcaml

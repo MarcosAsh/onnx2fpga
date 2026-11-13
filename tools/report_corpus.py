@@ -43,7 +43,6 @@ def metadata():
         "revision": command("git", "rev-parse", "HEAD"),
         "worktree_status": command("git", "status", "--porcelain"),
         "reporter_sha256": digest(Path(__file__)),
-        "fixture_generator_sha256": digest(ROOT / "tests/fixtures/make_corpus.py"),
         "hardcaml_lock_sha256": digest(ROOT / "hardware/hardcaml/onnx2fpga_hardcaml.opam.locked"),
         "versions": {"python": platform.python_version(), "numpy": np.__version__,
                      "onnx2fpga": otf.__version__, "verilator": command("verilator", "--version"),

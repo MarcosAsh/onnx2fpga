@@ -1,0 +1,697 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-13T16:40:16.238868+00:00",
+    "revision": "60ab4e07cf44326701ad8789daf484b40b0a07b2",
+    "worktree_status": "",
+    "reporter_sha256": "1114ec68122aa5c6f99a8a2b3fcbe35f4e1b6419acaac4b37e3f375048807c9f",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox",
+      "vivado": "vivado v2026.1 (64-bit)\nTool Version Limit: 2026.06\nSW Build 6511674 on Tue Jun 16 11:01:26 MDT 2026\nIP Build 6504888 on Tue Jun 09 09:05:25 MDT 2026\nSharedData Build 6501428 on Mon Jun 08 17:34:18 MDT 2026\nCopyright 1986-2022 Xilinx, Inc. All Rights Reserved.\nCopyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved."
+    }
+  },
+  "configuration": {
+    "device": "k26",
+    "mode": "stream",
+    "corpus_dir": "tests/fixtures/cnn",
+    "clock_mhz": 290,
+    "frames": 256,
+    "sweep": true,
+    "target_cycles": null,
+    "implement": true,
+    "inspect_only": false,
+    "models": [
+      "global_average"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "global_average",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "passed",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+      "provenance": {
+        "model": "global_average",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "global_average.onnx": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+          "global_average.npz": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "317e991be2dec506e835e1ea5f6df3563a0eb678943f51b5c1a767115156f077",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "GlobalAveragePool",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1358.0,
+          "ff": 2090,
+          "dsp": 28.5,
+          "bram36": 0,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 192,
+        "clock_assumption_mhz": 290,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 1510416.6666666667,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "a1b8fce958cd6ea2857ef8a018955e631a052a6107de183c38d72d72b19bc8a6"
+      },
+      "manifest_sha256": "efd5de668d22bc5be11cdcb556737fe2d0dad4cd375962e9e0a44e2a5f8ee748",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0006979976745101615,
+        "max_absolute_error": 0.002474949932398718,
+        "reference_std": 0.19454585015773773,
+        "normalized_mae": 0.0035878312179068593,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256,
+        "latency_scope": "simulation start to first output beat",
+        "frame_latency_scope": "first accepted input to last accepted output",
+        "runs": [
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 1,
+            "passed": true,
+            "cycles": 49200,
+            "latency_cycles": 227,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 235,
+              "max": 298,
+              "mean": 288.6796875
+            },
+            "mean_completion_interval_cycles": 192.01568627450982
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 2,
+            "passed": true,
+            "cycles": 49204,
+            "latency_cycles": 240,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 245,
+              "max": 297,
+              "mean": 288.421875
+            },
+            "mean_completion_interval_cycles": 191.9921568627451
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 3,
+            "passed": true,
+            "cycles": 49209,
+            "latency_cycles": 241,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 249,
+              "max": 296,
+              "mean": 288.58203125
+            },
+            "mean_completion_interval_cycles": 191.9921568627451
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 1,
+            "passed": true,
+            "cycles": 81963,
+            "latency_cycles": 371,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 317,
+              "max": 493,
+              "mean": 384.28125
+            },
+            "mean_completion_interval_cycles": 319.91764705882355
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 2,
+            "passed": true,
+            "cycles": 82876,
+            "latency_cycles": 392,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 290,
+              "max": 496,
+              "mean": 387.14453125
+            },
+            "mean_completion_interval_cycles": 323.4392156862745
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 3,
+            "passed": true,
+            "cycles": 82151,
+            "latency_cycles": 369,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 303,
+              "max": 509,
+              "mean": 384.2578125
+            },
+            "mean_completion_interval_cycles": 320.61960784313726
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 1,
+            "passed": true,
+            "cycles": 49194,
+            "latency_cycles": 230,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 250,
+              "max": 412,
+              "mean": 311.53515625
+            },
+            "mean_completion_interval_cycles": 191.93333333333334
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 2,
+            "passed": true,
+            "cycles": 49202,
+            "latency_cycles": 235,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 241,
+              "max": 379,
+              "mean": 310.7578125
+            },
+            "mean_completion_interval_cycles": 192.0
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 3,
+            "passed": true,
+            "cycles": 49219,
+            "latency_cycles": 229,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 242,
+              "max": 396,
+              "mean": 309.87890625
+            },
+            "mean_completion_interval_cycles": 192.06274509803922
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 164760,
+            "latency_cycles": 730,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 516,
+              "max": 932,
+              "mean": 693.4375
+            },
+            "mean_completion_interval_cycles": 643.2196078431373
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": 165154,
+            "latency_cycles": 600,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 489,
+              "max": 924,
+              "mean": 694.5
+            },
+            "mean_completion_interval_cycles": 645.2745098039215
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": 164337,
+            "latency_cycles": 688,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 489,
+              "max": 884,
+              "mean": 689.93359375
+            },
+            "mean_completion_interval_cycles": 641.7254901960785
+          }
+        ],
+        "reset": {
+          "input_duty": 50,
+          "output_duty": 10,
+          "seed": 1,
+          "passed": true,
+          "cycles": 49199,
+          "latency_cycles": 247,
+          "resets": 1,
+          "frames": 256,
+          "frame_latency_cycles": {
+            "min": 272,
+            "max": 398,
+            "mean": 310.1171875
+          },
+          "mean_completion_interval_cycles": 191.86666666666667
+        }
+      },
+      "implementation": {
+        "measured": {
+          "top": "otf_top",
+          "part": "xck26-sfvc784-2LV-c",
+          "stage": "impl",
+          "generics": "",
+          "period_ns": 3.448,
+          "wns_ns": 0.099,
+          "fmax_mhz": 298.6,
+          "lut": 3855,
+          "ff": 1332,
+          "dsp": 6,
+          "ramb36": 0,
+          "ramb18": 0,
+          "bram36": 0.0,
+          "uram": 0
+        },
+        "timing": {
+          "scope": "internal paths; board I/O unassessed",
+          "checks": {
+            "no_clock": 0,
+            "unconstrained_internal_endpoints": 0,
+            "multiple_clock": 0,
+            "generated_clocks": 0,
+            "loops": 0,
+            "latch_loops": 0
+          },
+          "setup": {
+            "worst_slack_ns": 0.099,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 4685
+          },
+          "hold": {
+            "worst_slack_ns": 0.053,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 4685
+          },
+          "pulse_width": {
+            "worst_slack_ns": 0.962,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 1724
+          },
+          "passed": true
+        },
+        "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+        "artifacts_sha256": {
+          "summary.json": "b5c53b2fcb899a4d6273fd4d6b3909e4ceb62bc049029b9c6ccd1d11504949f0",
+          "timing_impl.rpt": "e9f6baf5962403036cee778a53e35ee0c29a392e72f7056931c066c24a2efe55",
+          "utilization_impl.rpt": "d65cd2379e064b4da4bf2d73b4d7c46b102c2b3cc3bac8b0b8f83743d77a0908",
+          "routed.dcp": "5b7245a47af08f30e914d72e306bf731c458e474ddacd2a13c10245b2bf61927",
+          "recheck.tcl": "a3b9df98692261fa80c78bf41211e93903cc8762ee78daa449a634feb27eb33e"
+        },
+        "recheck": {
+          "source_checkpoint_sha256": "2418863a64ccd7fa2174dab5e6aa69348d8b1d9e4c45562d5f6c4c01c55a98b9",
+          "clock_mhz": 290,
+          "script": "open_checkpoint $::env(OTF_CHECKPOINT)\nif {[get_property PART [current_design]] ne \"xck26-sfvc784-2LV-c\"} { error \"checkpoint part mismatch\" }\ncreate_clock -name clk -period [expr {1000.0 / 290}] [get_ports clk]\nfile mkdir $::env(OTF_OUT)\nreport_timing_summary -file $::env(OTF_OUT)/timing_impl.rpt\nreport_utilization -file $::env(OTF_OUT)/utilization_impl.rpt\nwrite_checkpoint -force $::env(OTF_OUT)/routed.dcp\n",
+          "method": "300 MHz routed checkpoint rechecked at 290 MHz without placement or routing changes"
+        },
+        "fresh_routes": [
+          {
+            "clock_mhz": null,
+            "report_sha256": "f6896383dd173a34103a227ffe2e1360233cdc7bce8720491411c4001ff42ff6",
+            "measured": {
+              "top": "otf_top",
+              "part": "xck26-sfvc784-2LV-c",
+              "stage": "impl",
+              "generics": "",
+              "period_ns": 3.103030303030303,
+              "wns_ns": -0.207,
+              "fmax_mhz": 302.11,
+              "lut": 3905,
+              "ff": 1336,
+              "dsp": 6,
+              "ramb36": 0,
+              "ramb18": 0,
+              "bram36": 0.0,
+              "uram": 0
+            },
+            "timing": {
+              "scope": "internal paths; board I/O unassessed",
+              "checks": {
+                "no_clock": 0,
+                "unconstrained_internal_endpoints": 0,
+                "multiple_clock": 0,
+                "generated_clocks": 0,
+                "loops": 0,
+                "latch_loops": 0
+              },
+              "setup": {
+                "worst_slack_ns": -0.207,
+                "total_negative_slack_ns": -24.877,
+                "failing_endpoints": 314,
+                "endpoints": 4694
+              },
+              "hold": {
+                "worst_slack_ns": 0.036,
+                "total_negative_slack_ns": 0.0,
+                "failing_endpoints": 0,
+                "endpoints": 4694
+              },
+              "pulse_width": {
+                "worst_slack_ns": 0.789,
+                "total_negative_slack_ns": 0.0,
+                "failing_endpoints": 0,
+                "endpoints": 1728
+              },
+              "passed": false
+            },
+            "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+            "artifacts_sha256": {
+              "summary.json": "c9fb80ec008a642d1929aa12da2f8a63efaa2a49db9dec4fe70aa8e6c8858625",
+              "timing_impl.rpt": "876c419ceb4dd58cb5a9256cacd3d1c5e0569c19b60a5285febf637f3d23200f",
+              "utilization_impl.rpt": "2db54e2798aa591547a40c6b8c91befebfa1c22ceba009b87a31ae142a1df964",
+              "routed.dcp": "7ce02dbb9a40172748bfb2f63895acc2ef04eb424234a678f9d1a37c80b02d73"
+            }
+          },
+          {
+            "clock_mhz": 300.0,
+            "report_sha256": "451fce27abf9eb34a4e146978c7f980a3794f0fd71559b0293771c7143ae674c",
+            "measured": {
+              "top": "otf_top",
+              "part": "xck26-sfvc784-2LV-c",
+              "stage": "impl",
+              "generics": "",
+              "period_ns": 3.3333333333333335,
+              "wns_ns": -0.016,
+              "fmax_mhz": 298.57,
+              "lut": 3855,
+              "ff": 1332,
+              "dsp": 6,
+              "ramb36": 0,
+              "ramb18": 0,
+              "bram36": 0.0,
+              "uram": 0
+            },
+            "timing": {
+              "scope": "internal paths; board I/O unassessed",
+              "checks": {
+                "no_clock": 0,
+                "unconstrained_internal_endpoints": 0,
+                "multiple_clock": 0,
+                "generated_clocks": 0,
+                "loops": 0,
+                "latch_loops": 0
+              },
+              "setup": {
+                "worst_slack_ns": -0.016,
+                "total_negative_slack_ns": -0.104,
+                "failing_endpoints": 23,
+                "endpoints": 4685
+              },
+              "hold": {
+                "worst_slack_ns": 0.053,
+                "total_negative_slack_ns": 0.0,
+                "failing_endpoints": 0,
+                "endpoints": 4685
+              },
+              "pulse_width": {
+                "worst_slack_ns": 0.904,
+                "total_negative_slack_ns": 0.0,
+                "failing_endpoints": 0,
+                "endpoints": 1724
+              },
+              "passed": false
+            },
+            "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+            "artifacts_sha256": {
+              "summary.json": "92a5cd3ba3bdf78904ab78bd3b4d423c19b7e0fccaaa92cddb86d964a08ce1fd",
+              "timing_impl.rpt": "fa35fb24042799ce8aeb1240f01d52d31ed6d35393b8009f5c1aef92e37d4f3d",
+              "utilization_impl.rpt": "f20fd6f6e349cf974615805a8e332501a52945c431c11ed9207b5203bfc46fa6",
+              "routed.dcp": "2418863a64ccd7fa2174dab5e6aa69348d8b1d9e4c45562d5f6c4c01c55a98b9"
+            }
+          },
+          {
+            "clock_mhz": 290.0,
+            "report_sha256": "c1cd986f2bdf262fce44397d52b6a15974eeb6c4185be19f794216988820ebd1",
+            "measured": {
+              "top": "otf_top",
+              "part": "xck26-sfvc784-2LV-c",
+              "stage": "impl",
+              "generics": "",
+              "period_ns": 3.4482758620689653,
+              "wns_ns": -0.199,
+              "fmax_mhz": 274.18,
+              "lut": 3840,
+              "ff": 1333,
+              "dsp": 6,
+              "ramb36": 0,
+              "ramb18": 0,
+              "bram36": 0.0,
+              "uram": 0
+            },
+            "timing": {
+              "scope": "internal paths; board I/O unassessed",
+              "checks": {
+                "no_clock": 0,
+                "unconstrained_internal_endpoints": 0,
+                "multiple_clock": 0,
+                "generated_clocks": 0,
+                "loops": 0,
+                "latch_loops": 0
+              },
+              "setup": {
+                "worst_slack_ns": -0.199,
+                "total_negative_slack_ns": -7.1,
+                "failing_endpoints": 95,
+                "endpoints": 4686
+              },
+              "hold": {
+                "worst_slack_ns": 0.051,
+                "total_negative_slack_ns": 0.0,
+                "failing_endpoints": 0,
+                "endpoints": 4686
+              },
+              "pulse_width": {
+                "worst_slack_ns": 0.962,
+                "total_negative_slack_ns": 0.0,
+                "failing_endpoints": 0,
+                "endpoints": 1725
+              },
+              "passed": false
+            },
+            "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
+            "artifacts_sha256": {
+              "summary.json": "bf594ed2462b3f1a9db8e324ec7a09bb95b7a00f89e578188130d0277ba863e1",
+              "timing_impl.rpt": "5e5dac8f108288dbf339ef0425e582d599858b1f11850433cc92467332531402",
+              "utilization_impl.rpt": "b8179519cad21982b0d2b925df345b9f9a1710dcf854c3c29e1e3a97632ab61c",
+              "routed.dcp": "2b47db6215fbd2b3d59e48e3d7455d8d7974e9f39aee1968115c546f94b0dcf1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "source_verification": {
+    "revision": "28d4ba46bcd46b595fc0bcfa9b9671ca79e10ceb",
+    "check": "regenerated RTL and manifest match recorded hashes",
+    "report_sha256": "451fce27abf9eb34a4e146978c7f980a3794f0fd71559b0293771c7143ae674c"
+  }
+}

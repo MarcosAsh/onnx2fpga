@@ -1,11 +1,10 @@
 {
   "schema_version": 1,
   "environment": {
-    "created_utc": "2026-11-13T14:50:25.447801+00:00",
-    "revision": "9fdf6944b342255d5f78580291d7734b6479a047",
-    "worktree_status": "M Makefile\n M compiler/onnx2fpga/p2_graph/onnx_importer.py\n M compiler/onnx2fpga/p3_ops/hardware_ops.py\n M compiler/onnx2fpga/p3_ops/onnx_ops.py\n M compiler/onnx2fpga/p4_quantize/lower.py\n M compiler/onnx2fpga/targets/ecp5.py\n M hardware/hardcaml/src/units.ml\n M tests/test_cnn.py\n M tests/test_cnn_sim.py\n?? hardware/hardcaml/src/otf_sum_pool.ml\n?? hardware/hardcaml/src/otf_sum_pool.mli\n?? hardware/hardcaml/test/test_otf_sum_pool.ml\n?? hardware/hardcaml/test/test_otf_sum_pool.mli\n?? hardware/rtl/otf_sum_pool.sv\n?? tests/test_average_pool.py",
-    "reporter_sha256": "acd9f6b893c3f580e9e60f6870a2d7b4dfaa7a4a00e5f1735bd77d0c98318f8e",
-    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "created_utc": "2026-11-13T16:20:34.303929+00:00",
+    "revision": "c8364e87d82f47cd62be9ec4d4a701fb2be4120e",
+    "worktree_status": "M compiler/onnx2fpga/p3_ops/hardware_ops.py\n M compiler/onnx2fpga/targets/ecp5.py\n M hardware/hardcaml/src/otf_act.ml\n M hardware/hardcaml/test/test_otf_act.ml\n M hardware/hardcaml/test/test_top.ml\n M hardware/rtl/otf_act.sv",
+    "reporter_sha256": "60ee8c0cca86fbb0efe86842d2c89c136a2dc44a488afbb6127c66f2dd4ea46d",
     "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
     "versions": {
       "python": "3.12.13",
@@ -24,6 +23,7 @@
     "clock_mhz": null,
     "frames": 256,
     "sweep": true,
+    "target_cycles": null,
     "implement": true,
     "inspect_only": false,
     "models": [
@@ -34,14 +34,14 @@
   "models": [
     {
       "model": "global_average",
-      "status": "failed",
+      "status": "passed",
       "warnings": [],
       "stages": {
         "inspection": "passed",
         "compilation": "passed",
         "reference": "passed",
         "simulation": "passed",
-        "implementation": "failed",
+        "implementation": "passed",
         "physical_board": "not_run"
       },
       "model_sha256": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
@@ -147,7 +147,7 @@
       "estimates": {
         "resources": {
           "lut": 1358.0,
-          "ff": 978,
+          "ff": 2090,
           "dsp": 53.0,
           "bram36": 0,
           "uram": 0,
@@ -161,151 +161,296 @@
         "predicted_fmax_mhz": null
       },
       "generated_sha256": {
-        "rtl/top.v": "7301d9718fcd865fc929ae33a395c817c7224d4d590d78acc887acee767183fa"
+        "rtl/top.v": "a1b8fce958cd6ea2857ef8a018955e631a052a6107de183c38d72d72b19bc8a6"
       },
-      "manifest_sha256": "4c21a35178a448ef3956a3203073ae5b11ce442a476e0c84597738148ad1268c",
+      "manifest_sha256": "7deb7818cb054c229e16bede7be36ec806eb9dca903fd5aa769f9ada380aa72c",
       "numerical_comparison": {
         "passed": true,
-        "mae": 0.0007707143742865455,
-        "max_absolute_error": 0.003036926867008627,
+        "mae": 0.0006979976745101615,
+        "max_absolute_error": 0.002474949932398718,
         "reference_std": 0.19454585015773773,
-        "normalized_mae": 0.003961607886581237,
+        "normalized_mae": 0.0035878312179068593,
         "maximum_normalized_mae": 0.025
       },
       "simulation": {
         "bit_exact": true,
         "frames": 256,
         "latency_scope": "simulation start to first output beat",
+        "frame_latency_scope": "first accepted input to last accepted output",
         "runs": [
           {
             "input_duty": 100,
             "output_duty": 100,
             "seed": 1,
             "passed": true,
-            "cycles": 49183,
-            "latency_cycles": 214
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
           },
           {
             "input_duty": 100,
             "output_duty": 100,
             "seed": 1,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
           },
           {
             "input_duty": 100,
             "output_duty": 100,
             "seed": 2,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
           },
           {
             "input_duty": 100,
             "output_duty": 100,
             "seed": 3,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49191,
+            "latency_cycles": 222,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 230,
+              "max": 288,
+              "mean": 287.7734375
+            },
+            "mean_completion_interval_cycles": 192.0
           },
           {
             "input_duty": 50,
             "output_duty": 50,
             "seed": 1,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49200,
+            "latency_cycles": 227,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 235,
+              "max": 298,
+              "mean": 288.6796875
+            },
+            "mean_completion_interval_cycles": 192.01568627450982
           },
           {
             "input_duty": 50,
             "output_duty": 50,
             "seed": 2,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49204,
+            "latency_cycles": 240,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 245,
+              "max": 297,
+              "mean": 288.421875
+            },
+            "mean_completion_interval_cycles": 191.9921568627451
           },
           {
             "input_duty": 50,
             "output_duty": 50,
             "seed": 3,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49209,
+            "latency_cycles": 241,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 249,
+              "max": 296,
+              "mean": 288.58203125
+            },
+            "mean_completion_interval_cycles": 191.9921568627451
           },
           {
             "input_duty": 20,
             "output_duty": 20,
             "seed": 1,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 81963,
+            "latency_cycles": 371,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 317,
+              "max": 493,
+              "mean": 384.28125
+            },
+            "mean_completion_interval_cycles": 319.91764705882355
           },
           {
             "input_duty": 20,
             "output_duty": 20,
             "seed": 2,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 82876,
+            "latency_cycles": 392,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 290,
+              "max": 496,
+              "mean": 387.14453125
+            },
+            "mean_completion_interval_cycles": 323.4392156862745
           },
           {
             "input_duty": 20,
             "output_duty": 20,
             "seed": 3,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 82151,
+            "latency_cycles": 369,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 303,
+              "max": 509,
+              "mean": 384.2578125
+            },
+            "mean_completion_interval_cycles": 320.61960784313726
           },
           {
             "input_duty": 100,
             "output_duty": 10,
             "seed": 1,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49194,
+            "latency_cycles": 230,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 250,
+              "max": 412,
+              "mean": 311.53515625
+            },
+            "mean_completion_interval_cycles": 191.93333333333334
           },
           {
             "input_duty": 100,
             "output_duty": 10,
             "seed": 2,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49202,
+            "latency_cycles": 235,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 241,
+              "max": 379,
+              "mean": 310.7578125
+            },
+            "mean_completion_interval_cycles": 192.0
           },
           {
             "input_duty": 100,
             "output_duty": 10,
             "seed": 3,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 49219,
+            "latency_cycles": 229,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 242,
+              "max": 396,
+              "mean": 309.87890625
+            },
+            "mean_completion_interval_cycles": 192.06274509803922
           },
           {
             "input_duty": 10,
             "output_duty": 100,
             "seed": 1,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 164760,
+            "latency_cycles": 730,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 516,
+              "max": 932,
+              "mean": 693.4375
+            },
+            "mean_completion_interval_cycles": 643.2196078431373
           },
           {
             "input_duty": 10,
             "output_duty": 100,
             "seed": 2,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 165154,
+            "latency_cycles": 600,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 489,
+              "max": 924,
+              "mean": 694.5
+            },
+            "mean_completion_interval_cycles": 645.2745098039215
           },
           {
             "input_duty": 10,
             "output_duty": 100,
             "seed": 3,
             "passed": true,
-            "cycles": null,
-            "latency_cycles": null
+            "cycles": 164337,
+            "latency_cycles": 688,
+            "resets": 0,
+            "frames": 256,
+            "frame_latency_cycles": {
+              "min": 489,
+              "max": 884,
+              "mean": 689.93359375
+            },
+            "mean_completion_interval_cycles": 641.7254901960785
           }
-        ]
+        ],
+        "reset": {
+          "input_duty": 50,
+          "output_duty": 10,
+          "seed": 1,
+          "passed": true,
+          "cycles": 49199,
+          "latency_cycles": 247,
+          "resets": 1,
+          "frames": 256,
+          "frame_latency_cycles": {
+            "min": 272,
+            "max": 398,
+            "mean": 310.1171875
+          },
+          "mean_completion_interval_cycles": 191.86666666666667
+        }
       },
       "implementation": {
         "measured": {
@@ -314,10 +459,10 @@
           "stage": "impl",
           "generics": "",
           "period_ns": 10.0,
-          "wns_ns": -10.279,
-          "fmax_mhz": 49.31,
-          "lut": 3846,
-          "ff": 336,
+          "wns_ns": 0.136,
+          "fmax_mhz": 101.38,
+          "lut": 3638,
+          "ff": 1228,
           "dsp": 6,
           "ramb36": 0,
           "ramb18": 3,
@@ -335,33 +480,38 @@
             "latch_loops": 0
           },
           "setup": {
-            "worst_slack_ns": -10.279,
-            "total_negative_slack_ns": -1015.674,
-            "failing_endpoints": 221,
-            "endpoints": 1724
-          },
-          "hold": {
-            "worst_slack_ns": 0.085,
+            "worst_slack_ns": 0.136,
             "total_negative_slack_ns": 0.0,
             "failing_endpoints": 0,
-            "endpoints": 1724
+            "endpoints": 3666
+          },
+          "hold": {
+            "worst_slack_ns": 0.028,
+            "total_negative_slack_ns": 0.0,
+            "failing_endpoints": 0,
+            "endpoints": 3666
           },
           "pulse_width": {
             "worst_slack_ns": 3.75,
             "total_negative_slack_ns": 0.0,
             "failing_endpoints": 0,
-            "endpoints": 646
+            "endpoints": 1538
           },
-          "passed": false
+          "passed": true
         },
         "script_sha256": "a61bf12414b185c71f25c4a23334cfce02f2f4a07643a70fafe94134f4a6761b",
         "artifacts_sha256": {
-          "summary.json": "b5187f5454052097dcb0980c550fc2a41a98ba7bf9f5c9201aeed16569bc0c09",
-          "timing_impl.rpt": "36ca14e14a5382c8e93e68a2bd8a8bb8a3eb7b9f04486356a9a33cf4ed3b4d7f",
-          "utilization_impl.rpt": "105128ee415df492e605e595844ae15d33301e310a6435c9940d8284ab850981",
-          "routed.dcp": "a6fa18d96bd7448cac738ba67cd6082c69afaa3dd2c0f9a56949d982687ce461"
+          "summary.json": "828773949bcc2e9ffc8554b4e6f2a4ce1945637bbf19db99307f941e32c02efb",
+          "timing_impl.rpt": "46b2a18839a3ccd99d3523d57b4d3b936f1a10296b75c9f057d563b840424eb9",
+          "utilization_impl.rpt": "437a2aa4261d8c1bbc2da7f84bbfb72ca8ec637ef41beebd55495133f6fce51c",
+          "routed.dcp": "1db175d04b2951e952c2569b07ab25f855ce9d79f9617f61097f0af28788a018"
         }
       }
     }
-  ]
+  ],
+  "source_verification": {
+    "revision": "28d4ba46bcd46b595fc0bcfa9b9671ca79e10ceb",
+    "check": "regenerated RTL and manifest match recorded hashes",
+    "report_sha256": "93099df1e5dd6baf369203567df10278f6fe9f54b07f2090df11eb8c9eb39a3c"
+  }
 }

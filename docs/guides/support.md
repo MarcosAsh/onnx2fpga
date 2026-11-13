@@ -49,7 +49,7 @@ and [Arty A7-100](https://github.com/Digilent/vivado-boards/blob/master/new/boar
 
 ## Reproduce the corpus report
 
-### CNN baseline
+### CNN coverage
 
 `tests/fixtures/cnn` contains six untrained, batch-one image models exported
 from PyTorch. Their sidecar JSON files record versions, seeds and file hashes.
@@ -61,8 +61,8 @@ These fixtures measure numerical error, not classifier task accuracy.
 python3 tests/fixtures/make_cnn.py
 python3 tools/report_corpus.py --corpus-dir tests/fixtures/cnn --mode stream \
     --inspect-only --out build/cnn_inspection
-python3 tools/report_corpus.py maxpool residual --corpus-dir tests/fixtures/cnn \
-    --mode stream --frames 256 --sweep --out build/cnn_baseline
+python3 tools/report_corpus.py --corpus-dir tests/fixtures/cnn --mode stream \
+    --frames 256 --sweep --out build/cnn_stream
 ```
 
 Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
@@ -86,13 +86,10 @@ accuracy.
 python3 tests/fixtures/make_cnn.py mnist --mnist-data build/datasets/mnist.npz
 ```
 
-The [baseline report](../measurements/cnn-baseline-2026-11-13.json) records
-the max-pool CNN and residual CNN passing numerical comparison and bit-exact
-Hardcaml simulation on 256 images, including 15 stall runs per model. Their
-normalized mean absolute errors are 0.00754 and 0.01014, below the existing
-0.025 threshold. This establishes the small residual fixture's stream behavior;
-other branch shapes still need their own checks. CNN routing and physical
-measurements remain unverified.
+The [CNN report](../measurements/cnn-stream-2026-11-13.json) records all seven
+models passing the 0.025 numerical limit, 256-frame RTL sweeps and partial-frame
+reset. The residual result covers the stored branch shape; other shapes need
+their own checks.
 
 Stream reports include total cycles, time to the first output beat, per-frame
 latency from first accepted input to final accepted output, and the mean
@@ -113,8 +110,7 @@ activation grids; unsupported grids fail before hardware generation.
 The window generator emits each group's kernel before advancing to the next
 group. The matrix engine reuses those inputs for that group's output channels.
 Tests cover bias, asymmetric padding, stride, dilation, depthwise multipliers
-one and two. Unit comparisons include reset under stalls. Routed CNN timing
-remains unqualified.
+one and two. Unit comparisons include reset under stalls.
 
 ### Average pooling
 
@@ -138,12 +134,58 @@ the partial frame. Tests cover partial-frame reset, signed extremes, odd and
 one-pixel images. ONNX Runtime comparisons cover asymmetric edges, dilation
 and auto padding; both HDL backends pass padded negative and constant images.
 
-The [pooling report](../measurements/average-pool-2026-11-13.json) records both
-CNNs passing the 0.025 numerical limit and 256-frame stall sweeps.
-The [Artix-7 35T global-average build](../measurements/global-average-a7-2026-11-13.json)
-fails 100 MHz timing with -10.279 ns setup slack through the convolution
-arithmetic and rescale. Its numerical and simulation stages pass. Physical
-operation remains unverified.
+### Routed CNN measurements
+
+The complete global-average CNN uses 8-bit weights and activations. Each build
+passes the numerical gate, 256 frames under 16 traffic patterns, and a separate
+partial-frame reset replay. Frame intervals below are measured at full input
+and output duty; latency includes buffering and pipeline fill.
+
+| Build | Clock | Frame interval | Mean frame latency | LUTs | FFs | DSPs | Memory |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| [K26, rechecked route](../measurements/global-average-k26-2026-11-13.json) | 290 MHz | 192 cycles | 287.77 cycles | 3,855 | 1,332 | 6 | 0 BRAM |
+| [Artix-7 35T](../measurements/global-average-a7-2026-11-13.json) | 100 MHz | 192 cycles | 287.77 cycles | 3,638 | 1,228 | 6 | 3 RAMB18 |
+| [Artix-7 35T, shared](../measurements/global-average-a7-shared-2026-11-13.json) | 100 MHz | 768 cycles | 1,064.96 cycles | 1,976 | 585 | 3 | 1 RAMB18 |
+| [ECP5-25](../measurements/global-average-ecp5-2026-11-13.json) | 20 MHz | 768 cycles | 1,632.92 cycles | 2,333 | 761 | 18 | 4 EBR |
+
+Both Artix builds pass setup, hold and pulse-width checks, with setup slack
++0.136 ns and +0.552 ns respectively. Sharing halves the DSP count and reduces
+LUTs by 46%, at one quarter of the full-rate throughput. ECP5 meets its 20 MHz
+constraint with a nextpnr setup Fmax estimate of 48.71 MHz; hold and pulse width
+are unassessed. Board I/O and physical throughput remain unverified.
+
+K26 passes at 290 MHz with +0.099 ns setup slack after rechecking the 300 MHz
+routed checkpoint. Fresh placements at 322.265625, 300 and 290 MHz failed with
+-0.207, -0.016 and -0.199 ns slack respectively. The report retains those
+failures and the recheck script. It does not establish 300 MHz operation.
+
+```sh
+python3 tools/report_corpus.py global_average --corpus-dir tests/fixtures/cnn \
+    --mode stream --device a7_35t --frames 256 --sweep --implement --out build/cnn_a7
+python3 tools/report_corpus.py global_average --corpus-dir tests/fixtures/cnn \
+    --mode stream --device a7_35t --target-cycles 768 --frames 256 --sweep \
+    --implement --out build/cnn_a7_shared
+python3 tools/report_corpus.py global_average --corpus-dir tests/fixtures/cnn \
+    --mode stream --device icepi25 --frames 256 --sweep --implement --out build/cnn_ecp5
+```
+
+For K26, first produce the 300 MHz route (the report exits with a timing failure):
+
+```sh
+python3 tools/report_corpus.py global_average --corpus-dir tests/fixtures/cnn \
+    --mode stream --device k26 --clock-mhz 300 --frames 256 --sweep \
+    --implement --out build/cnn_k26
+```
+
+Save `models[0].implementation.recheck.script` from the K26 JSON as `recheck.tcl`, then run:
+
+```sh
+OTF_CHECKPOINT=build/cnn_k26/global_average/vivado/routed.dcp \
+    OTF_OUT=build/cnn_k26/global_average/vivado_290 \
+    vivado -mode batch -source recheck.tcl
+```
+
+This changes only the clock constraint and checks the existing routed design.
 
 ### Vector corpus
 
