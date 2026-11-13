@@ -168,12 +168,13 @@ def report_model(path, args):
         out = args.out / path.stem
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            acc.compile(device=args.device, mode=args.mode, clock_mhz=args.clock_mhz,
+            acc.compile(device=args.device, mode=args.mode,
+                        clock_mhz=args.clock_mhz if args.mode == "fixed" else None,
                         hdl="hardcaml", calibration=calibration, out_dir=out,
                         target_cycles=getattr(args, "target_cycles", None))
         row["warnings"] = [str(w.message) for w in caught]
         manifest = json.loads((out / "manifest.json").read_text())
-        clock = acc.result.clock_mhz or acc.device.fmax_mhz
+        clock = args.clock_mhz or acc.result.clock_mhz or acc.device.fmax_mhz
         interval = manifest["cycles_per_frame"]
         row["estimates"] = {
             "resources": manifest["resources"], "latency_cycles": acc.latency,
@@ -241,6 +242,8 @@ def main(argv=None):
     parser.add_argument("--implement", action="store_true", help="run device place and route")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "corpus_report")
     args = parser.parse_args(argv)
+    if args.clock_mhz is not None and (not math.isfinite(args.clock_mhz) or args.clock_mhz <= 0):
+        parser.error("--clock-mhz must be positive and finite")
     if args.target_cycles is not None and (args.target_cycles < 1 or args.mode != "stream"):
         parser.error("--target-cycles requires stream mode and a positive value")
     if args.frames < 1:
