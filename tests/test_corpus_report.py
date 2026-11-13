@@ -34,9 +34,9 @@ class CorpusReport(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             status = report.main(["maxpool", "grouped", "--corpus-dir", str(corpus),
                                   "--mode", "stream", "--inspect-only", "--out", directory])
-            self.assertEqual(status, 1)
+            self.assertEqual(status, 0)
             data = json.loads((Path(directory) / "report.json").read_text())
-            self.assertEqual([row["status"] for row in data["models"]], ["inspected", "failed"])
+            self.assertEqual([row["status"] for row in data["models"]], ["inspected", "inspected"])
             self.assertEqual(data["models"][0]["onnx"]["inputs"][0]["shape"], [1, 4, 8, 8])
             self.assertEqual(data["models"][0]["provenance"]["training"], "none")
 

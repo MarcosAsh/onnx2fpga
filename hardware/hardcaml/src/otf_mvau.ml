@@ -5,6 +5,7 @@ open! Signal
 module type Config = sig
   val mw : int
   val mh : int
+  val groups : int
   val simd : int
   val pe : int
   val act_bits : int
@@ -37,7 +38,7 @@ module Make (Config : Config) = struct
           [%message
             "BUG: otf_mvau memory has the wrong shape" name (count : int) (width : int)]
     in
-    if simd < 1 || pe < 1 || mw % simd <> 0 || mh % pe <> 0
+    if simd < 1 || pe < 1 || groups < 1 || mw % simd <> 0 || mh % (pe * groups) <> 0
     then
       raise_s
         [%message
@@ -133,8 +134,15 @@ module Make (Config : Config) = struct
     let%hw last_sf = Sv_int.is_last sf ~count:sf_count in
     let%hw out_free = ~:out_valid |: i.m.ready in
     let%hw go = ~:held |: out_free in
-    let%hw need_input = nf ==:. 0 in
+    let%hw need_input = wire 1 in
     let%hw step = go &: (~:need_input |: i.s.valid) in
+    let%hw group_nf =
+      if groups = 1
+      then nf
+      else
+        Sv_int.wrapping_counter spec ~advance:(step &: last_sf) ~count:(nf_count / groups)
+    in
+    need_input <-- (group_nf ==:. 0);
     sf <-- Sv_int.wrapping_counter spec ~advance:step ~count:sf_count;
     nf <-- Sv_int.wrapping_counter spec ~advance:(step &: last_sf) ~count:nf_count;
     (* The input vector is kept so later neuron folds replay it rather than fetch it. *)

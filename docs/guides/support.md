@@ -10,7 +10,7 @@ unassessed properties separately; compilation and timing may still fail.
 | Family | Execution modes | Restrictions and details |
 |---|---|---|
 | Gemm, MatMul | Stream and fixed | Constant weights; Gemm `transA` is unsupported. |
-| Conv, MaxPool | Stream | Grouped convolution, MaxPool ceil mode and indices output are unsupported. Fixed mode rejects these units. |
+| Conv, MaxPool | Stream | MaxPool ceil mode and indices output are unsupported. Grouped Conv requires per-tensor activation grids. Fixed mode rejects these units. |
 | GlobalAveragePool | Stream | Static batch-one 2D images, per-tensor activation grids, sums up to 32 bits. |
 | AveragePool | Stream | Static batch-one 2D images, floor output sizes, either padding-count mode. |
 | Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
@@ -66,9 +66,7 @@ python3 tools/report_corpus.py maxpool residual --corpus-dir tests/fixtures/cnn 
 ```
 
 Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
-without those packages. The full inspection currently returns failure for
-grouped/depthwise convolution.
-They remain separate from the passing vector corpus.
+without those packages. All six CNN fixtures pass inspection. They remain separate from the vector corpus.
 
 The [baseline report](../measurements/cnn-baseline-2026-11-13.json) records
 the max-pool CNN and residual CNN passing numerical comparison and bit-exact
@@ -81,6 +79,21 @@ measurements remain unverified.
 The simulation report records total run cycles and time to the first output
 beat. That first beat is not a complete frame. Compiler cycles per frame are
 schedule estimates; stalls and pipeline fill affect measured throughput.
+
+### Grouped convolution
+
+`Conv` supports groups and depthwise channel multipliers in stream mode.
+Input channels must equal the weight tensor's input channels times `group`;
+output channels must divide evenly into groups, following
+[ONNX](https://onnx.ai/onnx/operators/onnx__Conv.html).
+Weights use per-output-channel scales. Grouped convolution requires per-tensor
+activation grids; unsupported grids fail before hardware generation.
+
+The window generator emits each group's kernel before advancing to the next
+group. The matrix engine reuses those inputs for that group's output channels.
+Tests cover bias, asymmetric padding, stride, dilation, depthwise multipliers
+one and two. Unit comparisons include reset under stalls. Routed CNN timing
+remains unqualified.
 
 ### Average pooling
 

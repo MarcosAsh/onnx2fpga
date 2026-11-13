@@ -18,7 +18,8 @@ module otf_mvau #(
     parameter int BLOCK_RAM = 0,  // weights in a registered block RAM, one cycle more latency
     parameter string WEIGHT_FILE = "",
     parameter string BIAS_FILE   = "",
-    parameter string MULT_FILE   = ""
+    parameter string MULT_FILE   = "",
+    parameter int GROUPS    = 1
 ) (
     input  wire                        clk,
     input  wire                        rst_n,
@@ -59,8 +60,23 @@ module otf_mvau #(
     wire last_sf    = (sf == SF_W'(SF - 1));
     wire out_free   = !out_valid_r || m_tready;
     wire go         = !held || out_free;
-    wire need_input = (nf == '0);
+    wire need_input;
     wire step       = go && (!need_input || s_tvalid);
+
+    generate
+        if (GROUPS == 1) begin : single_group
+            assign need_input = (nf == '0);
+        end else begin : grouped
+            localparam int GF = NF / GROUPS;
+            localparam int GF_W = (GF <= 1) ? 1 : $clog2(GF);
+            logic [GF_W-1:0] gf;
+            assign need_input = (gf == '0);
+            always_ff @(posedge clk) begin
+                if (!rst_n) gf <= '0;
+                else if (step && last_sf) gf <= (gf == GF_W'(GF - 1)) ? '0 : gf + 1'b1;
+            end
+        end
+    endgenerate
 
     assign s_tready = need_input && go;
     assign m_tvalid = out_valid_r;

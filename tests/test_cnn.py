@@ -1,6 +1,7 @@
 """CNN provenance, independent references and current compatibility boundaries."""
 
 import argparse
+import importlib.util
 import hashlib
 import json
 import shutil
@@ -13,11 +14,16 @@ from tools import report_corpus
 import onnx2fpga as otf
 from onnx2fpga.p1_ingest import ModelBuilder
 from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
+from onnx2fpga.p2_graph.datatype import QuantSpec
+from onnx2fpga.p4_quantize.lower import LowerToHardware
+from onnx2fpga.p4_quantize.plan import QuantizationPlan
+from onnx2fpga.pipeline import CompilerContext
+from onnx2fpga.targets.device import Device
 from onnx2fpga.reference.runner import GraphRunner
 
 
 CORPUS = ROOT / "tests/fixtures/cnn"
-BLOCKED = {"grouped": "grouped convolution", "depthwise": "grouped convolution"}
+MODELS = ("maxpool", "residual", "global_average", "average", "grouped", "depthwise")
 
 
 def negative_pool():
@@ -26,7 +32,67 @@ def negative_pool():
             .add_output("y", (1, 2, 2, 2)).build())
 
 
+def grouped_model(groups=2, multiplier=3):
+    rng = np.random.default_rng(17)
+    channels = groups * multiplier
+    weights = rng.normal(0, 0.1, (channels, 6 // max(1, groups), 3, 2)).astype(np.float32)
+    bias = rng.normal(0, 0.1, channels).astype(np.float32)
+    return (ModelBuilder("grouped", opset=20).add_input("x", (1, 6, 5, 7))
+            .add_initializer("w", weights).add_initializer("b", bias)
+            .add_node("Conv", ["x", "w", "b"], ["y"], group=groups,
+                      strides=[2, 1], pads=[1, 1, 1, 0], dilations=[1, 2])
+            .add_output("y", (1, channels, 3, 6)).build())
+
+
 class Cnn(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("onnxruntime"), "onnxruntime not installed")
+    def test_groups(self):
+        import onnxruntime as ort
+        x = np.random.default_rng(5).uniform(-1, 1, (1, 6, 5, 7)).astype(np.float32)
+        for groups, multiplier in ((1, 3), (2, 3), (3, 2), (6, 1), (6, 2)):
+            with self.subTest(groups=groups, multiplier=multiplier):
+                model = grouped_model(groups, multiplier)
+                graph = OnnxImporter(model).run()
+                got = GraphRunner(graph).run({"x": x.transpose(0, 2, 3, 1)})["y"]
+                expected = ort.InferenceSession(model.proto.encode()).run(["y"], {"x": x})[0]
+                np.testing.assert_allclose(got, expected.transpose(0, 2, 3, 1), atol=1e-6)
+
+    @unittest.skipUnless(importlib.util.find_spec("onnxruntime"), "onnxruntime not installed")
+    def test_group_grids(self):
+        import onnxruntime as ort
+        codes = np.random.default_rng(19).integers(-128, 128, (1, 6, 5, 7))
+        for groups in (2, 3, 6):
+            model = grouped_model(groups)
+            session = ort.InferenceSession(model.proto.encode())
+            graph = OnnxImporter(model).run()
+            plan = QuantizationPlan.from_annotations({
+                "x": QuantSpec(0.125, -17), "y": QuantSpec(0.25, 11)})
+            graph = LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
+            got = GraphRunner(graph).run({"x": codes.transpose(0, 2, 3, 1)})["y"]
+            real = ((codes + 17) * 0.125).astype(np.float32)
+            expected = session.run(["y"], {"x": real})[0].transpose(0, 2, 3, 1)
+            expected = np.clip(np.floor(expected / 0.25 + 0.5) + 11, -128, 127)
+            np.testing.assert_allclose(got, expected, atol=1, rtol=0)
+
+    def test_group_refusals(self):
+        for groups in (0, 4, 7):
+            report = otf.check(grouped_model(groups), device="k26", mode="stream")
+            self.assertFalse(report.ok)
+            self.assertIn("channels", json.dumps(report.to_dict()))
+
+        model = (ModelBuilder("bad_groups").add_input("x", (1, 6, 5, 7))
+                 .add_initializer("w", np.ones((5, 3, 1, 1), dtype=np.float32))
+                 .add_node("Conv", ["x", "w"], ["y"], group=2)
+                 .add_output("y", (1, 5, 5, 7)).build())
+        self.assertFalse(otf.check(model, device="k26", mode="stream").ok)
+        for name, count in (("x", 6), ("y", 6)):
+            graph = OnnxImporter(grouped_model()).run()
+            specs = {"x": QuantSpec(0.125), "y": QuantSpec(0.25)}
+            specs[name] = QuantSpec(np.full(count, 0.125))
+            plan = QuantizationPlan.from_annotations(specs)
+            with self.assertRaisesRegex(NotImplementedError, "per-tensor"):
+                LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
+
     def test_pool_default_stride(self):
         graph = OnnxImporter(negative_pool()).run()
         x = -np.arange(8, 0, -1, dtype=np.float32).reshape(1, 2, 2, 2)
@@ -46,7 +112,7 @@ class Cnn(unittest.TestCase):
 
     def test_provenance(self):
         self.assertEqual({path.stem for path in CORPUS.glob("*.json")},
-                         {"maxpool", "residual", "global_average", "average", *BLOCKED})
+                         set(MODELS))
         for path in sorted(CORPUS.glob("*.json")):
             with self.subTest(model=path.stem):
                 record = json.loads(path.read_text())
@@ -64,11 +130,7 @@ class Cnn(unittest.TestCase):
         for path in sorted(CORPUS.glob("*.onnx")):
             with self.subTest(model=path.stem):
                 report = otf.check(path, mode="stream", device="k26")
-                if path.stem in BLOCKED:
-                    self.assertFalse(report.ok)
-                    self.assertIn(BLOCKED[path.stem], json.dumps(report.to_dict()))
-                else:
-                    self.assertTrue(report.ok, report.to_dict())
+                self.assertTrue(report.ok, report.to_dict())
 
     def test_ort(self):
         try:
@@ -86,6 +148,58 @@ class Cnn(unittest.TestCase):
 @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
 @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
 class Simulation(unittest.TestCase):
+    @unittest.skipUnless(importlib.util.find_spec("onnxruntime"), "onnxruntime not installed")
+    def test_grouped_edges(self):
+        import onnxruntime as ort
+        samples = np.random.default_rng(8).uniform(-1, 1, (8, 6, 5, 7)).astype(np.float32)
+        for groups, multiplier in ((2, 3), (3, 2), (6, 1), (6, 2)):
+            model = grouped_model(groups, multiplier)
+            session = ort.InferenceSession(model.proto.encode())
+            expected = np.concatenate([session.run(["y"], {"x": row[None]})[0] for row in samples])
+            for hdl in ("sv", "hardcaml"):
+                with self.subTest(groups=groups, multiplier=multiplier, hdl=hdl):
+                    acc = otf.load(model)
+                    acc.compile(device="k26", mode="stream", hdl=hdl, calibration=samples,
+                                out_dir=Fixtures.build_dir("groups_%d_%d_%s" % (groups, multiplier, hdl)))
+                    got = acc.predict(samples).reshape(expected.transpose(0, 2, 3, 1).shape)
+                    error = np.abs(got - expected.transpose(0, 2, 3, 1)).mean() / expected.std()
+                    self.assertLess(error, 0.025)
+                    result = acc.simulate(samples, sweep=True)
+                    self.assertTrue(result.ok, result)
+
+    @unittest.skipUnless(importlib.util.find_spec("onnxruntime"), "onnxruntime not installed")
+    def test_grouped_grids(self):
+        import onnxruntime as ort
+        rng = np.random.default_rng(23)
+        model = ModelBuilder("grouped_qdq", opset=20).add_input("x", (1, 6, 2, 2))
+        constants = {
+            "xs": np.float32(0.125), "xz": np.uint8(111),
+            "ys": np.float32(0.25), "yz": np.uint8(139),
+            "ws": np.linspace(0.01, 0.04, 6, dtype=np.float32), "wz": np.zeros(6, np.int8),
+            "wq": rng.integers(-32, 33, (6, 2, 1, 2), dtype=np.int8),
+            "b": rng.normal(0, 0.1, 6).astype(np.float32)}
+        for name, value in constants.items():
+            model.add_initializer(name, value)
+        model = (model.add_node("QuantizeLinear", ["x", "xs", "xz"], ["xq"])
+                 .add_node("DequantizeLinear", ["xq", "xs", "xz"], ["xd"])
+                 .add_node("DequantizeLinear", ["wq", "ws", "wz"], ["w"], axis=0)
+                 .add_node("Conv", ["xd", "w", "b"], ["conv"], group=3)
+                 .add_node("QuantizeLinear", ["conv", "ys", "yz"], ["yq"])
+                 .add_node("DequantizeLinear", ["yq", "ys", "yz"], ["y"])
+                 .add_output("y", (1, 6, 2, 1)).build())
+        samples = ((rng.integers(0, 256, (8, 6, 2, 2)) - 111) * 0.125).astype(np.float32)
+        session = ort.InferenceSession(model.proto.encode())
+        expected = np.concatenate([session.run(["y"], {"x": row[None]})[0] for row in samples])
+        for hdl in ("sv", "hardcaml"):
+            with self.subTest(hdl=hdl):
+                acc = otf.load(model)
+                acc.compile(device="k26", mode="stream", hdl=hdl,
+                            out_dir=Fixtures.build_dir("grouped_qdq_" + hdl))
+                got = acc.predict(samples).reshape(8, 2, 1, 6)
+                np.testing.assert_allclose(got, expected.transpose(0, 2, 3, 1), atol=0.25, rtol=0)
+                result = acc.simulate(samples, sweep=True)
+                self.assertTrue(result.ok, result)
+
     def test_negative_pool_padding(self):
         x = -np.arange(8, 0, -1, dtype=np.float32).reshape(1, 2, 2, 2)
         samples = np.concatenate([x, x * 0.5, x * 0.25])
@@ -103,7 +217,7 @@ class Simulation(unittest.TestCase):
         args = argparse.Namespace(device="k26", mode="stream", clock_mhz=None,
                                   frames=16, sweep=True, inspect_only=False, implement=False,
                                   out=Fixtures.build_dir("cnn"))
-        for name in ("maxpool", "residual", "global_average", "average"):
+        for name in MODELS:
             with self.subTest(model=name):
                 row = report_corpus.report_model(ROOT / "tests/fixtures/cnn" / (name + ".onnx"), args)
                 self.assertEqual(row["status"], "passed", row)

@@ -29,6 +29,7 @@ struct
       let simd = g.simd
       let data_bits = 8
       let pad_value = pad_value
+      let groups = 1
     end)
 
   module Harness = Hardcaml_test_harness.Lws_harness.Make (Dut.I) (Dut.O)

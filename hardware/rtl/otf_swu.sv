@@ -1,4 +1,4 @@
-// Frame buffered sliding window generator, channel-last; padding is PAD_VALUE.
+// Frame buffered image windows, grouped by input channels.
 `default_nettype none
 
 module otf_swu #(
@@ -17,7 +17,8 @@ module otf_swu #(
     parameter int DIL_W     = 1,
     parameter int SIMD      = 1,
     parameter int DATA_BITS = 8,
-    parameter int PAD_VALUE = 0    // integer standing for real zero
+    parameter int PAD_VALUE = 0,
+    parameter int GROUPS    = 1
 ) (
     input  wire                       clk,
     input  wire                       rst_n,
@@ -29,6 +30,8 @@ module otf_swu #(
     input  wire                       m_tready
 );
     localparam int CG       = IFM_CH / SIMD;
+    localparam int GCG = CG / GROUPS;
+    localparam int G_W = (GROUPS <= 1) ? 1 : $clog2(GROUPS);
     localparam int TOTAL_IN = IFM_H * IFM_W * CG;
     localparam int IN_W     = $clog2(TOTAL_IN + 1);
     localparam int ADDR_W   = (TOTAL_IN <= 1) ? 1 : $clog2(TOTAL_IN);
@@ -42,6 +45,7 @@ module otf_swu #(
 
     logic            filling;
     logic [IN_W-1:0] wcount;
+    logic [G_W-1:0] group_idx;
     logic [CG_W-1:0] cg;
     logic [KW_W-1:0] kx;
     logic [KH_W-1:0] ky;
@@ -59,7 +63,7 @@ module otf_swu #(
     wire signed [31:0] col = $signed({1'b0, ow}) * STRIDE_W
                            + $signed({1'b0, kx}) * DIL_W - PAD_L;
     wire in_bounds = (row >= 0) && (row < IFM_H) && (col >= 0) && (col < IFM_W);
-    wire signed [31:0] raddr = ((row * IFM_W) + col) * CG + 32'($signed({1'b0, cg}));
+    wire signed [31:0] raddr = ((row * IFM_W) + col) * CG + 32'($signed({1'b0, group_idx})) * GCG + 32'($signed({1'b0, cg}));
 
     wire out_free = !ovalid || m_tready;
 
@@ -67,7 +71,7 @@ module otf_swu #(
         if (!rst_n) begin
             filling <= 1'b1;
             wcount  <= '0;
-            cg <= '0; kx <= '0; ky <= '0; ow <= '0; oh <= '0;
+            cg <= '0; kx <= '0; ky <= '0; ow <= '0; oh <= '0; group_idx <= '0;
             ovalid  <= 1'b0;
             odata   <= '0;
         end else begin
@@ -88,7 +92,7 @@ module otf_swu #(
                 odata  <= in_bounds ? frame[raddr[ADDR_W-1:0]]
                                     : {SIMD{DATA_BITS'(PAD_VALUE)}};
 
-                if (cg != CG_W'(CG - 1)) begin
+                if (cg != CG_W'(GCG - 1)) begin
                     cg <= cg + 1'b1;
                 end else begin
                     cg <= '0;
@@ -100,15 +104,20 @@ module otf_swu #(
                             ky <= ky + 1'b1;
                         end else begin
                             ky <= '0;
-                            if (ow != OW_W'(OFM_W - 1)) begin
-                                ow <= ow + 1'b1;
+                            if (group_idx != G_W'(GROUPS - 1)) begin
+                                group_idx <= group_idx + 1'b1;
                             end else begin
-                                ow <= '0;
-                                if (oh != OH_W'(OFM_H - 1)) begin
-                                    oh <= oh + 1'b1;
+                                group_idx <= '0;
+                                if (ow != OW_W'(OFM_W - 1)) begin
+                                    ow <= ow + 1'b1;
                                 end else begin
-                                    oh      <= '0;
-                                    filling <= 1'b1;
+                                    ow <= '0;
+                                    if (oh != OH_W'(OFM_H - 1)) begin
+                                        oh <= oh + 1'b1;
+                                    end else begin
+                                        oh      <= '0;
+                                        filling <= 1'b1;
+                                    end
                                 end
                             end
                         end

@@ -37,11 +37,11 @@ CONFIGS = [
 FRAME_REGRESSION = {"basic", "same_pad", "pool_window"}
 
 
-def make_unit(config, strategy):
+def make_unit(config, strategy, groups=1):
     _, ifm, channels, kernel, stride, pads, dilation, simd = config
     unit = SlidingWindowUnit("swu", ["uin"], ["uout"], ifm_dim=ifm, ifm_ch=channels,
                              kernel=kernel, strides=stride, pads=pads,
-                             dilations=dilation, dtype=INT8, strategy=strategy)
+                             dilations=dilation, dtype=INT8, strategy=strategy, groups=groups)
     unit.apply_folding({"simd": simd})
     return unit
 
@@ -49,9 +49,16 @@ def make_unit(config, strategy):
 class SlidingWindowRtlCases:
     HDL = "sv"
 
-    def _simulate(self, config, strategy, duties=((100, 100),)):
+    def test_groups(self):
+        for strategy, simd in (("frame", 2), ("line", 2), ("line", 4)):
+            config = ("groups_%d" % simd, (5, 7), 6, (3, 2), (2, 1),
+                      (1, 1, 1, 0), (1, 2), simd)
+            with self.subTest(strategy=strategy, simd=simd):
+                self._simulate(config, strategy, duties=((100, 100), (40, 40)), groups=3)
+
+    def _simulate(self, config, strategy, duties=((100, 100),), groups=1):
         name, ifm, channels = config[0], config[1], config[2]
-        unit = make_unit(config, strategy)
+        unit = make_unit(config, strategy, groups)
         # crc32, not hash(), which is randomised per process.
         rng = np.random.default_rng(zlib.crc32(name.encode()))
         image = rng.integers(-128, 128, (1, ifm[0], ifm[1], channels), dtype=np.int64)

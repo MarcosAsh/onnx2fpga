@@ -232,6 +232,7 @@ let of_node (node : Design.Node.t) : (module Instance) =
       node
       (module Otf_mvau.Make (struct
           let mw = param "MW"
+          let groups = param ~default:1 "GROUPS"
           let mh = param "MH"
           let simd = param "SIMD"
           let pe = param "PE"
@@ -257,6 +258,7 @@ let of_node (node : Design.Node.t) : (module Instance) =
             let ifm_h = param "IFM_H"
             let ifm_w = param "IFM_W"
             let ifm_ch = param "IFM_CH"
+            let groups = param ~default:1 "GROUPS"
             let ofm_h = param "OFM_H"
             let ofm_w = param "OFM_W"
             let kh = param "KH"
@@ -282,6 +284,7 @@ let of_node (node : Design.Node.t) : (module Instance) =
           let ifm_h = param "IFM_H"
           let ifm_w = param "IFM_W"
           let ifm_ch = param "IFM_CH"
+          let groups = param ~default:1 "GROUPS"
           let ofm_h = param "OFM_H"
           let ofm_w = param "OFM_W"
           let kh = param "KH"

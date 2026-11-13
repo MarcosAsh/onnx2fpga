@@ -248,10 +248,15 @@ def refuse_dynamic(node, importer):
 
 
 def import_conv(node, importer):
-    if int(node.attributes().get("group", 1)) != 1:
-        raise ModelError("grouped convolution is not supported yet: %s" % node.name)
+    groups = int(node.attributes().get("group", 1))
+    shape = importer.onnx_shape(node.input[0])
     weights = importer.constant_array(node.input[1])
+    if len(shape) != 4 or weights.ndim != 4:
+        refuse(node, "requires 2D images and kernels")
+    if groups < 1 or shape[1] != weights.shape[1] * groups or weights.shape[0] % groups:
+        refuse(node, "has incompatible group, input and weight channels")
     attrs = window_attrs(node, importer, weights.shape[2:])
+    attrs["group"] = groups
     inputs = [importer.rename(node.input[0]),
               importer.derive_constant(node.input[1], np.transpose(weights, (2, 3, 1, 0)))]
     if len(node.input) > 2 and node.input[2]:

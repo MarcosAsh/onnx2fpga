@@ -1,4 +1,4 @@
-// Line buffered sliding window generator; buffer is a power of two circular span plus the TAIL backward reach, pixel counters wrap by signed difference.
+// Line buffered image windows, grouped by input channels.
 `default_nettype none
 
 module otf_swu_line #(
@@ -18,7 +18,8 @@ module otf_swu_line #(
     parameter int SIMD      = 1,   // elements per input beat, divides IFM_CH
     parameter int PAR       = 1,   // kernel columns per output beat, divides KW
     parameter int DATA_BITS = 8,
-    parameter int PAD_VALUE = 0    // integer standing for real zero
+    parameter int PAD_VALUE = 0,
+    parameter int GROUPS    = 1
 ) (
     input  wire                           clk,
     input  wire                           rst_n,
@@ -30,6 +31,8 @@ module otf_swu_line #(
     input  wire                           m_tready
 );
     localparam int CG    = IFM_CH / SIMD;
+    localparam int GCG = CG / GROUPS;
+    localparam int G_W = (GROUPS <= 1) ? 1 : $clog2(GROUPS);
     localparam int KWG   = KW / PAR;
     localparam int SPAN  = (KH - 1) * DIL_H * IFM_W + (KW - 1) * DIL_W + 1;
     localparam int TAIL_RAW = (OFM_W - 1) * STRIDE_W - PAD_L;
@@ -47,10 +50,10 @@ module otf_swu_line #(
     localparam int OW_W  = (OFM_W <= 1) ? 1 : $clog2(OFM_W);
     localparam int AD_W  = $clog2(DEPTH * CG);
 
-    // PAR > 1 consumes whole pixels, so channel folding and column parallelism are exclusive.
+    // Parallel columns require a full channel group per beat.
     initial begin
-        if (PAR > 1 && CG != 1)
-            $fatal(1, "otf_swu_line: PAR > 1 requires SIMD == IFM_CH");
+        if (PAR > 1 && CG / GROUPS != 1)
+            $fatal(1, "otf_swu_line: PAR > 1 requires a full channel group");
         if (KW % PAR != 0)
             $fatal(1, "otf_swu_line: PAR must divide KW");
     end
@@ -58,6 +61,7 @@ module otf_swu_line #(
     logic [WORD-1:0] buffer [0:PAR-1][0:DEPTH*CG-1];
 
     logic signed [31:0] wr_pixel;    // pixels fully written, free running
+    logic [G_W-1:0] group_idx;
     logic [CG_W-1:0]    wr_cg;
     logic signed [31:0] frame_base;  // pixel index the current output frame starts at
 
@@ -88,7 +92,7 @@ module otf_swu_line #(
             assign in_view[j] = row_ok && (col_j >= 0) && (col_j < IFM_W);
             assign needed[j] = frame_base + row * IFM_W + col_j;
             wire [AD_W-1:0] addr_j =
-                AD_W'(needed[j][LOGD-1:0] * CG + 32'(rd_cg));
+                AD_W'(needed[j][LOGD-1:0] * CG + 32'(group_idx) * GCG + 32'(rd_cg));
             assign fetched[j] = in_view[j] ? buffer[j][addr_j]
                                            : {SIMD{DATA_BITS'(PAD_VALUE)}};
         end
@@ -136,7 +140,7 @@ module otf_swu_line #(
             wr_pixel   <= '0;
             wr_cg      <= '0;
             frame_base <= '0;
-            rd_cg <= '0; kxg <= '0; ky <= '0; ow <= '0; oh <= '0;
+            rd_cg <= '0; kxg <= '0; ky <= '0; ow <= '0; oh <= '0; group_idx <= '0;
             ovalid     <= 1'b0;
             odata      <= '0;
         end else begin
@@ -160,7 +164,7 @@ module otf_swu_line #(
                     odata[copy*WORD +: WORD] <= fetched[copy];
                 end
 
-                if (rd_cg != CG_W'(CG - 1)) begin
+                if (rd_cg != CG_W'(GCG - 1)) begin
                     rd_cg <= rd_cg + 1'b1;
                 end else begin
                     rd_cg <= '0;
@@ -172,15 +176,20 @@ module otf_swu_line #(
                             ky <= ky + 1'b1;
                         end else begin
                             ky <= '0;
-                            if (ow != OW_W'(OFM_W - 1)) begin
-                                ow <= ow + 1'b1;
+                            if (group_idx != G_W'(GROUPS - 1)) begin
+                                group_idx <= group_idx + 1'b1;
                             end else begin
-                                ow <= '0;
-                                if (oh != OH_W'(OFM_H - 1)) begin
-                                    oh <= oh + 1'b1;
+                                group_idx <= '0;
+                                if (ow != OW_W'(OFM_W - 1)) begin
+                                    ow <= ow + 1'b1;
                                 end else begin
-                                    oh         <= '0;
-                                    frame_base <= frame_base + FRAME;
+                                    ow <= '0;
+                                    if (oh != OH_W'(OFM_H - 1)) begin
+                                        oh <= oh + 1'b1;
+                                    end else begin
+                                        oh         <= '0;
+                                        frame_base <= frame_base + FRAME;
+                                    end
                                 end
                             end
                         end

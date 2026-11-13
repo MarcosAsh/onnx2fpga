@@ -6,6 +6,7 @@ module type Config = sig
   val ifm_h : int
   val ifm_w : int
   val ifm_ch : int
+  val groups : int
   val ofm_h : int
   val ofm_w : int
   val kh : int
@@ -37,15 +38,17 @@ module Make (Config : Config) = struct
   let ad_bits = Int.ceil_log2 (depth * cg_count)
 
   let () =
-    if simd < 1 || ifm_ch % simd <> 0
+    if simd < 1 || groups < 1 || ifm_ch % (simd * groups) <> 0
     then
       raise_s
         [%message "BUG: otf_swu_line simd must divide ifm_ch" (ifm_ch : int) (simd : int)];
-    if par > 1 && cg_count <> 1
-    then raise_s [%message "BUG: otf_swu_line par > 1 requires simd = ifm_ch"];
+    if par > 1 && cg_count / groups <> 1
+    then raise_s [%message "BUG: otf_swu_line par > 1 requires a full channel group"];
     if par < 1 || kw % par <> 0
     then raise_s [%message "BUG: otf_swu_line par must divide kw" (kw : int) (par : int)]
   ;;
+
+  let group_cg = cg_count / groups
 
   module In = Stream.Source (struct
       let width = word_bits
@@ -89,13 +92,15 @@ module Make (Config : Config) = struct
     let%hw wr_cg = Sv_int.wrapping_counter spec ~advance:write ~count:cg_count in
     let%hw pixel_written = write &: Sv_int.is_last wr_cg ~count:cg_count in
     let%hw wr_pixel = reg_fb spec ~enable:pixel_written ~width:32 ~f:(fun d -> d +:. 1) in
-    (* Reader: (row, col, ky, kx group, channel group), innermost last. *)
-    let%hw rd_cg = Sv_int.wrapping_counter spec ~advance:emit ~count:cg_count in
-    let%hw kxg_step = emit &: Sv_int.is_last rd_cg ~count:cg_count in
+    (* Reader: (row, col, group, ky, kx group, channel fold), innermost last. *)
+    let%hw rd_cg = Sv_int.wrapping_counter spec ~advance:emit ~count:group_cg in
+    let%hw kxg_step = emit &: Sv_int.is_last rd_cg ~count:group_cg in
     let%hw kxg = Sv_int.wrapping_counter spec ~advance:kxg_step ~count:kwg_count in
     let%hw ky_step = kxg_step &: Sv_int.is_last kxg ~count:kwg_count in
     let%hw ky = Sv_int.wrapping_counter spec ~advance:ky_step ~count:kh in
-    let%hw ow_step = ky_step &: Sv_int.is_last ky ~count:kh in
+    let%hw group_step = ky_step &: Sv_int.is_last ky ~count:kh in
+    let%hw group = Sv_int.wrapping_counter spec ~advance:group_step ~count:groups in
+    let%hw ow_step = group_step &: Sv_int.is_last group ~count:groups in
     let%hw ow = Sv_int.wrapping_counter spec ~advance:ow_step ~count:ofm_w in
     let%hw oh_step = ow_step &: Sv_int.is_last ow ~count:ofm_w in
     let%hw oh = Sv_int.wrapping_counter spec ~advance:oh_step ~count:ofm_h in
@@ -117,7 +122,9 @@ module Make (Config : Config) = struct
     in
     let%hw row_ok = ~:(msb row) &: (row <+ Sv_int.int32 ifm_h) in
     let%hw row_offset = frame_base +: Sv_int.mul row ifm_w in
-    let rd_addr = Sv_int.of_unsigned rd_cg in
+    let rd_addr =
+      Sv_int.mul (Sv_int.of_unsigned group) group_cg +: Sv_int.of_unsigned rd_cg
+    in
     let wr_addr = buffer_address wr_pixel (uresize wr_cg ~width:32) in
     let pad = repeat (Sv_int.cast ~width:data_bits pad_value) ~count:simd in
     (* Copy j serves the column j * dil_w to the right of the beat's first one. *)

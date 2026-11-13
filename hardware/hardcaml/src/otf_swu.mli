@@ -7,6 +7,7 @@ module type Config = sig
   val ifm_h : int
   val ifm_w : int
   val ifm_ch : int
+  val groups : int
   val ofm_h : int
   val ofm_w : int
   val kh : int

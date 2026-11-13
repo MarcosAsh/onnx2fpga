@@ -6,6 +6,7 @@ module type Config = sig
   val ifm_h : int
   val ifm_w : int
   val ifm_ch : int
+  val groups : int
   val ofm_h : int
   val ofm_w : int
   val kh : int
@@ -28,11 +29,13 @@ module Make (Config : Config) = struct
   let total_in = ifm_h * ifm_w * cg_count
 
   let () =
-    if simd < 1 || ifm_ch % simd <> 0
+    if simd < 1 || groups < 1 || ifm_ch % (simd * groups) <> 0
     then
       raise_s
         [%message "BUG: otf_swu simd must divide ifm_ch" (ifm_ch : int) (simd : int)]
   ;;
+
+  let group_cg = cg_count / groups
 
   module Beat = Stream.Source (struct
       let width = simd * data_bits
@@ -64,13 +67,15 @@ module Make (Config : Config) = struct
     let%hw out_free = ~:ovalid |: i.m.ready in
     let%hw capture = filling &: i.s.valid in
     let%hw replay = ~:filling &: out_free in
-    (* Windows leave in (row, col, ky, kx, channel group) order, innermost last. *)
-    let%hw cg = Sv_int.wrapping_counter spec ~advance:replay ~count:cg_count in
-    let%hw kx_step = replay &: Sv_int.is_last cg ~count:cg_count in
+    (* Windows leave in (row, col, group, ky, kx, channel fold) order, innermost last. *)
+    let%hw cg = Sv_int.wrapping_counter spec ~advance:replay ~count:group_cg in
+    let%hw kx_step = replay &: Sv_int.is_last cg ~count:group_cg in
     let%hw kx = Sv_int.wrapping_counter spec ~advance:kx_step ~count:kw in
     let%hw ky_step = kx_step &: Sv_int.is_last kx ~count:kw in
     let%hw ky = Sv_int.wrapping_counter spec ~advance:ky_step ~count:kh in
-    let%hw ow_step = ky_step &: Sv_int.is_last ky ~count:kh in
+    let%hw group_step = ky_step &: Sv_int.is_last ky ~count:kh in
+    let%hw group = Sv_int.wrapping_counter spec ~advance:group_step ~count:groups in
+    let%hw ow_step = group_step &: Sv_int.is_last group ~count:groups in
     let%hw ow = Sv_int.wrapping_counter spec ~advance:ow_step ~count:ofm_w in
     let%hw oh_step = ow_step &: Sv_int.is_last ow ~count:ofm_w in
     let%hw oh = Sv_int.wrapping_counter spec ~advance:oh_step ~count:ofm_h in
@@ -101,7 +106,9 @@ module Make (Config : Config) = struct
       &: (col <+ Sv_int.int32 ifm_w)
     in
     let%hw raddr =
-      Sv_int.mul (Sv_int.mul row ifm_w +: col) cg_count +: Sv_int.of_unsigned cg
+      Sv_int.mul (Sv_int.mul row ifm_w +: col) cg_count
+      +: Sv_int.mul (Sv_int.of_unsigned group) group_cg
+      +: Sv_int.of_unsigned cg
     in
     let frame =
       multiport_memory

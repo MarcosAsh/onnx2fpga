@@ -6,6 +6,7 @@ open! Hardcaml
 module type Config = sig
   val mw : int
   val mh : int
+  val groups : int
   val simd : int
   val pe : int
   val act_bits : int

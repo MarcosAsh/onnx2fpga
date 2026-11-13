@@ -92,7 +92,13 @@ class ConvOp(FrontendNode):
         w = graph.tensor(self.inputs[1]).data
         cols = self.window().apply(x)
         kh, kw, cin, cout = w.shape
-        y = cols @ w.reshape(kh * kw * cin, cout)
+        groups = self.attrs.get("group", 1)
+        if groups == 1:
+            y = cols @ w.reshape(kh * kw * cin, cout)
+        else:
+            windows = cols.reshape(*cols.shape[:-1], kh * kw, groups, cin)
+            weights = w.reshape(kh * kw, cin, groups, cout // groups)
+            y = np.einsum("...kgc,kcgo->...go", windows, weights).reshape(*cols.shape[:-1], cout)
         if len(self.inputs) > 2:
             y = y + graph.tensor(self.inputs[2]).data
         return [np.maximum(y, 0) if self.attrs.get("relu") else y]

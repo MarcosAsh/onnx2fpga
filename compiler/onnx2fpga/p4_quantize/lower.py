@@ -83,9 +83,9 @@ class LoweringContext:
             ifm_dim=(source.shape[1], source.shape[2]), ifm_ch=source.shape[3],
             kernel=kernel, strides=node.attrs["strides"], pads=node.attrs["pads"],
             dilations=dilations, dtype=self.plan.act_dtype,
-            pad_value=self.zero_point(node.inputs[0]))
+            pad_value=self.zero_point(node.inputs[0]), groups=node.attrs.get("group", 1))
 
-    def matvec(self, node, matrix, inputs, vectors):
+    def matvec(self, node, matrix, inputs, vectors, groups=1):
         """Per feature input scales fold into the weights, zero points into the bias."""
         plan = self.plan
         spec = plan.spec(node.inputs[0])
@@ -117,14 +117,15 @@ class LoweringContext:
             requant = Requantizer(np.ones(matrix.shape[1]), 0, dtype,
                                   lower_clamp=0 if node.attrs.get("relu") else None)
             return MatVecUnit(node.name, inputs, node.outputs, weights, INT32.clamp(bias),
-                              requant, plan.act_dtype, dtype, weight_dtype, vectors=vectors)
+                              requant, plan.act_dtype, dtype, weight_dtype,
+                              vectors=vectors, groups=groups)
         requant = Requantizer.from_real_multipliers(
             in_scale * scales / self.scale(node.outputs[0]), plan.act_dtype,
             plan.mult_bits, relu=bool(node.attrs.get("relu")),
             zero_point=self.zero_point(node.outputs[0]))
         return MatVecUnit(node.name, inputs, node.outputs, weights, INT32.clamp(bias),
                           requant, plan.act_dtype, plan.act_dtype, weight_dtype,
-                          vectors=vectors)
+                          vectors=vectors, groups=groups)
 
 
 def lower_gemm(node, ctx):
@@ -155,12 +156,20 @@ def lower_binarizer(node, ctx):
 
 
 def lower_conv(node, ctx):
+    groups = node.attrs.get("group", 1)
+    if groups > 1:
+        for name in (node.inputs[0], node.outputs[0]):
+            if not ctx.plan.has(name):
+                continue
+            spec = ctx.plan.spec(name)
+            if spec.scale.size != 1 or spec.zero_point.size != 1:
+                raise NotImplementedError("grouped Conv requires per-tensor activation grids")
     weights = np.asarray(ctx.graph.tensor(node.inputs[1]).data, dtype=np.float64)
     kh, kw, cin, cout = weights.shape
     window = ctx.window(node, (kh, kw), node.attrs["dilations"])
     out_h, out_w = window.ofm_dim
     matrix = weights.reshape(kh * kw * cin, cout)
-    return [window, ctx.matvec(node, matrix, window.outputs, out_h * out_w)]
+    return [window, ctx.matvec(node, matrix, window.outputs, out_h * out_w, groups=groups)]
 
 
 def lower_maxpool(node, ctx):

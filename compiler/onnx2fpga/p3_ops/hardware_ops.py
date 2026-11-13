@@ -144,7 +144,7 @@ class MatVecUnit(StreamingNode):
     block_ram = False
 
     def __init__(self, name, inputs, outputs, weights, bias, requant,
-                 act_dtype, out_dtype, weight_dtype, vectors=1):
+                 act_dtype, out_dtype, weight_dtype, vectors=1, groups=1):
         self.weights = np.asarray(weights, dtype=np.int64)
         self.bias = np.asarray(bias, dtype=np.int64)
         self.requant = requant
@@ -152,6 +152,7 @@ class MatVecUnit(StreamingNode):
         self.out_dtype = out_dtype
         self.weight_dtype = weight_dtype
         self.vectors = int(vectors)
+        self.groups = int(groups)
         StreamingNode.__init__(self, name, inputs, outputs)
 
     @property
@@ -183,7 +184,7 @@ class MatVecUnit(StreamingNode):
 
     def folding_options(self):
         options = [{"simd": simd, "pe": pe}
-                   for simd in divisors(self.mw) for pe in divisors(self.mh)]
+                   for simd in divisors(self.mw) for pe in divisors(self.mh // self.groups)]
         return sorted(options, key=lambda c: (c["simd"] * c["pe"], c["pe"]))
 
     @property
@@ -243,22 +244,29 @@ class MatVecUnit(StreamingNode):
         """Keeps the spatial shape only when the innermost axis is already the multiplied vector."""
         source = graph.tensor(self.inputs[0])
         out = graph.ensure_tensor(self.outputs[0])
-        if source.shape and int(source.shape[-1]) == self.mw:
+        if source.shape and int(source.shape[-1]) == self.mw * self.groups:
             out.shape = tuple(source.shape[:-1]) + (self.mh,)
         else:
-            out.shape = (source.numel // self.mw, self.mh)
+            out.shape = (source.numel // (self.mw * self.groups), self.mh)
         out.dtype = self.out_dtype
         out.elems_per_beat = self.pe
 
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64).reshape(-1, self.mw)
-        out = self.requant.apply(x @ self.weights + self.bias)
+        if self.groups == 1:
+            product = x @ self.weights
+        else:
+            x = x.reshape(-1, self.groups, self.mw)
+            weights = self.weights.reshape(self.mw, self.groups, self.mh // self.groups)
+            product = np.einsum("vgk,kgo->vgo", x, weights).reshape(-1, self.mh)
+        out = self.requant.apply(product + self.bias)
         return [out.reshape(graph.tensor(self.outputs[0]).shape)]
 
     def input_schedule(self, graph, index=0):
         stride = self.synapse_fold * self.neuron_fold
-        return [v * stride + sf
+        return [v * stride + g * (stride // self.groups) + sf
                 for v in range(self.vectors)
+                for g in range(self.groups)
                 for sf in range(self.synapse_fold)]
 
     def output_schedule(self, graph, index=0):
@@ -291,6 +299,7 @@ class MatVecUnit(StreamingNode):
         paths = self.memory_paths()
         return {
             "MW": self.mw, "MH": self.mh, "SIMD": self.simd, "PE": self.pe,
+            "GROUPS": self.groups,
             "ACT_BITS": self.act_dtype.bits, "WGT_BITS": self.weight_dtype.bits,
             "ACC_BITS": self.accumulator_dtype.bits,
             "OUT_BITS": self.out_dtype.bits,
@@ -671,11 +680,12 @@ class SlidingWindowUnit(StreamingNode):
     MODULES = {"line": "otf_swu_line", "frame": "otf_swu"}
 
     def __init__(self, name, inputs, outputs, ifm_dim, ifm_ch, kernel, strides,
-                 pads, dilations, dtype, strategy="line", pad_value=0):
+                 pads, dilations, dtype, strategy="line", pad_value=0, groups=1):
         if strategy not in self.MODULES:
             raise NotImplementedError("sliding window strategy %r" % strategy)
         self.ifm_dim = tuple(ifm_dim)
         self.ifm_ch = int(ifm_ch)
+        self.groups = int(groups)
         self.kernel = tuple(kernel)
         self.strides = tuple(strides)
         self.pads = tuple(pads)
@@ -738,7 +748,7 @@ class SlidingWindowUnit(StreamingNode):
     @property
     def sub_elems(self):
         """Elements per input beat, at most one pixel; wider beats read more columns."""
-        return min(self.simd, self.ifm_ch)
+        return min(self.simd, self.ifm_ch // self.groups)
 
     @property
     def parallel_columns(self):
@@ -750,9 +760,10 @@ class SlidingWindowUnit(StreamingNode):
 
     def folding_options(self):
         """Column parallelism needs the replicated read ports only the line buffer has."""
-        options = [{"simd": s} for s in divisors(self.ifm_ch)]
+        channels = self.ifm_ch // self.groups
+        options = [{"simd": s} for s in divisors(channels)]
         if self.strategy == "line":
-            options += [{"simd": self.ifm_ch * m}
+            options += [{"simd": channels * m}
                         for m in divisors(self.kernel[1]) if m > 1]
         return sorted(options, key=lambda c: c["simd"])
 
@@ -785,7 +796,11 @@ class SlidingWindowUnit(StreamingNode):
 
     def execute(self, graph, values):
         x = np.asarray(values[self.inputs[0]], dtype=np.int64)
-        return [self.window().apply(x, pad_value=self.pad_value)]
+        windows = self.window().apply(x, pad_value=self.pad_value)
+        if self.groups > 1:
+            windows = windows.reshape(*windows.shape[:-1], -1, self.groups,
+                                      self.ifm_ch // self.groups).swapaxes(-3, -2).reshape(windows.shape)
+        return [windows]
 
     def sv_params(self, graph):
         out_h, out_w = self.ofm_dim
@@ -797,7 +812,7 @@ class SlidingWindowUnit(StreamingNode):
             "PAD_T": self.pads[0], "PAD_L": self.pads[1],
             "DIL_H": self.dilations[0], "DIL_W": self.dilations[1],
             "SIMD": self.sub_elems, "DATA_BITS": self.dtype.bits,
-            "PAD_VALUE": self.pad_value,
+            "PAD_VALUE": self.pad_value, "GROUPS": self.groups,
         }
         if self.strategy == "line":
             params["PAR"] = self.parallel_columns

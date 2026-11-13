@@ -107,6 +107,7 @@ let config
   let mult_values = Model.random_ints rng ~bits:mult_bits mh in
   (module struct
     let mw = mw
+    let groups = 1
     let mh = mh
     let simd = simd
     let pe = pe
