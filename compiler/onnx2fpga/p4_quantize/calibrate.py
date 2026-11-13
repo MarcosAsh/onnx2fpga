@@ -16,17 +16,21 @@ def feature_grid(values, dtype):
 
 
 class Calibrator:
-    """Symmetric quantization from the peak magnitude of every activation over the samples."""
+    """Use the full code range for nonnegative tensors; symmetric grids otherwise."""
 
     def __init__(self, graph):
         self.graph = graph
         self.peaks = {}
+        self.minima = {}
 
     def observe(self, name, array):
         """Infinities and NaN, as from Log at 0, say nothing about the range and are skipped."""
         array = np.asarray(array, dtype=np.float64)
-        peak = float(np.max(np.abs(array[np.isfinite(array)]), initial=0.0))
+        finite = array[np.isfinite(array)]
+        peak = float(np.max(np.abs(finite), initial=0.0))
         self.peaks[name] = max(self.peaks.get(name, 0.0), peak)
+        self.minima[name] = min(self.minima.get(name, np.inf),
+                                float(np.min(finite, initial=np.inf)))
 
     def plan(self, samples, mult_bits=18):
         """An input the model scales itself, read only by Gemms, gets a grid per feature."""
@@ -36,6 +40,10 @@ class Calibrator:
                 self.observe(name, array)
             runner.run(feeds, capture=self.observe)
         plan = QuantizationPlan.from_peaks(self.peaks, mult_bits=mult_bits)
+        for name, peak in self.peaks.items():
+            if self.minima[name] >= 0 and peak > 0:
+                dtype = plan.act_dtype
+                plan.annotate(name, QuantSpec(peak / (dtype.max - dtype.min), dtype.min))
         for name in self.graph.feature_grids:
             if all(node.op_type == "Gemm" for node in self.graph.consumers(name)):
                 values = np.concatenate([np.reshape(feeds[name], (-1, feeds[name].shape[-1]))

@@ -14,6 +14,9 @@ A float model has to be calibrated. Pass a batch of real inputs as
 noise and print a warning. That is fine for checking that a model compiles. It
 is useless for accuracy.
 
+Calibrated tensors whose observed values are nonnegative use the full 8-bit
+range, with zero encoded as -128. Other tensors use symmetric grids.
+
 Activations get one scale per tensor and can be asymmetric, signed or
 unsigned. The one exception is an input the model scales itself, through a
 `Scaler` or a `BatchNormalization`: it gets a scale and zero point per feature,

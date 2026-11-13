@@ -66,7 +66,25 @@ python3 tools/report_corpus.py maxpool residual --corpus-dir tests/fixtures/cnn 
 ```
 
 Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
-without those packages. All six CNN fixtures pass inspection. They remain separate from the vector corpus.
+without those packages. All seven CNN fixtures pass inspection. They remain separate from the vector corpus.
+
+The trained `mnist` fixture uses the standard 60,000/10,000 split, seed 81 and
+10 CPU training epochs. Full-test accuracy is 97.53% in ONNX Runtime and 97.45%
+with 8-bit weights and activations. The 256-image numerical fixture has
+normalized mean absolute error 0.02435. Frozen gates are 95% float accuracy,
+94.5% quantized accuracy, at most 0.5 percentage points lost, and error below
+0.025. Calibration uses 512 training images; RTL inputs come from the test split.
+
+MNIST is by Yann LeCun and Corinna Cortes, distributed under
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/), according to
+[the dataset documentation](https://keras.io/api/datasets/mnist/). The included
+subset is normalized to float32 pixels divided by 255 and includes its split
+indices. The sidecar records dataset and model hashes, training settings and
+accuracy.
+
+```sh
+python3 tests/fixtures/make_cnn.py mnist --mnist-data build/datasets/mnist.npz
+```
 
 The [baseline report](../measurements/cnn-baseline-2026-11-13.json) records
 the max-pool CNN and residual CNN passing numerical comparison and bit-exact

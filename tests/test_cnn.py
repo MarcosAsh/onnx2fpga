@@ -23,7 +23,7 @@ from onnx2fpga.reference.runner import GraphRunner
 
 
 CORPUS = ROOT / "tests/fixtures/cnn"
-MODELS = ("maxpool", "residual", "global_average", "average", "grouped", "depthwise")
+MODELS = ("maxpool", "residual", "global_average", "average", "grouped", "depthwise", "mnist")
 
 
 def negative_pool():
@@ -116,13 +116,29 @@ class Cnn(unittest.TestCase):
         for path in sorted(CORPUS.glob("*.json")):
             with self.subTest(model=path.stem):
                 record = json.loads(path.read_text())
-                self.assertEqual(record["training"], "none")
+                trained = path.stem == "mnist"
+                self.assertEqual(record["training"], "MNIST" if trained else "none")
+                if trained:
+                    self.assertTrue(record["passed"])
+                    self.assertEqual(record["accuracy_samples"], 10000)
+                    self.assertGreaterEqual(record["float_accuracy"], 0.95)
+                    self.assertGreaterEqual(record["quantized_accuracy"], 0.945)
+                    self.assertLessEqual(record["float_accuracy"] - record["quantized_accuracy"], 0.005)
+                    self.assertLess(record["normalized_mae"], 0.025)
                 for name, digest in record["sha256"].items():
                     self.assertEqual(hashlib.sha256((CORPUS / name).read_bytes()).hexdigest(), digest)
                 with np.load(path.with_suffix(".npz")) as data:
-                    self.assertEqual(data["x"].shape, (256, 4, 8, 8))
-                    self.assertEqual(data["calibration"].shape, (512, 4, 8, 8))
-                    self.assertEqual(data["y"].shape, (256, 3))
+                    shape = (1, 28, 28) if trained else (4, 8, 8)
+                    self.assertEqual(data["x"].shape, (256, *shape))
+                    self.assertEqual(data["calibration"].shape, (512, *shape))
+                    self.assertEqual(data["y"].shape, (256, 10 if trained else 3))
+                    if trained:
+                        rng = np.random.default_rng(81)
+                        np.testing.assert_array_equal(data["calibration_indices"],
+                                                      rng.choice(60000, 512, replace=False))
+                        np.testing.assert_array_equal(data["test_indices"],
+                                                      rng.choice(10000, 256, replace=False))
+                        self.assertEqual(data["labels"].shape, (256,))
                     calibration = {row.tobytes() for row in data["calibration"]}
                     self.assertFalse(any(row.tobytes() in calibration for row in data["x"]))
 

@@ -12,6 +12,21 @@ from onnx2fpga.p3_ops.hardware_ops import MatVecUnit
 from onnx2fpga.p4_quantize.requantize import Requantizer
 
 
+class CalibrationTest(unittest.TestCase):
+    def test_relu_uses_full_range(self):
+        from onnx2fpga.p1_ingest import ModelBuilder
+        from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
+        from onnx2fpga.p4_quantize.calibrate import Calibrator
+        model = (ModelBuilder("relu").add_input("x", (1, 3))
+                 .add_node("Relu", ["x"], ["y"]).add_output("y", (1, 3)).build())
+        graph = OnnxImporter(model).run()
+        plan = Calibrator(graph).plan([{"x": np.array([[-2., 0., 3.]])}])
+        self.assertEqual(plan.zero_point("x"), 0)
+        self.assertEqual(plan.zero_point("y"), -128)
+        np.testing.assert_array_equal(plan.quantize("y", [0., 3.]), [-128, 127])
+        self.assertAlmostEqual(plan.scale("y") * 255, 3.)
+
+
 class RequantizerTest(unittest.TestCase):
     def test_tracks_float_scaling(self):
         rng = np.random.default_rng(0)
