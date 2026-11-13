@@ -169,7 +169,8 @@ def report_model(path, args):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             acc.compile(device=args.device, mode=args.mode, clock_mhz=args.clock_mhz,
-                        hdl="hardcaml", calibration=calibration, out_dir=out)
+                        hdl="hardcaml", calibration=calibration, out_dir=out,
+                        target_cycles=getattr(args, "target_cycles", None))
         row["warnings"] = [str(w.message) for w in caught]
         manifest = json.loads((out / "manifest.json").read_text())
         clock = acc.result.clock_mhz or acc.device.fmax_mhz
@@ -233,12 +234,15 @@ def main(argv=None):
     parser.add_argument("--device", choices=Device.names(), default="k26")
     parser.add_argument("--mode", choices=("stream", "fixed"), default="fixed")
     parser.add_argument("--clock-mhz", type=float)
+    parser.add_argument("--target-cycles", type=int, help="stream folding target per frame")
     parser.add_argument("--frames", type=int, default=16)
     parser.add_argument("--sweep", action="store_true", help="sweep input and output stalls")
     parser.add_argument("--inspect-only", action="store_true")
     parser.add_argument("--implement", action="store_true", help="run device place and route")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "corpus_report")
     args = parser.parse_args(argv)
+    if args.target_cycles is not None and (args.target_cycles < 1 or args.mode != "stream"):
+        parser.error("--target-cycles requires stream mode and a positive value")
     if args.frames < 1:
         parser.error("--frames must be positive")
     if args.implement and (args.inspect_only or args.device == "sim"):
@@ -254,7 +258,7 @@ def main(argv=None):
               "configuration": {"device": args.device, "mode": args.mode,
                                 "corpus_dir": str(args.corpus_dir),
                                 "clock_mhz": args.clock_mhz, "frames": args.frames,
-                                "sweep": args.sweep,
+                                "sweep": args.sweep, "target_cycles": args.target_cycles,
                                 "implement": args.implement,
                                 "inspect_only": args.inspect_only, "models": names},
               "complete": False, "models": []}
