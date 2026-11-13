@@ -100,7 +100,8 @@ class Ecp5CostModel:
         tables = pe * (acc + node.mult_bits) * rom_luts(nf)
         datapath = 2.25 * pe * simd * acc + 150
         cost = weights + Resources(lut=tables + datapath,
-                                   ff=pe * (acc + node.out_dtype.bits) + 35,
+                                   ff=pe * (2 * acc + node.out_dtype.bits + node.mult_bits
+                                            + simd * (act + wgt)) + 37,
                                    dsp=dsp)
         if sf > 1:
             cost = cost + memory(sf, simd * act)

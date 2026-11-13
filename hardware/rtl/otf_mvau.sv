@@ -52,14 +52,16 @@ module otf_mvau #(
     logic [PE*OUT_BITS-1:0] out_data_r;
 
     // The step being multiplied: the one issued this cycle, or with BLOCK_RAM the one issued last cycle.
-    logic                     mac, mac_first, mac_last, held;
+    logic                     mac, mac_first, mac_last;
     logic [NF_W-1:0]          mac_nf;
     logic [SIMD*ACT_BITS-1:0] mac_act;
     logic [PE*WORD-1:0]       mac_weights;
 
+    logic result_valid;
+
     wire last_sf    = (sf == SF_W'(SF - 1));
     wire out_free   = !out_valid_r || m_tready;
-    wire go         = !held || out_free;
+    wire go         = !result_valid || out_free;
     wire need_input;
     wire step       = go && (!need_input || s_tvalid);
 
@@ -106,7 +108,6 @@ module otf_mvau #(
             end
 
             assign mac  = go && issued;
-            assign held = issued && mac_last;
         end else begin : g_lut
             logic [WORD-1:0] weight_mem [0:PE*SF*NF-1];
 
@@ -121,9 +122,23 @@ module otf_mvau #(
             assign mac_last  = last_sf;
             assign mac_nf    = nf;
             assign mac_act   = act_word;
-            assign held      = last_sf;
         end
     endgenerate
+
+    logic product_valid, product_first, product_last;
+    logic [NF_W-1:0] product_nf;
+    wire accumulate = go && product_valid;
+    wire finish = accumulate && product_last;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) product_valid <= 1'b0;
+        else if (go) product_valid <= mac;
+        if (go) begin
+            product_first <= mac_first;
+            product_last <= mac_last;
+            product_nf <= mac_nf;
+        end
+    end
 
     logic signed [ACC_BITS-1:0] acc      [0:PE-1];
     logic signed [ACC_BITS-1:0] acc_next [0:PE-1];
@@ -134,17 +149,32 @@ module otf_mvau #(
         for (p = 0; p < PE; p = p + 1) begin : g_lane
             wire [WORD-1:0] weight_word = mac_weights[p*WORD +: WORD];
 
+            logic signed [ACT_BITS+WGT_BITS-1:0] products [0:SIMD-1];
+            logic signed [ACC_BITS-1:0] result_acc;
+            logic signed [MULT_BITS-1:0] result_mult;
+            always_ff @(posedge clk) begin
+                if (go) begin
+                    for (int k = 0; k < SIMD; k = k + 1) begin
+                        products[k] <= $signed(mac_act[k*ACT_BITS +: ACT_BITS])
+                                     * $signed(weight_word[k*WGT_BITS +: WGT_BITS]);
+                    end
+                end
+                if (finish && rst_n) begin
+                    result_acc <= acc_next[p];
+                    result_mult <= mult_mem[p*NF + int'(product_nf)];
+                end
+            end
+
             logic signed [ACC_BITS-1:0] dot;
             always_comb begin
                 dot = '0;
                 for (int k = 0; k < SIMD; k = k + 1) begin
-                    dot = dot + ACC_BITS'($signed(mac_act[k*ACT_BITS +: ACT_BITS]))
-                              * ACC_BITS'($signed(weight_word[k*WGT_BITS +: WGT_BITS]));
+                    dot = dot + ACC_BITS'(products[k]);
                 end
             end
 
             wire signed [ACC_BITS-1:0] seed =
-                mac_first ? $signed(bias_mem[p*NF + int'(mac_nf)]) : acc[p];
+                product_first ? $signed(bias_mem[p*NF + int'(product_nf)]) : acc[p];
             assign acc_next[p] = seed + dot;
 
             otf_requant #(
@@ -152,13 +182,13 @@ module otf_mvau #(
                 .OUT_BITS(OUT_BITS), .OUT_MIN(OUT_MIN), .OUT_MAX(OUT_MAX),
                 .OUT_ZP(OUT_ZP)
             ) u_requant (
-                .acc  (acc_next[p]),
-                .mult ($signed(mult_mem[p*NF + int'(mac_nf)])),
+                .acc  (result_acc),
+                .mult (result_mult),
                 .out  (lane_out[p])
             );
 
             always_ff @(posedge clk) begin
-                if (mac) acc[p] <= acc_next[p];
+                if (accumulate) acc[p] <= acc_next[p];
             end
         end
     endgenerate
@@ -168,6 +198,7 @@ module otf_mvau #(
             sf <= '0;
             nf <= '0;
             out_valid_r <= 1'b0;
+            result_valid <= 1'b0;
         end else begin
             if (step && need_input) act_buf[sf] <= s_tdata;
 
@@ -180,13 +211,16 @@ module otf_mvau #(
                 end
             end
 
-            if (mac && mac_last) begin
-                out_valid_r <= 1'b1;
-                for (int q = 0; q < PE; q = q + 1) begin
-                    out_data_r[q*OUT_BITS +: OUT_BITS] <= lane_out[q];
+            if (finish) result_valid <= 1'b1;
+            else if (out_free) result_valid <= 1'b0;
+
+            if (out_free) begin
+                out_valid_r <= result_valid;
+                if (result_valid) begin
+                    for (int q = 0; q < PE; q = q + 1) begin
+                        out_data_r[q*OUT_BITS +: OUT_BITS] <= lane_out[q];
+                    end
                 end
-            end else if (m_tready) begin
-                out_valid_r <= 1'b0;
             end
         end
     end

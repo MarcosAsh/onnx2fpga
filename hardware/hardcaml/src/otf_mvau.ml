@@ -130,10 +130,10 @@ module Make (Config : Config) = struct
     let%hw sf = wire (address_bits_for sf_count) in
     let%hw nf = wire (address_bits_for nf_count) in
     let%hw out_valid = wire 1 in
-    let%hw held = wire 1 in
+    let%hw result_valid = wire 1 in
     let%hw last_sf = Sv_int.is_last sf ~count:sf_count in
     let%hw out_free = ~:out_valid |: i.m.ready in
-    let%hw go = ~:held |: out_free in
+    let%hw go = ~:result_valid |: out_free in
     let%hw need_input = wire 1 in
     let%hw step = go &: (~:need_input |: i.s.valid) in
     let%hw group_nf =
@@ -175,7 +175,6 @@ module Make (Config : Config) = struct
         let%hw issued = reg spec ~enable:go step in
         let%hw mac_last = stage last_sf in
         let%hw mac_weights = stage (weight_rom ~clock:i.clocking.clock ~address:waddr) in
-        held <-- (issued &: mac_last);
         { valid = go &: issued
         ; first = stage first
         ; last = mac_last
@@ -183,8 +182,7 @@ module Make (Config : Config) = struct
         ; act = stage act_word
         ; weights = split_lsb ~part_width:(simd * wgt_bits) mac_weights
         })
-      else (
-        held <-- last_sf;
+      else
         { valid = step
         ; first
         ; last = last_sf
@@ -193,8 +191,15 @@ module Make (Config : Config) = struct
         ; weights =
             List.chunks_of weights ~length:(sf_count * nf_count)
             |> List.map ~f:(Sv_int.table ~address:waddr)
-        })
+        }
     in
+    let stage d = reg spec_no_clear ~enable:go d in
+    let%hw product_valid = reg spec ~enable:go mac.valid in
+    let%hw product_first = stage mac.first in
+    let%hw product_last = stage mac.last in
+    let%hw product_nf = stage mac.nf in
+    let%hw accumulate = go &: product_valid in
+    let%hw finish = accumulate &: product_last in
     let acts = split_lsb ~part_width:act_bits mac.act in
     let lane_bias = List.chunks_of bias ~length:nf_count in
     let lane_mult = List.chunks_of mult ~length:nf_count in
@@ -202,19 +207,22 @@ module Make (Config : Config) = struct
       List.map3_exn mac.weights lane_bias lane_mult ~f:(fun weight_word bias mult ->
         let dot =
           List.map2_exn acts (split_lsb ~part_width:wgt_bits weight_word) ~f:(fun a w ->
-            sresize (a *+ w) ~width:acc_bits)
+            sresize (stage (a *+ w)) ~width:acc_bits)
           |> tree ~arity:2 ~f:(reduce ~f:( +: ))
         in
         let acc = wire acc_bits in
-        let seed = mux2 mac.first (Sv_int.table ~address:mac.nf bias) acc in
+        let seed = mux2 product_first (Sv_int.table ~address:product_nf bias) acc in
         let acc_next = seed +: dot in
-        acc <-- reg spec_no_clear ~enable:mac.valid acc_next;
-        let mult = Sv_int.table ~address:mac.nf mult in
-        (Requant.hierarchical scope { acc = acc_next; mult }).out)
+        acc <-- reg spec_no_clear ~enable:accumulate acc_next;
+        let result d = reg spec_no_clear ~enable:(finish &: ~:clear) d in
+        let mult = result (Sv_int.table ~address:product_nf mult) in
+        (Requant.hierarchical scope { acc = result acc_next; mult }).out)
     in
-    let%hw finish = mac.valid &: mac.last in
-    out_valid <-- reg spec (mux2 finish vdd (out_valid &: ~:(i.m.ready)));
-    let%hw out_data = reg spec_no_clear ~enable:(finish &: ~:clear) (concat_lsb lanes) in
+    result_valid <-- reg spec (mux2 finish vdd (result_valid &: ~:out_free));
+    out_valid <-- reg spec (mux2 out_free result_valid out_valid);
+    let%hw out_data =
+      reg spec_no_clear ~enable:(out_free &: result_valid &: ~:clear) (concat_lsb lanes)
+    in
     { O.s = { ready = need_input &: go }; m = { data = out_data; valid = out_valid } }
   ;;
 
