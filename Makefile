@@ -47,6 +47,7 @@ test-unit:
 	$(PYTHON) -m unittest discover -s tests -p "test_artix.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_compatibility.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_corpus_report.py" -v
+	$(PYTHON) -m unittest discover -s tests -p "test_cnn.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_ingest.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_numerics.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_pipeline.py" -v
@@ -61,6 +62,7 @@ test-unit:
 
 # API tests skip what this machine cannot run and name what is missing.
 test-api: models
+	$(PYTHON) -m unittest discover -s tests -p "test_cnn_sim.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_elementwise.py" -v

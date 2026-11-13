@@ -1,0 +1,18 @@
+{
+  "model": "depthwise",
+  "training": "none",
+  "seed": 81,
+  "opset": 20,
+  "torch_version": "2.15.0+cpu",
+  "onnx_version": "1.23.2",
+  "onnxruntime_version": "1.31.1",
+  "reference": "ONNX Runtime CPU",
+  "calibration_samples": 512,
+  "evaluation_samples": 256,
+  "maximum_normalized_mae": 0.025,
+  "sha256": {
+    "depthwise.onnx": "15bbd79cd29a71508e67faa187a7f8ca0f93d002ef3cc2ea48c8b20f7e6fc4f6",
+    "depthwise.npz": "26295510c238ca00d30b59b300bca631351f8a1d586f886fee5a96c4f078f20a"
+  },
+  "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+}

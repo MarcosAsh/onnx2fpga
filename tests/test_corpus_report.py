@@ -16,6 +16,30 @@ from tools import report_corpus as report
 
 
 class CorpusReport(unittest.TestCase):
+    def test_changed_fixture(self):
+        source = report.CORPUS / "linear_regression.onnx"
+        args = argparse.Namespace(device="k26", mode="fixed", clock_mhz=None, inspect_only=True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / source.name
+            path.write_bytes(source.read_bytes())
+            path.with_suffix(".json").write_text(json.dumps({"sha256": {path.name: "wrong"}}))
+            row = report.report_model(path, args)
+            self.assertEqual(row["stages"]["inspection"], "failed")
+            self.assertEqual(row["error"], "fixture provenance mismatch")
+
+    def test_image_corpus(self):
+        corpus = report.ROOT / "tests/fixtures/cnn"
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(report, "metadata", return_value={}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            status = report.main(["maxpool", "average", "--corpus-dir", str(corpus),
+                                  "--mode", "stream", "--inspect-only", "--out", directory])
+            self.assertEqual(status, 1)
+            data = json.loads((Path(directory) / "report.json").read_text())
+            self.assertEqual([row["status"] for row in data["models"]], ["inspected", "failed"])
+            self.assertEqual(data["models"][0]["onnx"]["inputs"][0]["shape"], [1, 4, 8, 8])
+            self.assertEqual(data["models"][0]["provenance"]["training"], "none")
+
     def test_implementation_requires_device(self):
         for arguments in (("--inspect-only",), ("--device", "sim")):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):

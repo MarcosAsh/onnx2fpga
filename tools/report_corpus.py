@@ -121,6 +121,13 @@ def report_model(path, args):
     stage = "inspection"
     try:
         row["model_sha256"] = digest(path)
+        provenance = path.with_suffix(".json")
+        if provenance.is_file():
+            row["provenance"] = json.loads(provenance.read_text())
+            row["provenance_sha256"] = digest(provenance)
+            for name, expected_hash in row["provenance"]["sha256"].items():
+                if Path(name).name != name or digest(path.parent / name) != expected_hash:
+                    raise ValueError("fixture provenance mismatch")
         model = OnnxModel.load(path)
         row["onnx"] = model_info(model)
         check = otf.check(model, device=args.device, mode=args.mode, clock_mhz=args.clock_mhz)
@@ -167,11 +174,18 @@ def report_model(path, args):
         row["numerical_comparison"] = compare(acc.predict(samples), expected, acc._labels)
         row["stages"][stage] = "passed" if row["numerical_comparison"]["passed"] else "failed"
         stage = "simulation"
-        simulation = acc.simulate(samples[:args.frames])
-        row["simulation"] = {"bit_exact": bool(simulation.ok), "frames": simulation.frames}
+        simulation = acc.simulate(samples[:args.frames], sweep=args.sweep)
+        row["simulation"] = {"bit_exact": bool(simulation.ok), "frames": simulation.frames,
+                             "latency_scope": ("fixed pipeline" if args.mode == "fixed"
+                                               else "simulation start to first output beat"),
+                             "runs": [{"input_duty": run.duty[0], "output_duty": run.duty[1],
+                                       "seed": run.seed, "passed": run.ok,
+                                       "cycles": run.cycles, "latency_cycles": run.latency}
+                                      for run in [simulation.first, *simulation.sweep]]}
         row["stages"][stage] = "passed" if simulation.ok else "failed"
         if not simulation.ok:
-            row["error"] = simulation.first.output[-2000:]
+            failed = next(run for run in [simulation.first, *simulation.sweep] if not run.ok)
+            row["error"] = failed.output[-2000:]
         if args.implement and simulation.ok and row["numerical_comparison"]["passed"]:
             stage = "implementation"
             row["implementation"] = implement(acc, out, clock, args.mode)
@@ -196,10 +210,12 @@ def write_report(path, report):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("models", nargs="*", help="corpus model names; all by default")
+    parser.add_argument("--corpus-dir", type=Path, default=CORPUS)
     parser.add_argument("--device", choices=Device.names(), default="k26")
     parser.add_argument("--mode", choices=("stream", "fixed"), default="fixed")
     parser.add_argument("--clock-mhz", type=float)
     parser.add_argument("--frames", type=int, default=16)
+    parser.add_argument("--sweep", action="store_true", help="sweep input and output stalls")
     parser.add_argument("--inspect-only", action="store_true")
     parser.add_argument("--implement", action="store_true", help="run device place and route")
     parser.add_argument("--out", type=Path, default=ROOT / "build" / "corpus_report")
@@ -208,14 +224,18 @@ def main(argv=None):
         parser.error("--frames must be positive")
     if args.implement and (args.inspect_only or args.device == "sim"):
         parser.error("--implement requires compilation on a physical device target")
-    names = args.models or sorted(path.stem for path in CORPUS.glob("*.onnx"))
-    known = {path.stem for path in CORPUS.glob("*.onnx")}
+    names = args.models or sorted(path.stem for path in args.corpus_dir.glob("*.onnx"))
+    known = {path.stem for path in args.corpus_dir.glob("*.onnx")}
+    if not known:
+        parser.error("empty corpus directory")
     if set(names) - known:
         parser.error("unknown corpus models: %s" % ", ".join(sorted(set(names) - known)))
     args.out.mkdir(parents=True, exist_ok=True)
     report = {"schema_version": 1, "environment": {},
               "configuration": {"device": args.device, "mode": args.mode,
+                                "corpus_dir": str(args.corpus_dir),
                                 "clock_mhz": args.clock_mhz, "frames": args.frames,
+                                "sweep": args.sweep,
                                 "implement": args.implement,
                                 "inspect_only": args.inspect_only, "models": names},
               "complete": False, "models": []}
@@ -231,7 +251,7 @@ def main(argv=None):
             versions["vivado"] = command("vivado", "-version")
     write_report(destination, report)
     for name in names:
-        row = report_model(CORPUS / (name + ".onnx"), args)
+        row = report_model(args.corpus_dir / (name + ".onnx"), args)
         report["models"].append(row)
         write_report(destination, report)
         print("%s: %s" % (name, row["status"]), flush=True)

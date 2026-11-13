@@ -1,0 +1,18 @@
+{
+  "model": "residual",
+  "training": "none",
+  "seed": 81,
+  "opset": 20,
+  "torch_version": "2.15.0+cpu",
+  "onnx_version": "1.23.2",
+  "onnxruntime_version": "1.31.1",
+  "reference": "ONNX Runtime CPU",
+  "calibration_samples": 512,
+  "evaluation_samples": 256,
+  "maximum_normalized_mae": 0.025,
+  "sha256": {
+    "residual.onnx": "1e2418ca1e6787713d1db8ef3e3a3abbef43157fb8be1e69c4a45e0234531fba",
+    "residual.npz": "b2d2bde9aee042c14a2de71a9ba4bda43c171ca05194c80aa71aac56709964ad"
+  },
+  "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+}

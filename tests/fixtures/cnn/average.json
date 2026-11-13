@@ -1,0 +1,18 @@
+{
+  "model": "average",
+  "training": "none",
+  "seed": 81,
+  "opset": 20,
+  "torch_version": "2.15.0+cpu",
+  "onnx_version": "1.23.2",
+  "onnxruntime_version": "1.31.1",
+  "reference": "ONNX Runtime CPU",
+  "calibration_samples": 512,
+  "evaluation_samples": 256,
+  "maximum_normalized_mae": 0.025,
+  "sha256": {
+    "average.onnx": "0d7aaacc5db5d3ff715ec32db51acb55ad27bc6b690f4090bd93fadf7f1d0db5",
+    "average.npz": "e8e3ab469ebf55f4700200f99e61bca53422dd53a2279b03978593a3372f1932"
+  },
+  "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+}

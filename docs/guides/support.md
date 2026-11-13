@@ -45,6 +45,41 @@ and [Arty A7-100](https://github.com/Digilent/vivado-boards/blob/master/new/boar
 
 ## Reproduce the corpus report
 
+### CNN baseline
+
+`tests/fixtures/cnn` contains six untrained, batch-one image models exported
+from PyTorch. Their sidecar JSON files record versions, seeds and file hashes.
+Each has 512 calibration images and 256 separate evaluation images with ONNX
+Runtime outputs. The exporter also checks those outputs against PyTorch.
+These fixtures measure numerical error, not classifier task accuracy.
+
+```sh
+python3 tests/fixtures/make_cnn.py
+python3 tools/report_corpus.py --corpus-dir tests/fixtures/cnn --mode stream \
+    --inspect-only --out build/cnn_inspection
+python3 tools/report_corpus.py maxpool residual --corpus-dir tests/fixtures/cnn \
+    --mode stream --frames 256 --sweep --out build/cnn_baseline
+```
+
+Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
+without those packages. The full inspection currently returns failure for
+average pooling, global average pooling and grouped/depthwise convolution.
+They remain separate from the passing vector corpus.
+
+The [baseline report](../measurements/cnn-baseline-2026-11-13.json) records
+the max-pool CNN and residual CNN passing numerical comparison and bit-exact
+Hardcaml simulation on 256 images, including 15 stall runs per model. Their
+normalized mean absolute errors are 0.00754 and 0.01014, below the existing
+0.025 threshold. This establishes the small residual fixture's stream behavior;
+other branch shapes still need their own checks. CNN routing and physical
+measurements remain unverified.
+
+The simulation report records total run cycles and time to the first output
+beat. That first beat is not a complete frame. Compiler cycles per frame are
+schedule estimates; stalls and pipeline fill affect measured throughput.
+
+### Vector corpus
+
 From a checkout, using Python, NumPy, Hardcaml and Verilator:
 
 ```sh

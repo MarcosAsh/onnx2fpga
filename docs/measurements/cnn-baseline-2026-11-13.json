@@ -1,0 +1,1256 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "created_utc": "2026-11-13T14:13:28.295916+00:00",
+    "revision": "b84d8f955d6a7e17f2fe082e8e8268993038a379",
+    "worktree_status": "M Makefile\n M tests/test_corpus_report.py\n M tools/report_corpus.py\n?? tests/fixtures/cnn/\n?? tests/fixtures/make_cnn.py\n?? tests/test_cnn.py\n?? tests/test_cnn_sim.py",
+    "reporter_sha256": "acd9f6b893c3f580e9e60f6870a2d7b4dfaa7a4a00e5f1735bd77d0c98318f8e",
+    "fixture_generator_sha256": "f556ccfff5a9197e8a45460bc7a36b5881ec49007e76004f41255829154d18a1",
+    "hardcaml_lock_sha256": "4804f6f31276016d6cc6f6b76523642d194b7866bcb726358f42b26828ccc7f0",
+    "versions": {
+      "python": "3.12.13",
+      "numpy": "2.5.4",
+      "onnx2fpga": "0.1.0",
+      "verilator": "Verilator 5.032 2025-01-01 rev (Debian 5.032-1)",
+      "dune": "3.22.2",
+      "ocaml": "5.2.0+ox"
+    }
+  },
+  "configuration": {
+    "device": "k26",
+    "mode": "stream",
+    "corpus_dir": "tests/fixtures/cnn",
+    "clock_mhz": null,
+    "frames": 256,
+    "sweep": true,
+    "implement": false,
+    "inspect_only": false,
+    "models": [
+      "average",
+      "depthwise",
+      "global_average",
+      "grouped",
+      "maxpool",
+      "residual"
+    ]
+  },
+  "complete": true,
+  "models": [
+    {
+      "model": "average",
+      "status": "failed",
+      "warnings": [],
+      "stages": {
+        "inspection": "blocked_or_unknown",
+        "compilation": "not_run",
+        "reference": "not_run",
+        "simulation": "not_run",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "0d7aaacc5db5d3ff715ec32db51acb55ad27bc6b690f4090bd93fadf7f1d0db5",
+      "provenance": {
+        "model": "average",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "average.onnx": "0d7aaacc5db5d3ff715ec32db51acb55ad27bc6b690f4090bd93fadf7f1d0db5",
+          "average.npz": "e8e3ab469ebf55f4700200f99e61bca53422dd53a2279b03978593a3372f1932"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "b188da2b5fd5bcf20ba6fdb9711067d0da119dc32574d61eeea09ce140a1f183",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "AveragePool",
+            "attributes": [
+              "ceil_mode",
+              "count_include_pad",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": false,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [
+          {
+            "severity": "error",
+            "code": "operator",
+            "message": "unsupported operator 'AveragePool'",
+            "node_index": 2,
+            "node": "/2/AveragePool",
+            "op_type": "AveragePool",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 3,
+            "node": "/3/Flatten",
+            "op_type": "Flatten",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 4,
+            "node": "/4/Gemm",
+            "op_type": "Gemm",
+            "domain": "",
+            "opset": 20
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      }
+    },
+    {
+      "model": "depthwise",
+      "status": "failed",
+      "warnings": [],
+      "stages": {
+        "inspection": "blocked_or_unknown",
+        "compilation": "not_run",
+        "reference": "not_run",
+        "simulation": "not_run",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "15bbd79cd29a71508e67faa187a7f8ca0f93d002ef3cc2ea48c8b20f7e6fc4f6",
+      "provenance": {
+        "model": "depthwise",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "depthwise.onnx": "15bbd79cd29a71508e67faa187a7f8ca0f93d002ef3cc2ea48c8b20f7e6fc4f6",
+          "depthwise.npz": "26295510c238ca00d30b59b300bca631351f8a1d586f886fee5a96c4f078f20a"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "3335bb8d606ef0702693d83f6d0eeb83fc0d18ce6aee3545a7a2b69dda49ee37",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "MaxPool",
+            "attributes": [
+              "ceil_mode",
+              "dilations",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": false,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [
+          {
+            "severity": "error",
+            "code": "import",
+            "message": "grouped convolution is not supported yet: /0/0.0/Conv",
+            "node_index": 0,
+            "node": "/0/0.0/Conv",
+            "op_type": "Conv",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 1,
+            "node": "/0/0.1/Relu",
+            "op_type": "Relu",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 2,
+            "node": "/0/0.2/Conv",
+            "op_type": "Conv",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 3,
+            "node": "/1/Relu",
+            "op_type": "Relu",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 4,
+            "node": "/2/MaxPool",
+            "op_type": "MaxPool",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 5,
+            "node": "/3/Flatten",
+            "op_type": "Flatten",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 6,
+            "node": "/4/Gemm",
+            "op_type": "Gemm",
+            "domain": "",
+            "opset": 20
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      }
+    },
+    {
+      "model": "global_average",
+      "status": "failed",
+      "warnings": [],
+      "stages": {
+        "inspection": "blocked_or_unknown",
+        "compilation": "not_run",
+        "reference": "not_run",
+        "simulation": "not_run",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+      "provenance": {
+        "model": "global_average",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "global_average.onnx": "7a7e948885d2b9b1fc03735c5fe310c2d43cd0772af93a494e93fe3063756173",
+          "global_average.npz": "dbace4000d1785387149df48755559d1765cec840e9c784a82ce4c1329b5be3e"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "317e991be2dec506e835e1ea5f6df3563a0eb678943f51b5c1a767115156f077",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "GlobalAveragePool",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": false,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [
+          {
+            "severity": "error",
+            "code": "operator",
+            "message": "unsupported operator 'GlobalAveragePool'",
+            "node_index": 2,
+            "node": "/2/GlobalAveragePool",
+            "op_type": "GlobalAveragePool",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 3,
+            "node": "/3/Flatten",
+            "op_type": "Flatten",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 4,
+            "node": "/4/Gemm",
+            "op_type": "Gemm",
+            "domain": "",
+            "opset": 20
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      }
+    },
+    {
+      "model": "grouped",
+      "status": "failed",
+      "warnings": [],
+      "stages": {
+        "inspection": "blocked_or_unknown",
+        "compilation": "not_run",
+        "reference": "not_run",
+        "simulation": "not_run",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "7ac2712f8c3b20ebce0e617bb46b0fbb44cc6d2fa18817606fa9f8af491d4fff",
+      "provenance": {
+        "model": "grouped",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "grouped.onnx": "7ac2712f8c3b20ebce0e617bb46b0fbb44cc6d2fa18817606fa9f8af491d4fff",
+          "grouped.npz": "1a0af8295190aa0e37463fa5ec934801c63bae50d77d88e2cc15568f3e1b0e01"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "abb0be964cabeaaaa0b010d00c3b8f9346884202cbb53337eb805368b445c36a",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "MaxPool",
+            "attributes": [
+              "ceil_mode",
+              "dilations",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": false,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [
+          {
+            "severity": "error",
+            "code": "import",
+            "message": "grouped convolution is not supported yet: /0/Conv",
+            "node_index": 0,
+            "node": "/0/Conv",
+            "op_type": "Conv",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 1,
+            "node": "/1/Relu",
+            "op_type": "Relu",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 2,
+            "node": "/2/MaxPool",
+            "op_type": "MaxPool",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 3,
+            "node": "/3/Flatten",
+            "op_type": "Flatten",
+            "domain": "",
+            "opset": 20
+          },
+          {
+            "severity": "unknown",
+            "code": "dependency",
+            "message": "input depends on a blocked or unassessed value",
+            "node_index": 4,
+            "node": "/4/Gemm",
+            "op_type": "Gemm",
+            "domain": "",
+            "opset": 20
+          }
+        ],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      }
+    },
+    {
+      "model": "maxpool",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "f7fa7d8ed96260eb9883b24bf6d15e2eeeecfe2b9d344f09adfa48bbd1422d23",
+      "provenance": {
+        "model": "maxpool",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "maxpool.onnx": "f7fa7d8ed96260eb9883b24bf6d15e2eeeecfe2b9d344f09adfa48bbd1422d23",
+          "maxpool.npz": "38db5669883a6e2c77f7662ef87121e9efe5dcb2a229167a868ad7827d8212ed"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "bf7d09e5ab9bb1c68eb6fd2be7cce8357aa4b9be57daa041abaec5d6e272b646",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "MaxPool",
+            "attributes": [
+              "ceil_mode",
+              "dilations",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "38db5669883a6e2c77f7662ef87121e9efe5dcb2a229167a868ad7827d8212ed",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1608.0,
+          "ff": 1165,
+          "dsp": 29.5,
+          "bram36": 1,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 192,
+        "clock_assumption_mhz": 322.265625,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 1678466.796875,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "359ff56175ec4705d7316817fbdf97e5d1322e2bb7212f528330f4890047892a"
+      },
+      "manifest_sha256": "1208eba58656261d13c97bc40d9572c32b6b4a26bc3f0fd68ec088822afaed03",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0021950703318376922,
+        "max_absolute_error": 0.010216401124816754,
+        "reference_std": 0.29128241539001465,
+        "normalized_mae": 0.007535883444589634,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256,
+        "latency_scope": "simulation start to first output beat",
+        "runs": [
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 56974,
+            "latency_cycles": 235
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          }
+        ]
+      }
+    },
+    {
+      "model": "residual",
+      "status": "passed",
+      "warnings": [],
+      "stages": {
+        "inspection": "passed",
+        "compilation": "passed",
+        "reference": "passed",
+        "simulation": "passed",
+        "implementation": "not_run",
+        "physical_board": "not_run"
+      },
+      "model_sha256": "1e2418ca1e6787713d1db8ef3e3a3abbef43157fb8be1e69c4a45e0234531fba",
+      "provenance": {
+        "model": "residual",
+        "training": "none",
+        "seed": 81,
+        "opset": 20,
+        "torch_version": "2.15.0+cpu",
+        "onnx_version": "1.23.2",
+        "onnxruntime_version": "1.31.1",
+        "reference": "ONNX Runtime CPU",
+        "calibration_samples": 512,
+        "evaluation_samples": 256,
+        "maximum_normalized_mae": 0.025,
+        "sha256": {
+          "residual.onnx": "1e2418ca1e6787713d1db8ef3e3a3abbef43157fb8be1e69c4a45e0234531fba",
+          "residual.npz": "b2d2bde9aee042c14a2de71a9ba4bda43c171ca05194c80aa71aac56709964ad"
+        },
+        "generator_sha256": "f0ba4814311d519c2144576b864b84b5f37ad3f0e3a8bc57f660e95999ffb75e"
+      },
+      "provenance_sha256": "907fba04694b27ad48bc079ed773958ed0055f51ea88bc9acd8101a703b8272d",
+      "onnx": {
+        "producer": "pytorch",
+        "producer_version": "2.15.0",
+        "ir_version": 9,
+        "opsets": {
+          "": 20
+        },
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              1,
+              4,
+              8,
+              8
+            ],
+            "dtype": 1
+          }
+        ],
+        "operators": [
+          {
+            "domain": "",
+            "op_type": "Conv",
+            "attributes": [
+              "dilations",
+              "group",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Add",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "Relu",
+            "attributes": []
+          },
+          {
+            "domain": "",
+            "op_type": "MaxPool",
+            "attributes": [
+              "ceil_mode",
+              "dilations",
+              "kernel_shape",
+              "pads",
+              "strides"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Flatten",
+            "attributes": [
+              "axis"
+            ]
+          },
+          {
+            "domain": "",
+            "op_type": "Gemm",
+            "attributes": [
+              "alpha",
+              "beta",
+              "transB"
+            ]
+          }
+        ]
+      },
+      "compatibility": {
+        "ok": true,
+        "device": "k26",
+        "mode": "stream",
+        "findings": [],
+        "unchecked": [
+          "full ONNX schema and opset validation",
+          "quantization and accuracy",
+          "hardware lowering and resource fit",
+          "backend tool availability",
+          "routed timing",
+          "physical board operation"
+        ]
+      },
+      "fixture_sha256": "b2d2bde9aee042c14a2de71a9ba4bda43c171ca05194c80aa71aac56709964ad",
+      "samples": {
+        "evaluation": 256,
+        "calibration": 512,
+        "simulation": 256
+      },
+      "reference_source": "stored ONNX Runtime outputs",
+      "estimates": {
+        "resources": {
+          "lut": 1744.0,
+          "ff": 1223,
+          "dsp": 29.5,
+          "bram36": 1,
+          "uram": 0,
+          "ebr": 0
+        },
+        "latency_cycles": null,
+        "initiation_interval_cycles": 256,
+        "clock_assumption_mhz": 322.265625,
+        "latency_ns_at_assumed_clock": null,
+        "frames_per_second_at_assumed_clock": 1258850.09765625,
+        "predicted_fmax_mhz": null
+      },
+      "generated_sha256": {
+        "rtl/top.v": "41e564afe1cd71cdd6643bf4d829eb6aa17af80f764e70c67e046c440b76bce8"
+      },
+      "manifest_sha256": "3b30494873582100ce83665b14ff2ce313fadb8dc671192a3657a99dd9db1990",
+      "numerical_comparison": {
+        "passed": true,
+        "mae": 0.0043202035502942415,
+        "max_absolute_error": 0.01725813334268876,
+        "reference_std": 0.42610689997673035,
+        "normalized_mae": 0.010138778673920013,
+        "maximum_normalized_mae": 0.025
+      },
+      "simulation": {
+        "bit_exact": true,
+        "frames": 256,
+        "latency_scope": "simulation start to first output beat",
+        "runs": [
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": 98505,
+            "latency_cycles": 456
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 50,
+            "output_duty": 50,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 20,
+            "output_duty": 20,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 100,
+            "output_duty": 10,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 1,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 2,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          },
+          {
+            "input_duty": 10,
+            "output_duty": 100,
+            "seed": 3,
+            "passed": true,
+            "cycles": null,
+            "latency_cycles": null
+          }
+        ]
+      }
+    }
+  ]
+}
