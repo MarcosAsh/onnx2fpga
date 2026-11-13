@@ -11,6 +11,7 @@ unassessed properties separately; compilation and timing may still fail.
 |---|---|---|
 | Gemm, MatMul | Stream and fixed | Constant weights; Gemm `transA` is unsupported. |
 | Conv, MaxPool | Stream | Grouped convolution, MaxPool ceil mode and indices output are unsupported. Fixed mode rejects these units. |
+| GlobalAveragePool | Stream | Static batch-one 2D images, per-tensor activation grids, sums up to 32 bits. |
 | Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
 | Other live elementwise operations | Fixed | See [elementwise functions and tables](../specs/010-lookup-tables-and-elementwise.md) for operations and broadcasting limits. |
 | Reductions, Softmax, Normalizer, LayerNormalization | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
@@ -65,7 +66,7 @@ python3 tools/report_corpus.py maxpool residual --corpus-dir tests/fixtures/cnn 
 
 Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
 without those packages. The full inspection currently returns failure for
-average pooling, global average pooling and grouped/depthwise convolution.
+local average pooling and grouped/depthwise convolution.
 They remain separate from the passing vector corpus.
 
 The [baseline report](../measurements/cnn-baseline-2026-11-13.json) records
@@ -79,6 +80,34 @@ measurements remain unverified.
 The simulation report records total run cycles and time to the first output
 beat. That first beat is not a complete frame. Compiler cycles per frame are
 schedule estimates; stalls and pipeline fill affect measured throughput.
+
+### Global average pooling
+
+`GlobalAveragePool` reduces the height and width of an NCHW image to one value
+per channel, preserving both spatial axes with size one, as specified by
+[ONNX](https://onnx.ai/onnx/operators/onnx__GlobalAveragePool.html).
+The importer currently accepts static batch-one 2D inputs and no attributes.
+Other ranks and fixed execution mode are rejected.
+
+The stream unit accumulates signed input codes with
+`input_bits + ceil(log2(height * width))` bits. It stores one partial sum per
+channel. The final rescale subtracts `height * width * input_zero_point`,
+multiplies by an integer approximation of
+`input_scale / (height * width * output_scale)`, rounds halfway values toward
+positive infinity, then adds the output zero point and clamps. Activation
+grids must be per tensor, and sums wider than 32 bits are rejected.
+
+Input stalls preserve the current channel and pixel counters. Output stalls
+hold the final pixel's handshake until its result can be consumed. Reset
+discards the partial frame; the next frame overwrites the stored sums on its
+first pixel. The global-average CNN passes the existing 0.025 numerical
+threshold and 256-image RTL stall sweeps. Odd image sizes, one-pixel images,
+signed extremes and partial-frame reset have separate regression tests.
+
+The [first Artix-7 35T build](../measurements/global-average-a7-2026-11-13.json)
+fails the 100 MHz target with setup slack of -10.279 ns. The worst path runs
+through the convolution arithmetic and rescale. Its numerical and simulation
+stages pass; the routed design is not timing-qualified.
 
 ### Vector corpus
 

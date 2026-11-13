@@ -33,6 +33,7 @@ models:
 test: test-unit test-cpp test-sim test-hardcaml test-api
 
 test-unit:
+	$(PYTHON) -m unittest test_average_pool.Arithmetic -v
 	$(PYTHON) -m unittest test_layernorm.Arithmetic -v
 	$(PYTHON) -m unittest discover -s tests -p "test_recorded_itch.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_trading_board.py" -v
@@ -62,6 +63,7 @@ test-unit:
 
 # API tests skip what this machine cannot run and name what is missing.
 test-api: models
+	$(PYTHON) -m unittest test_average_pool.Simulation -v
 	$(PYTHON) -m unittest discover -s tests -p "test_cnn_sim.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_api.py" -v
 	$(PYTHON) -m unittest discover -s tests -p "test_fixed_latency.py" -v

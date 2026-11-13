@@ -13,8 +13,8 @@ from ..p2_graph.graph import Graph
 from ..p2_graph.layout import LayoutAdapter
 from ..p2_graph.tensor import Tensor
 from ..p3_ops.elementwise import FUNCTIONS, ConcatOp, ElementwiseOp, import_elementwise
-from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp, MaxPoolOp,
-                               ReluOp)
+from ..p3_ops.onnx_ops import (AddOp, BinarizerOp, ConvOp, FlattenOp, GemmOp,
+                               GlobalAveragePoolOp, MaxPoolOp, ReluOp)
 from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce,
                                  import_softmax, import_layernorm)
 from ..p3_ops.trees import LEAF, MODES, Ensemble, TreeEnsembleOp
@@ -424,6 +424,17 @@ def import_maxpool(node, importer):
                             **window_attrs(node, importer, (2, 2))))
 
 
+def import_global_average_pool(node, importer):
+    source = importer.rename(node.input[0])
+    shape = importer.graph.tensor(source).shape
+    if shape is None or len(shape) != 4 or any(d is None or d < 1 for d in shape) or shape[0] != 1:
+        refuse(node, "requires a static batch-one 2D image")
+    if node.attributes():
+        refuse(node, "does not accept attributes")
+    importer.emit(GlobalAveragePoolOp(node.name or "global_average_pool", [source],
+                                      [importer.rename(node.output[0])]))
+
+
 def import_add(node, importer):
     inputs = []
     for name in node.input:
@@ -573,6 +584,7 @@ LAYOUT_OPS = ("Flatten", "Reshape", "Squeeze", "Unsqueeze", "Transpose", "Slice"
 BUILTIN = {
     "Conv": import_conv, "Gemm": import_gemm, "MatMul": import_gemm,
     "Relu": import_relu, "MaxPool": import_maxpool, "Add": import_add,
+    "GlobalAveragePool": import_global_average_pool,
     "QuantizeLinear": import_qdq, "DequantizeLinear": import_qdq,
     "Quant": import_quant, "IntQuant": import_quant,
     **dict.fromkeys(QLINEAR, import_qlinear), "QLinearConcat": import_qconcat,

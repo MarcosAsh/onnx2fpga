@@ -926,6 +926,33 @@ class PoolUnit(ChannelUnit):
                 "DATA_BITS": self.dtype.bits, "DATA_MIN": self.dtype.min}
 
 
+class SumPoolUnit(PoolUnit):
+    module = "otf_sum_pool"
+
+    def __init__(self, name, inputs, outputs, channels, window_size, dtype):
+        self.out_dtype = IntType(dtype.bits + (window_size - 1).bit_length(), True)
+        super().__init__(name, inputs, outputs, channels, window_size, 1, dtype)
+
+    def amd_resources(self, device):
+        bits = self.out_dtype.bits
+        memory = lut_memory_cost(self.channels // self.pe, self.pe * bits)
+        return memory + Resources(lut=self.pe * bits * 2 + 16, ff=self.pe * bits + 16)
+
+    def infer(self, graph):
+        super().infer(graph)
+        out = graph.tensor(self.outputs[0])
+        out.shape = (graph.tensor(self.inputs[0]).shape[0], 1, 1, self.channels)
+        out.dtype = self.out_dtype
+
+    def execute(self, graph, values):
+        x = np.asarray(values[self.inputs[0]], dtype=np.int64)
+        return [x.sum(axis=(1, 2), keepdims=True)]
+
+    def sv_params(self, graph):
+        return {"CHANNELS": self.channels, "PE": self.pe, "WINDOW": self.window_size,
+                "DATA_BITS": self.dtype.bits, "OUT_BITS": self.out_dtype.bits}
+
+
 class AddUnit(ChannelUnit):
     """Elementwise add of two streams, each rescaled to the output grid."""
 

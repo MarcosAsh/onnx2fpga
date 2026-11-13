@@ -150,6 +150,19 @@ class MaxPoolOp(FrontendNode):
         return [cols.reshape(n, out_h, out_w, kh * kw, channels).max(axis=3)]
 
 
+class GlobalAveragePoolOp(FrontendNode):
+    op_type = "GlobalAveragePool"
+
+    def infer(self, graph):
+        source = graph.tensor(self.inputs[0])
+        out = self._out(graph)
+        out.shape = (source.shape[0], 1, 1, source.shape[3])
+        out.dtype = source.dtype
+
+    def execute(self, graph, values):
+        return [values[self.inputs[0]].mean(axis=(1, 2), keepdims=True)]
+
+
 class FlattenOp(FrontendNode):
     """Stream no-op: channel-last data already arrives in flattened order, or in `shape`."""
 

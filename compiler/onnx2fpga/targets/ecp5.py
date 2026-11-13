@@ -162,6 +162,11 @@ class Ecp5CostModel:
     def otf_dup(self, node):
         return Resources(lut=4 + 2 * len(node.outputs), ff=len(node.outputs))
 
+    def otf_sum_pool(self, node):
+        pe, bits = node.pe, node.out_dtype.bits
+        return memory(node.channels // pe, pe * bits) + Resources(
+            lut=16 + 2 * pe * bits, ff=pe * bits + 16)
+
     def otf_fifo(self, node):
         depth, width = node.depth, node.width
         control = Resources(lut=14 + 3 * max(1, (depth - 1).bit_length()),

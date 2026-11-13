@@ -225,6 +225,16 @@ let of_node (node : Design.Node.t) : (module Instance) =
         module In = Beat
         module Out = Beat
       end)
+  | "otf_sum_pool" ->
+    stream
+      node
+      (module Otf_sum_pool.Make (struct
+          let channels = param "CHANNELS"
+          let pe = param "PE"
+          let window = param "WINDOW"
+          let data_bits = param "DATA_BITS"
+          let out_bits = param "OUT_BITS"
+        end))
   | "otf_mvau" ->
     stream
       node
