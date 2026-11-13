@@ -32,6 +32,7 @@ def main():
 
     target = ROOT / "dist"
     target.mkdir(exist_ok=True)
+    shutil.rmtree(ROOT / "build" / "lib" / "onnx2fpga", ignore_errors=True)
     name = build_meta.build_wheel(str(target))
     built = target / name
     print("built %s (%.1f KB)" % (built, built.stat().st_size / 1024))

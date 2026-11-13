@@ -59,6 +59,9 @@ class Wheel(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        stale = ROOT / "build/lib/onnx2fpga/assets/hardware/rtl/otf_removed.sv"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text("module otf_removed; endmodule\n")
         built = run([sys.executable, str(ROOT / "tools" / "build_wheel.py")])
         assert built.returncode == 0, built.stdout + built.stderr
         wheels = sorted((ROOT / "dist").glob("onnx2fpga-*.whl"))
