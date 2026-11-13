@@ -10,7 +10,7 @@ unassessed properties separately; compilation and timing may still fail.
 | Family | Execution modes | Restrictions and details |
 |---|---|---|
 | Gemm, MatMul | Stream and fixed | Constant weights; Gemm `transA` is unsupported. |
-| Conv, MaxPool | Stream | Spatial operators; grouped convolution is unsupported. Fixed mode rejects these units. |
+| Conv, MaxPool | Stream | Grouped convolution, MaxPool ceil mode and indices output are unsupported. Fixed mode rejects these units. |
 | Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
 | Other live elementwise operations | Fixed | See [elementwise functions and tables](../specs/010-lookup-tables-and-elementwise.md) for operations and broadcasting limits. |
 | Reductions, Softmax, Normalizer, LayerNormalization | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
@@ -20,6 +20,8 @@ unassessed properties separately; compilation and timing may still fail.
 | QDQ, QOperator and QONNX imports | Depends on the lowered operations | Static grids are required. See [quantized imports](../specs/009-operator-coverage.md) and [QONNX](../specs/014-qonnx.md). |
 
 These families do not imply support for every ONNX opset or attribute value.
+MaxPool uses stride one when omitted and ignores padded positions when taking
+the maximum, including windows containing only negative input values.
 The importer converts declared input shapes to its internal layout and uses
 batch size 1 for symbolic batch dimensions. The checker marks unknown feature
 dimensions as unassessed. Quantized hardware introduces numerical error even

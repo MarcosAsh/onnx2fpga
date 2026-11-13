@@ -166,6 +166,7 @@ def lower_maxpool(node, ctx):
     """Max preserves scale, so the pooled stream keeps the input's grid."""
     kernel = node.attrs["kernel_shape"]
     window = ctx.window(node, kernel, node.attrs.get("dilations", (1, 1)))
+    window.pad_value = ctx.plan.act_dtype.min
     out_h, out_w = window.ofm_dim
     ctx.require_same_grid(node.inputs[0], node.outputs[0], "MaxPool")
     ctx.plan.propagate(node.inputs[0], node.outputs[0])

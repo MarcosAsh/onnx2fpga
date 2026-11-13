@@ -71,7 +71,7 @@ def resolve_pads(attrs, kernel, strides, dilations, in_dim):
 def window_attrs(node, importer, kernel_default):
     attrs = node.attributes()
     kernel = spatial(attrs, "kernel_shape", kernel_default)
-    strides = spatial(attrs, "strides", (1, 1) if node.op_type == "Conv" else kernel)
+    strides = spatial(attrs, "strides", (1, 1))
     dilations = spatial(attrs, "dilations", (1, 1))
     source = importer.graph.tensor(importer.rename(node.input[0]))
     pads = resolve_pads(attrs, kernel, strides, dilations, source.shape[1:3])
@@ -414,6 +414,11 @@ def import_binarizer(node, importer):
 
 
 def import_maxpool(node, importer):
+    attrs = node.attributes()
+    if int(attrs.get("ceil_mode", 0)) != 0:
+        refuse(node, "requires ceil_mode=0")
+    if len(node.output) > 1 and node.output[1]:
+        refuse(node, "does not support indices output")
     importer.emit(MaxPoolOp(node.name or "pool", [importer.rename(node.input[0])],
                             [importer.rename(node.output[0])],
                             **window_attrs(node, importer, (2, 2))))

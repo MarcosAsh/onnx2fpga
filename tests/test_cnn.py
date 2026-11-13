@@ -8,6 +8,9 @@ import numpy as np
 
 from support import ROOT
 import onnx2fpga as otf
+from onnx2fpga.p1_ingest import ModelBuilder
+from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
+from onnx2fpga.reference.runner import GraphRunner
 
 
 CORPUS = ROOT / "tests/fixtures/cnn"
@@ -15,7 +18,30 @@ BLOCKED = {"average": "AveragePool", "global_average": "GlobalAveragePool",
            "grouped": "grouped convolution", "depthwise": "grouped convolution"}
 
 
+def negative_pool():
+    return (ModelBuilder("negative_pool").add_input("x", (1, 2, 2, 2))
+            .add_node("MaxPool", ["x"], ["y"], kernel_shape=[2, 2], pads=[1, 1, 0, 0])
+            .add_output("y", (1, 2, 2, 2)).build())
+
+
 class Cnn(unittest.TestCase):
+    def test_pool_default_stride(self):
+        graph = OnnxImporter(negative_pool()).run()
+        x = -np.arange(8, 0, -1, dtype=np.float32).reshape(1, 2, 2, 2)
+        x = graph.layouts["x"].to_internal(x)
+        got = GraphRunner(graph).run({"x": x})[graph.outputs[0]]
+        np.testing.assert_array_equal(got, x)
+
+    def test_pool_refusals(self):
+        for attributes, outputs, reason in (({"ceil_mode": 1}, ["y"], "ceil_mode"),
+                                            ({}, ["y", "indices"], "indices")):
+            model = (ModelBuilder("pool").add_input("x", (1, 1, 3, 3))
+                     .add_node("MaxPool", ["x"], outputs, kernel_shape=[2, 2], **attributes)
+                     .add_output("y", (1, 1, 2, 2)).build())
+            report = otf.check(model, mode="stream", device="k26")
+            self.assertFalse(report.ok)
+            self.assertIn(reason, json.dumps(report.to_dict()))
+
     def test_provenance(self):
         self.assertEqual({path.stem for path in CORPUS.glob("*.json")},
                          {"maxpool", "residual", *BLOCKED})
