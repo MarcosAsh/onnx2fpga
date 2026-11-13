@@ -98,6 +98,18 @@ A separate run resets halfway through the first input frame under backpressure,
 then checks all replayed frames. Its cycle counts begin after reset. Compiler
 cycles per frame remain schedule estimates; physical throughput is unmeasured.
 
+Overlapping consecutive words in the width converters reduces the full-rate
+frame intervals below, compared with the
+[previous report](https://github.com/MarcosAsh/onnx2fpga/blob/75eda38/docs/measurements/cnn-stream-2026-11-13.json).
+Both runs use 256 frames and the same folding choices.
+
+| Fixture | Before (cycles/frame) | After (cycles/frame) |
+| --- | ---: | ---: |
+| Average pool | 220 | 192 |
+| Depthwise | 1,024 | 768 |
+| Max pool | 222 | 192 |
+| Residual | 384 | 256 |
+
 ### Grouped convolution
 
 `Conv` supports groups and depthwise channel multipliers in stream mode.
@@ -135,6 +147,9 @@ one-pixel images. ONNX Runtime comparisons cover asymmetric edges, dilation
 and auto padding; both HDL backends pass padded negative and constant images.
 
 ### Routed CNN measurements
+
+These measurements predate the width-converter overlap change. The updated
+design needs fresh routing before these clock frequencies can be claimed.
 
 The complete global-average CNN uses 8-bit weights and activations. Each build
 passes the numerical gate, 256 frames under 16 traffic patterns, and a separate
