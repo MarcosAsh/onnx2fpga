@@ -127,16 +127,26 @@ module otf_mvau #(
 
     logic product_valid, product_first, product_last;
     logic [NF_W-1:0] product_nf;
-    wire accumulate = go && product_valid;
-    wire finish = accumulate && product_last;
+    logic dot_valid, dot_first, dot_last;
+    logic [NF_W-1:0] dot_nf;
+    wire accumulate = go && dot_valid;
+    wire finish = accumulate && dot_last;
 
     always_ff @(posedge clk) begin
-        if (!rst_n) product_valid <= 1'b0;
-        else if (go) product_valid <= mac;
+        if (!rst_n) begin
+            product_valid <= 1'b0;
+            dot_valid <= 1'b0;
+        end else if (go) begin
+            product_valid <= mac;
+            dot_valid <= product_valid;
+        end
         if (go) begin
             product_first <= mac_first;
             product_last <= mac_last;
             product_nf <= mac_nf;
+            dot_first <= product_first;
+            dot_last <= product_last;
+            dot_nf <= product_nf;
         end
     end
 
@@ -161,11 +171,14 @@ module otf_mvau #(
                 end
                 if (finish && rst_n) begin
                     result_acc <= acc_next[p];
-                    result_mult <= mult_mem[p*NF + int'(product_nf)];
+                    result_mult <= mult_mem[p*NF + int'(dot_nf)];
                 end
             end
 
-            logic signed [ACC_BITS-1:0] dot;
+            logic signed [ACC_BITS-1:0] dot, dot_r;
+            always_ff @(posedge clk) begin
+                if (go) dot_r <= dot;
+            end
             always_comb begin
                 dot = '0;
                 for (int k = 0; k < SIMD; k = k + 1) begin
@@ -174,8 +187,8 @@ module otf_mvau #(
             end
 
             wire signed [ACC_BITS-1:0] seed =
-                product_first ? $signed(bias_mem[p*NF + int'(product_nf)]) : acc[p];
-            assign acc_next[p] = seed + dot;
+                dot_first ? $signed(bias_mem[p*NF + int'(dot_nf)]) : acc[p];
+            assign acc_next[p] = seed + dot_r;
 
             otf_requant #(
                 .ACC_BITS(ACC_BITS), .MULT_BITS(MULT_BITS), .SHIFT(SHIFT),

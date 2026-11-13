@@ -198,8 +198,12 @@ module Make (Config : Config) = struct
     let%hw product_first = stage mac.first in
     let%hw product_last = stage mac.last in
     let%hw product_nf = stage mac.nf in
-    let%hw accumulate = go &: product_valid in
-    let%hw finish = accumulate &: product_last in
+    let%hw dot_valid = reg spec ~enable:go product_valid in
+    let%hw dot_first = stage product_first in
+    let%hw dot_last = stage product_last in
+    let%hw dot_nf = stage product_nf in
+    let%hw accumulate = go &: dot_valid in
+    let%hw finish = accumulate &: dot_last in
     let acts = split_lsb ~part_width:act_bits mac.act in
     let lane_bias = List.chunks_of bias ~length:nf_count in
     let lane_mult = List.chunks_of mult ~length:nf_count in
@@ -209,13 +213,14 @@ module Make (Config : Config) = struct
           List.map2_exn acts (split_lsb ~part_width:wgt_bits weight_word) ~f:(fun a w ->
             sresize (stage (a *+ w)) ~width:acc_bits)
           |> tree ~arity:2 ~f:(reduce ~f:( +: ))
+          |> stage
         in
         let acc = wire acc_bits in
-        let seed = mux2 product_first (Sv_int.table ~address:product_nf bias) acc in
+        let seed = mux2 dot_first (Sv_int.table ~address:dot_nf bias) acc in
         let acc_next = seed +: dot in
         acc <-- reg spec_no_clear ~enable:accumulate acc_next;
         let result d = reg spec_no_clear ~enable:(finish &: ~:clear) d in
-        let mult = result (Sv_int.table ~address:product_nf mult) in
+        let mult = result (Sv_int.table ~address:dot_nf mult) in
         (Requant.hierarchical scope { acc = result acc_next; mult }).out)
     in
     result_valid <-- reg spec (mux2 finish vdd (result_valid &: ~:out_free));

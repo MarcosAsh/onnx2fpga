@@ -90,11 +90,12 @@ class Ecp5FoldingTest(unittest.TestCase):
         self.assertEqual(result.folding.bottleneck_cycles, 256)
 
 
-    def test_amd_devices_fold_as_before(self):
+    def test_amd_folding(self):
         result = compile_mlp(64, device="vu9p", out="ecp5_mlp_vu9p")
         foldings = {name: folding for name, _, folding, _, _ in result.folding.rows}
-        self.assertEqual(foldings["fc0"], {"pe": 2, "simd": 16})
-        self.assertEqual(result.folding.total.dsp, 30)
+        self.assertEqual(foldings["fc0"], {"pe": 1, "simd": 32})
+        self.assertEqual(result.folding.bottleneck_cycles, 64)
+        self.assertEqual(result.folding.total.dsp, 29)
         self.assertEqual(result.folding.total.ebr, 0)
 
 

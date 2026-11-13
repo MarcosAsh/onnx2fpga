@@ -221,9 +221,9 @@ class MatVecUnit(StreamingNode):
         dsp = device.dsp_cost(self.pe * self.simd, self.act_dtype.bits, self.weight_dtype.bits)
         dsp += self.pe if acc_bits > 18 else 0
         compute = Resources(lut=self.pe * max(0, self.simd - 1) * acc_bits * 0.7,
-                            ff=self.pe * (2 * acc_bits + self.mult_bits
+                            ff=self.pe * (3 * acc_bits + self.mult_bits
                                          + self.simd * (self.act_dtype.bits + self.weight_dtype.bits))
-                               + self.simd * self.act_dtype.bits + 2,
+                               + self.simd * self.act_dtype.bits + 3,
                             dsp=dsp)
         depth = self.synapse_fold * self.neuron_fold
         width = self.simd * self.weight_dtype.bits
@@ -272,9 +272,9 @@ class MatVecUnit(StreamingNode):
                 for sf in range(self.synapse_fold)]
 
     def output_schedule(self, graph, index=0):
-        """Products and rescale add two stages; block RAM weights add one more."""
+        """Products, sums and rescale add three stages; block RAM adds one more."""
         stride = self.synapse_fold * self.neuron_fold
-        last = self.synapse_fold + 1 + int(self.block_ram)
+        last = self.synapse_fold + 2 + int(self.block_ram)
         return [v * stride + nf * self.synapse_fold + last
                 for v in range(self.vectors)
                 for nf in range(self.neuron_fold)]
