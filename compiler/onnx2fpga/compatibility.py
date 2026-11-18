@@ -12,6 +12,7 @@ from .p2_graph.constants import FOLD
 from .p2_graph.graph import Graph, GraphError
 from .p2_graph.onnx_importer import BUILTIN, QLINEAR, OnnxImporter
 from .p4_quantize.elementwise import check_stream_ops
+from .p4_quantize.lower import FuseRelu
 from .p4_quantize.trees import tree_op
 from .p5_schedule.fixed import check_fixed_ops
 from .targets.device import Device
@@ -201,7 +202,7 @@ def check(model, device="vu9p", mode="stream", clock_mhz=None):
                 break
             remove(node)
             continue
-        for node in graph.nodes:
+        for node in FuseRelu().run(graph, None).nodes:
             single = Graph(graph.name)
             single.inputs = list(node.inputs)
             single.add_node(node)

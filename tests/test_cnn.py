@@ -14,8 +14,8 @@ from tools import report_corpus
 import onnx2fpga as otf
 from onnx2fpga.p1_ingest import ModelBuilder
 from onnx2fpga.p2_graph.onnx_importer import OnnxImporter
-from onnx2fpga.p2_graph.datatype import QuantSpec
-from onnx2fpga.p4_quantize.lower import LowerToHardware
+from onnx2fpga.p2_graph.datatype import INT4, INT8, QuantSpec
+from onnx2fpga.p4_quantize.lower import FuseRelu, LowerToHardware
 from onnx2fpga.p4_quantize.plan import QuantizationPlan
 from onnx2fpga.pipeline import CompilerContext
 from onnx2fpga.targets.device import Device
@@ -23,7 +23,8 @@ from onnx2fpga.reference.runner import GraphRunner
 
 
 CORPUS = ROOT / "tests/fixtures/cnn"
-MODELS = ("maxpool", "residual", "global_average", "average", "grouped", "depthwise", "mnist")
+MODELS = ("maxpool", "residual", "global_average", "average", "grouped", "depthwise", "mobile",
+          "mnist")
 
 
 def negative_pool():
@@ -92,6 +93,72 @@ class Cnn(unittest.TestCase):
             plan = QuantizationPlan.from_annotations(specs)
             with self.assertRaisesRegex(NotImplementedError, "per-tensor"):
                 LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
+
+    def test_clip_fuses(self):
+        rng = np.random.default_rng(3)
+        model = (ModelBuilder("relu6", opset=20).add_input("x", (1, 2, 4, 4))
+                 .add_initializer("w", rng.normal(0, 1, (4, 2, 3, 3)).astype(np.float32))
+                 .add_node("Constant", [], ["low"], value=np.array(0, np.float32))
+                 .add_node("Constant", [], ["high"], value=np.array(6, np.float32))
+                 .add_node("Conv", ["x", "w"], ["c"], pads=[1, 1, 1, 1])
+                 .add_node("Clip", ["c", "low", "high"], ["y"])
+                 .add_output("y", (1, 4, 4, 4)).build())
+        self.assertTrue(otf.check(model, device="k26", mode="stream").ok)
+        graph = FuseRelu().run(OnnxImporter(model).run(), None)
+        x = rng.normal(0, 4, (1, 4, 4, 2))
+        real = GraphRunner(graph).run({"x": x})["y"]
+        self.assertEqual((real.min(), real.max()), (0, 6))
+        plan = QuantizationPlan.from_annotations({"x": QuantSpec(0.125, -17),
+                                                  "y": QuantSpec(0.25, 11)})
+        graph = LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
+        conv = next(node for node in graph.nodes if hasattr(node, "requant"))
+        self.assertEqual((conv.requant.lower_clamp, conv.requant.upper_clamp), (11, 35))
+        codes = np.clip(np.rint(x / 0.125) - 17, -128, 127)
+        got = GraphRunner(graph).run({"x": codes})["y"]
+        expected = GraphRunner(FuseRelu().run(OnnxImporter(model).run(), None)).run(
+            {"x": (codes + 17) * 0.125})["y"]
+        np.testing.assert_allclose((got - 11) * 0.25, expected, atol=0.25)
+
+    def test_spatial_mean(self):
+        x = np.random.default_rng(4).normal(0, 1, (1, 3, 5, 2))
+        for keepdims, shape in ((1, (1, 2, 1, 1)), (0, (1, 2))):
+            model = (ModelBuilder("mean", opset=18).add_input("x", (1, 2, 3, 5))
+                     .add_initializer("axes", np.array([2, -1], np.int64))
+                     .add_node("ReduceMean", ["x", "axes"], ["y"], keepdims=keepdims)
+                     .add_output("y", shape).build())
+            self.assertTrue(otf.check(model, device="k26", mode="stream").ok)
+            got = GraphRunner(OnnxImporter(model).run()).run({"x": x})["y"]
+            np.testing.assert_allclose(got.reshape(-1), x.mean(axis=(1, 2)).reshape(-1))
+
+    def test_spatial_mean_bad_axes(self):
+        for axes in ([2, 7], [-6, -1], [2, 2]):
+            model = (ModelBuilder("mean", opset=18).add_input("x", (1, 2, 3, 5))
+                     .add_initializer("axes", np.array(axes, np.int64))
+                     .add_node("ReduceMean", ["x", "axes"], ["y"])
+                     .add_output("y", (1, 2, 1, 1)).build())
+            self.assertFalse(otf.check(model, device="k26", mode="stream").ok)
+
+    def test_relu_then_negative_clip(self):
+        model = (ModelBuilder("negative_clip", opset=10).add_input("x", (1, 2))
+                 .add_initializer("w", np.eye(2, dtype=np.float32))
+                 .add_node("Gemm", ["x", "w"], ["linear"])
+                 .add_node("Relu", ["linear"], ["relu"])
+                 .add_node("Clip", ["relu"], ["y"], min=-2.0, max=-1.0)
+                 .add_output("y", (1, 2)).build())
+        for dtype, expected in ((INT8, -16), (INT4, -8)):
+            graph = FuseRelu().run(OnnxImporter(model).run(), None)
+            plan = QuantizationPlan.from_annotations({"x": QuantSpec(0.25),
+                                                      "y": QuantSpec(0.0625, dtype=dtype)})
+            graph = LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
+            unit = next(node for node in graph.nodes if hasattr(node, "requant"))
+            self.assertEqual((unit.requant.lower_clamp, unit.requant.upper_clamp),
+                             (expected, expected))
+            got = GraphRunner(graph).run({"x": np.array([[-8, 8]])})["y"]
+            np.testing.assert_array_equal(got, [[expected, expected]])
+        graph = FuseRelu().run(OnnxImporter(model).run(), None)
+        plan = QuantizationPlan.from_annotations({"x": QuantSpec(0.25)})
+        with self.assertRaisesRegex(NotImplementedError, "output quantization grid"):
+            LowerToHardware(plan).run(graph, CompilerContext(Device.get("k26")))
 
     def test_pool_default_stride(self):
         graph = OnnxImporter(negative_pool()).run()
@@ -176,6 +243,31 @@ class Cnn(unittest.TestCase):
 @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
 @unittest.skipIf(shutil.which("verilator") is None, "verilator not on PATH")
 class Simulation(unittest.TestCase):
+    def test_spatial_mean(self):
+        samples = np.random.default_rng(4).normal(0, 1, (8, 2, 3, 5)).astype(np.float32)
+        for keepdims in (0, 1):
+            model = (ModelBuilder("mean", opset=18).add_input("x", (1, 2, 3, 5))
+                     .add_initializer("axes", np.array([2, -1], np.int64))
+                     .add_node("ReduceMean", ["x", "axes"], ["y"], keepdims=keepdims)
+                     .add_output("y", (1, 2, 1, 1) if keepdims else (1, 2)).build())
+            for hdl in ("sv", "hardcaml"):
+                with self.subTest(keepdims=keepdims, hdl=hdl):
+                    acc = otf.load(model)
+                    acc.compile(device="k26", mode="stream", hdl=hdl, calibration=samples,
+                                out_dir=Fixtures.build_dir("mean_%d_%s" % (keepdims, hdl)))
+                    np.testing.assert_allclose(acc.predict(samples).reshape(8, 2),
+                                                samples.mean(axis=(2, 3)), atol=0.025)
+                    result = acc.simulate(samples, sweep=True, reset=True)
+                    self.assertTrue(result.ok, result)
+
+    def test_mobile_sv(self):
+        with np.load(CORPUS / "mobile.npz") as data:
+            acc = otf.load(CORPUS / "mobile.onnx")
+            acc.compile(device="k26", mode="stream", hdl="sv", calibration=data["calibration"],
+                        out_dir=Fixtures.build_dir("mobile_sv"))
+            result = acc.simulate(data["x"][:16], sweep=True)
+            self.assertTrue(result.ok, result)
+
     @unittest.skipUnless(importlib.util.find_spec("onnxruntime"), "onnxruntime not installed")
     def test_grouped_edges(self):
         import onnxruntime as ort

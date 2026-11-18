@@ -1,0 +1,18 @@
+{
+  "model": "mobile",
+  "training": "none",
+  "seed": 81,
+  "opset": 20,
+  "torch_version": "2.15.0+cpu",
+  "onnx_version": "1.23.2",
+  "onnxruntime_version": "1.31.1",
+  "reference": "ONNX Runtime CPU",
+  "calibration_samples": 512,
+  "evaluation_samples": 256,
+  "maximum_normalized_mae": 0.025,
+  "sha256": {
+    "mobile.onnx": "9908d95f0e1242d93a617ebe9356f5d4fb81eff1d49ba3b0cc03e5f790970eca",
+    "mobile.npz": "17549fdd465a245f1a5e0ec3c06869e0a55d57f4e87965fb8ad9df08dba76bd2"
+  },
+  "generator_sha256": "6f4a86c097d2b700d1278398bf267c48976e4aad4b4fc82cacd8ece927f08797"
+}

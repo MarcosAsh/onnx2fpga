@@ -15,7 +15,7 @@ from ..p2_graph.tensor import Tensor
 from ..p3_ops.elementwise import FUNCTIONS, ConcatOp, ElementwiseOp, import_elementwise
 from ..p3_ops.onnx_ops import (AddOp, AveragePoolOp, BinarizerOp, ConvOp, FlattenOp, GemmOp,
                                GlobalAveragePoolOp, MaxPoolOp, ReluOp)
-from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce,
+from ..p3_ops.reductions import (REDUCE, SOFTMAX, ReduceOp, import_normalizer, import_reduce, reduce_axes,
                                  import_softmax, import_layernorm)
 from ..p3_ops.trees import LEAF, MODES, Ensemble, TreeEnsembleOp
 from .constants import FOLD, LAYOUT, evaluate
@@ -466,15 +466,31 @@ def import_average_pool(node, importer):
     importer.emit(pool)
 
 
-def import_global_average_pool(node, importer):
+def import_global_average_pool(node, importer, out=None):
     source = importer.rename(node.input[0])
     shape = importer.graph.tensor(source).shape
     if shape is None or len(shape) != 4 or any(d is None or d < 1 for d in shape) or shape[0] != 1:
         refuse(node, "requires a static batch-one 2D image")
-    if node.attributes():
+    if out is None and node.attributes():
         refuse(node, "does not accept attributes")
     importer.emit(GlobalAveragePoolOp(node.name or "global_average_pool", [source],
-                                      [importer.rename(node.output[0])]))
+                                      [out or importer.rename(node.output[0])]))
+
+
+def import_reduce_mean(node, importer):
+    """A mean over height and width is a global average pool."""
+    axes = reduce_axes(node, importer)
+    rank = len(importer.onnx_shape(node.input[0]))
+    if any(axis < -rank or axis >= rank for axis in axes):
+        refuse(node, "axis is out of range")
+    if rank != 4 or sorted(axis % 4 for axis in axes) != [2, 3]:
+        return import_reduce(node, importer)
+    out = importer.rename(node.output[0])
+    if node.attributes().get("keepdims", 1):
+        return import_global_average_pool(node, importer, out)
+    pooled = importer.graph.fresh_name(out + "_pool")
+    import_global_average_pool(node, importer, pooled)
+    importer.emit(FlattenOp((node.name or "mean") + "_flatten", [pooled], [out]))
 
 
 def import_add(node, importer):
@@ -642,6 +658,7 @@ BUILTIN = {
     "TreeEnsemble": import_tree_ensemble,
     **{op: import_elementwise for op in FUNCTIONS if op not in ("Relu", "Add")},
     **dict.fromkeys(REDUCE, import_reduce), **dict.fromkeys(SOFTMAX, import_softmax),
+    "ReduceMean": import_reduce_mean,
 }
 BUILTIN.update(dict.fromkeys(LAYOUT_OPS, import_layout))
 

@@ -101,17 +101,18 @@ def refuse_axis(node, name, axes):
                              % (node.op_type, name, ", ".join(str(a) for a in axes)))
 
 
-def import_reduce(node, importer):
+def reduce_axes(node, importer):
     """Axes come from the attribute, or from a constant second input from opset 13 or 18 on."""
+    if len(node.input) > 1 and node.input[1]:
+        return importer.constant_array(node.input[1]).astype(int).reshape(-1).tolist()
+    return [int(a) for a in node.attributes().get("axes", [])]
+
+
+def import_reduce(node, importer):
     op, attrs = node.op_type, node.attributes()
     name = node.name or importer.graph.fresh_name(op.lower())
     source = feature_vector(node, importer, name)
-    if op in ARG:
-        axes = [int(attrs.get("axis", 0))]
-    elif len(node.input) > 1 and node.input[1]:
-        axes = importer.constant_array(node.input[1]).astype(int).reshape(-1).tolist()
-    else:
-        axes = [int(a) for a in attrs.get("axes", [])]
+    axes = [int(attrs.get("axis", 0))] if op in ARG else reduce_axes(node, importer)
     if not axes and attrs.get("noop_with_empty_axes"):
         raise UnsupportedOpError(op, name, message="%s %r has noop_with_empty_axes, which is "
                                  "not supported" % (op, name))

@@ -14,8 +14,10 @@ unassessed properties separately; compilation and timing may still fail.
 | GlobalAveragePool | Stream | Static batch-one 2D images, per-tensor activation grids, sums up to 32 bits. |
 | AveragePool | Stream | Static batch-one 2D images, floor output sizes, either padding-count mode. |
 | Relu, Add | Stream and fixed | Shapes and quantization must satisfy the selected hardware unit. |
+| Clip | Stream when fused into Conv or Gemm; otherwise fixed | Constant scalar bounds; fusion requires an unshared intermediate that is not a graph output. |
+| Spatial ReduceMean | Stream | Static batch-one 2D images, axes `[2, 3]` or their negative equivalents; either keepdims value. Uses global average pooling. |
 | Other live elementwise operations | Fixed | See [elementwise functions and tables](../specs/010-lookup-tables-and-elementwise.md) for operations and broadcasting limits. |
-| Reductions, Softmax, Normalizer, LayerNormalization | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
+| Other reductions, Softmax, Normalizer, LayerNormalization | Fixed | See [axes, shapes and normalization](../specs/011-reductions-and-softmax.md). |
 | Tree ensembles | Fixed | See [tree ensembles](../specs/005-tree-ensembles.md) and [multiclass trees](../specs/012-multiclass-trees.md) for branch modes and output semantics. |
 | Layout operations and constant arithmetic | Depends on the imported graph | Many fold away. Live views can become dense layers; live Concat can require fixed mode. See [import rules](../specs/009-operator-coverage.md). |
 | BatchNormalization and ONNX-ML linear operators | Depends on the imported graph | Inference BatchNormalization folds into arithmetic; training mode is rejected. LinearRegressor requires `post_transform=NONE`. |
@@ -51,7 +53,7 @@ and [Arty A7-100](https://github.com/Digilent/vivado-boards/blob/master/new/boar
 
 ### CNN coverage
 
-`tests/fixtures/cnn` contains six untrained, batch-one image models exported
+`tests/fixtures/cnn` contains seven untrained, batch-one image models exported
 from PyTorch. Their sidecar JSON files record versions, seeds and file hashes.
 Each has 512 calibration images and 256 separate evaluation images with ONNX
 Runtime outputs. The exporter also checks those outputs against PyTorch.
@@ -66,7 +68,16 @@ python3 tools/report_corpus.py --corpus-dir tests/fixtures/cnn --mode stream \
 ```
 
 Exporting needs PyTorch, ONNX and ONNX Runtime. Existing fixtures can be checked
-without those packages. All seven CNN fixtures pass inspection. They remain separate from the vector corpus.
+without those packages. All eight CNN fixtures pass inspection. They remain separate from the vector corpus.
+
+The `mobile` fixture combines convolution, inference BatchNormalization,
+ReLU6, depthwise convolution and spatial averaging. Constant
+[`Clip`](https://onnx.ai/onnx/operators/onnx__Clip.html) bounds fuse into a
+Conv or Gemm output clamp when the intermediate has no other consumer or
+graph output. A model with explicit quantization must also supply the clipped
+output's grid. Spatial
+[`ReduceMean`](https://onnx.ai/onnx/operators/onnx__ReduceMean.html) uses the
+global-average-pool implementation, with a flatten when `keepdims=0`.
 
 The trained `mnist` fixture uses the standard 60,000/10,000 split, seed 81 and
 10 CPU training epochs. Full-test accuracy is 97.53% in ONNX Runtime and 97.45%

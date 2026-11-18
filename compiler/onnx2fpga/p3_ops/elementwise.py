@@ -164,6 +164,8 @@ def import_elementwise(node, importer):
 
 
 def is_constant(importer, name):
+    if importer.is_constant(name):
+        return True
     resolved = importer.rename(name)
     if importer.graph.has_tensor(resolved):
         return importer.graph.tensor(resolved).is_constant

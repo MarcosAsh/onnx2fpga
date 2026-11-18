@@ -17,19 +17,21 @@ class Requantizer:
 
     @classmethod
     def from_real_multipliers(cls, reals, out_dtype, mult_bits=18, relu=False,
-                              zero_point=0):
+                              zero_point=0, clamp=(None, None)):
         """A fused relu clamps at the zero point, which is not necessarily zero."""
         reals = np.atleast_1d(np.asarray(reals, dtype=np.float64))
-        floor_value = int(zero_point) if relu else None
+        floor_value, ceiling = clamp
+        if relu:
+            floor_value = int(zero_point)
         limit = (1 << (mult_bits - 1)) - 1
         peak = float(np.max(np.abs(reals)))
         if peak == 0.0:
             return cls(np.zeros_like(reals, dtype=np.int64), 0, out_dtype,
-                       floor_value, zero_point)
+                       floor_value, zero_point, ceiling)
         shift = max(0, min(int(math.floor(math.log2(limit / peak))), 62))
         multipliers = np.clip(np.rint(reals * (2.0 ** shift)).astype(np.int64),
                               -limit - 1, limit)
-        return cls(multipliers, shift, out_dtype, floor_value, zero_point)
+        return cls(multipliers, shift, out_dtype, floor_value, zero_point, ceiling)
 
     def apply(self, accumulator):
         scaled = np.asarray(accumulator, dtype=np.int64) * self.multipliers

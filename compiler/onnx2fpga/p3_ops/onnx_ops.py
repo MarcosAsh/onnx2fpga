@@ -49,6 +49,12 @@ class Im2Col:
         return cols.reshape(n, out_h, out_w, kh * kw * c)
 
 
+def activate(y, attrs):
+    if attrs.get("relu"):
+        y = np.maximum(y, 0)
+    return np.clip(y, *attrs["clip"]) if "clip" in attrs else y
+
+
 class GemmOp(FrontendNode):
     """y = x @ W + b with W already normalised to (in_features, out_features), or y > 0 for a label."""
 
@@ -69,7 +75,7 @@ class GemmOp(FrontendNode):
             y = y + graph.tensor(self.inputs[2]).data
         if self.attrs.get("label"):
             return [(y > 0).astype(np.float64)]
-        return [np.maximum(y, 0) if self.attrs.get("relu") else y]
+        return [activate(y, self.attrs)]
 
 
 class ConvOp(FrontendNode):
@@ -101,7 +107,7 @@ class ConvOp(FrontendNode):
             y = np.einsum("...kgc,kcgo->...go", windows, weights).reshape(*cols.shape[:-1], cout)
         if len(self.inputs) > 2:
             y = y + graph.tensor(self.inputs[2]).data
-        return [np.maximum(y, 0) if self.attrs.get("relu") else y]
+        return [activate(y, self.attrs)]
 
 
 class ReluOp(FrontendNode):

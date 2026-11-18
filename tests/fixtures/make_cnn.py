@@ -14,7 +14,7 @@ from torch import nn
 
 
 OUT = Path(__file__).resolve().parent / "cnn"
-NAMES = ("maxpool", "average", "global_average", "grouped", "depthwise", "residual")
+NAMES = ("maxpool", "average", "global_average", "grouped", "depthwise", "residual", "mobile")
 
 
 class Residual(nn.Module):
@@ -26,7 +26,25 @@ class Residual(nn.Module):
         return torch.relu(self.conv(x) + x)
 
 
+def mobile():
+    net = nn.Sequential(
+        nn.Conv2d(4, 8, 3, padding=1, bias=False), nn.BatchNorm2d(8), nn.ReLU6(),
+        nn.Conv2d(8, 8, 3, padding=1, groups=8, bias=False), nn.BatchNorm2d(8), nn.ReLU6(),
+        nn.Conv2d(8, 4, 1, bias=False), nn.BatchNorm2d(4),
+        nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(4, 3))
+    with torch.no_grad():
+        for layer in net:
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.running_mean.normal_(0, 0.2)
+                layer.running_var.uniform_(0.5, 1.5)
+                layer.weight.uniform_(4, 8)
+                layer.bias.normal_(0, 0.5)
+    return net.eval()
+
+
 def network(name):
+    if name == "mobile":
+        return mobile()
     conv = nn.Conv2d(4, 4, 3, padding=1, groups=2 if name == "grouped" else 1)
     if name == "depthwise":
         conv = nn.Sequential(nn.Conv2d(4, 8, 3, padding=1, groups=4),

@@ -19,19 +19,26 @@ from .trees import lower_trees
 
 
 class FuseRelu(Pass):
-    """Folds a Relu into the output clamp of the Gemm or Conv before it."""
+    """Folds a Relu or Clip into the output clamp of the Gemm or Conv before it."""
 
     name = "fuse-relu"
 
     def run(self, graph, context):
         for node in list(graph.topological_order()):
-            if not isinstance(node, ReluOp):
+            clip = isinstance(node, ElementwiseOp) and node.op_type == "Clip"
+            if not isinstance(node, ReluOp) and not clip:
                 continue
             producer = graph.producer(node.inputs[0])
             if (isinstance(producer, (GemmOp, ConvOp))
                     and len(graph.consumers(node.inputs[0])) == 1
-                    and node.inputs[0] not in graph.outputs):
-                producer.attrs["relu"] = True
+                    and node.inputs[0] not in graph.outputs
+                    and not producer.attrs.keys() & {"clip", "label"}):
+                if clip:
+                    bounds = node.attrs.get("function_attrs", {})
+                    producer.attrs["clip"] = (bounds.get("min", -np.inf),
+                                              bounds.get("max", np.inf))
+                else:
+                    producer.attrs["relu"] = True
                 producer.outputs = list(node.outputs)
                 graph.remove_node(node)
         return graph
@@ -71,6 +78,19 @@ class LoweringContext:
             raise NotImplementedError("%s cannot change the quantization grid from %s to %s"
                                       % (op_name, source, target))
 
+    def clamp(self, node):
+        out = node.outputs[0]
+        minimum, maximum = self.plan.bounds(out)
+        low, high = node.attrs.get("clip", (-np.inf, np.inf))
+        if node.attrs.get("relu"):
+            low = max(low, 0)
+        low = min(low, high)
+        codes = []
+        for bound in (low, high):
+            code = np.rint(bound / self.scale(out)) + self.zero_point(out)
+            codes.append(int(np.clip(code, minimum, maximum)))
+        return tuple(codes)
+
     def stage_tensor(self, stem):
         name = self.graph.fresh_name(stem)
         self.graph.add_tensor(Tensor(name, None, self.plan.act_dtype))
@@ -109,6 +129,8 @@ class LoweringContext:
         bias = np.rint((raw - in_scale * (in_zero @ matrix)) / (in_scale * scales))
         out = node.outputs[0]
         if plan.from_model and not plan.has(out) and out in self.graph.outputs:
+            if "clip" in node.attrs:
+                raise NotImplementedError("%s Clip requires an output quantization grid" % node.name)
             # Brevitas leaves the last layer in float: answer on the accumulator's own grid.
             peak = int(np.abs(weights).sum(axis=0).max()) * max(
                 abs(bound) for bound in plan.bounds(node.inputs[0])) + int(np.abs(bias).max())
@@ -121,8 +143,8 @@ class LoweringContext:
                               vectors=vectors, groups=groups)
         requant = Requantizer.from_real_multipliers(
             in_scale * scales / self.scale(node.outputs[0]), plan.act_dtype,
-            plan.mult_bits, relu=bool(node.attrs.get("relu")),
-            zero_point=self.zero_point(node.outputs[0]))
+            plan.mult_bits, zero_point=self.zero_point(node.outputs[0]),
+            clamp=self.clamp(node))
         return MatVecUnit(node.name, inputs, node.outputs, weights, INT32.clamp(bias),
                           requant, plan.act_dtype, plan.act_dtype, weight_dtype,
                           vectors=vectors, groups=groups)
