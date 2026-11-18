@@ -97,7 +97,7 @@ accuracy.
 python3 tests/fixtures/make_cnn.py mnist --mnist-data build/datasets/mnist.npz
 ```
 
-The [CNN report](../measurements/cnn-stream-2026-11-13.json) records all seven
+The [CNN report](../measurements/cnn-stream-2026-11-18.json) records all eight
 models passing the 0.025 numerical limit, 256-frame RTL sweeps and partial-frame
 reset. The residual result covers the stored branch shape; other shapes need
 their own checks.
@@ -120,6 +120,12 @@ Both runs use 256 frames and the same folding choices.
 | Depthwise | 1,024 | 768 |
 | Max pool | 222 | 192 |
 | Residual | 384 | 256 |
+
+The 18 November report also includes beat-width alignment within the existing
+schedule bottleneck. MNIST measures 3,922 cycles per frame, down from 4,704
+in the 13 November report, against a schedule estimate of 3,920. The mobile
+fixture measures 1,536 cycles per frame with normalized error 0.00631.
+The other six fixtures retain the frame intervals from 13 November.
 
 ### Grouped convolution
 
