@@ -38,7 +38,8 @@ def render_top(graph, name):
     boundary.update(dict.fromkeys(graph.outputs, "m"))
 
     def net(tensor, signal):
-        return "%s_%s" % (boundary.get(tensor, tensor), signal)
+        wire = boundary.get(tensor) or identifier(tensor)
+        return "%s%s_%s" % ("_" if wire[0].isdigit() else "", wire, signal)
 
     in_width = graph.tensor(graph.inputs[0]).stream_width
     out_width = graph.tensor(graph.outputs[0]).stream_width
