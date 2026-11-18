@@ -9,14 +9,34 @@ The command line is a thin layer over the Python API.
 | `onnx2fpga doctor` | Reports what this machine can compile, simulate, build and load. |
 | `onnx2fpga inspect MODEL` | Prints what the compiler sees in an ONNX file. |
 | `onnx2fpga check MODEL [--device D] [--mode stream\|fixed] [--clock-mhz MHz] [--json]` | Reports import compatibility without generating hardware. |
-| `onnx2fpga compile MODEL --out DIR --device D [--target-cycles N] [--hdl H]` | `load` then `compile`. |
-| `onnx2fpga simulate MODEL [--sweep] [--hdl H]` | Compiles and checks the RTL in Verilator. |
+| `onnx2fpga compile MODEL --out DIR --device D [--mode stream\|fixed] [--hdl H]` | `load` then `compile`. |
+| `onnx2fpga simulate MODEL [--inputs FILE.npy] [--sweep] [--reset] [--mode stream\|fixed]` | Compiles and checks the RTL in Verilator. |
 | `onnx2fpga synth MODEL --device D [--period NS] [--impl] [--dry-run]` | Measures real cost: Vivado for AMD parts such as `k26`, yosys and nextpnr for ECP5. `--period` defaults to the device's clock. |
 | `onnx2fpga bitstream MODEL --board icepi_zero` | Compiles and builds a bitstream. |
 | `onnx2fpga bitstream MODEL --board arty_a7_35t` | Builds an Arty A7 at 100 MHz; also accepts `arty_a7_100t`. Fixed mode is the default; use `--mode stream` for streaming models. |
 | `onnx2fpga devices` | Lists device models and their budgets. |
 
 Common options: `--samples` and `--seed` for random calibration, `--quiet`.
+
+`compile` and `simulate` accept `--calibration FILE.npy`, `--target-cycles N`,
+`--target-fps FPS`, and `--strict`. Without `--strict`, an unmet throughput
+target keeps the nearest design. Stream mode defaults to SystemVerilog; fixed
+mode defaults to Hardcaml. Fixed mode accepts `--clock-mhz` and
+`--weights frozen|reloadable`, and rejects stream throughput targets.
+
+Use separate calibration and test arrays to check an exported model:
+
+```sh
+onnx2fpga simulate model.onnx --device k26 --mode fixed --clock-mhz 322.265625 \
+    --calibration calibration.npy --inputs test.npy --sweep
+onnx2fpga simulate cnn.onnx --device k26 --calibration images.npy \
+    --inputs test_images.npy --sweep --reset
+```
+
+The arrays include a leading sample dimension and use the model's input layout.
+`--reset` checks recovery from a partial frame in stream mode. Without
+`--inputs`, stream simulation checks the first calibration frame and fixed
+simulation checks 10,000 random quantized vectors.
 
 Exit status: 0 success, 1 a check failed, 2 a missing tool or bad usage.
 

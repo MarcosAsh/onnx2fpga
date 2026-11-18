@@ -58,15 +58,26 @@ Quantizes, folds and emits the design.
 | `mode` | `"stream"` | `"stream"` folds layers onto handshaked streams. `"fixed"` unrolls every layer so the design takes a vector every cycle and answers a fixed number of cycles later, see [001](../specs/001-fixed-latency.md). |
 | `weights` | `"frozen"` | `"frozen"` builds the weights into the bitstream. `"reloadable"` keeps them in two register banks a host rewrites while the design runs, see [003](../specs/003-reloadable-weights.md). Fixed mode only. |
 | `clock_mhz` | none | Fixed mode only. The clock to pipeline for: each layer takes the fewest extra register stages the device's delay model says reach it, see [002](../specs/002-pipelined-matvec.md). Without it no stages are added. |
-| `target` | `"fit"` | `"fit"` is the fastest design that fits. |
+| `target` | `"fit"` | `"fit"` balances stage throughput within the resource budget. |
 | `target_fps`, `target_cycles` | none | A throughput to balance to and stop at. |
 | `hdl` | see [Backends](../guides/backends.md) | `"hardcaml"` or `"sv"`. |
 | `calibration` | random, with a warning | A batch of representative inputs for a float model. |
 | `utilisation` | 0.8 | LUT ceiling as a fraction of the device. |
 | `out_dir` | `build/<model>` | Where the build directory goes. |
 | `strict` | `True` | Raise `BudgetError` when the target cannot fit, instead of keeping the nearest design. |
+| `mult_bits` | 18 | Signed requantization multiplier width, from 2 to 32 bits. |
 
 Arguments left out keep their value from the previous call.
+
+Throughput and clock targets must be finite and positive. `target_cycles` must
+be an integer. Calibration and prediction batches must be nonempty arrays of
+finite real values with the model's input shape.
+
+Once recompilation begins, it disconnects any board session and invalidates
+the previous result. A failed compile can leave partial build files, so compile
+successfully again before prediction or simulation. The requested options are
+retained for a retry such as `acc.compile(strict=False)`. Invalid options caught
+before compilation leave the previous result intact.
 
 With `mode="fixed"` there is nothing to fold, so `target`, `target_fps`,
 `target_cycles` and any `Layer.fold` pin raise `ConfigError`. The backend is

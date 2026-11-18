@@ -14,7 +14,7 @@ import numpy as np
 from support import Fixtures, Hdl, ROOT
 
 import onnx2fpga as otf
-from onnx2fpga import api
+from onnx2fpga import api, cli
 from onnx2fpga.board import IcepiZero
 from onnx2fpga.errors import (BudgetError, ConfigError, ModelError, NotCompiledError,
                               NotDeployedError, ToolchainError, UnknownLayerError,
@@ -455,7 +455,7 @@ class Errors(unittest.TestCase):
 
     def test_targets(self):
         acc = otf.load(model("mlp"))
-        with self.assertRaisesRegex(NotImplementedError, "latency"):
+        with self.assertRaisesRegex(ConfigError, "mode='fixed'"):
             acc.compile(target="latency")
         with self.assertRaisesRegex(ConfigError,
                                     "one of target, target_fps or target_cycles"):
@@ -464,6 +464,69 @@ class Errors(unittest.TestCase):
             acc.compile(device="vu13p")
         with self.assertRaisesRegex(ConfigError, "between 0 and 1"):
             acc.compile(utilisation=80)
+
+    def test_invalid_numbers(self):
+        acc = otf.load(model("mlp"))
+        for key in ("target_cycles", "target_fps", "clock_mhz", "utilisation"):
+            for value in (float("nan"), float("inf"), -float("inf"), True, "2", 0):
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ConfigError, key):
+                    options = {key: value, "hdl": "sv"}
+                    if key == "clock_mhz":
+                        options.update(mode="fixed")
+                    acc.compile(**options)
+        for value in (0.5, 1.5):
+            with self.assertRaisesRegex(ConfigError, "positive integer"):
+                acc.compile(target_cycles=value, hdl="sv")
+        for value in (1e-320, 1e300):
+            with self.assertRaisesRegex(ConfigError, "target_fps"):
+                acc.compile(target_fps=value, hdl="sv")
+        for value in (0, 1, 33, 2.5, True):
+            with self.assertRaisesRegex(ConfigError, "mult_bits"):
+                acc.compile(mult_bits=value, hdl="sv", calibration=batch(Fixtures.MLP_SHAPE))
+
+    def test_failed_recompile(self):
+        acc = compiled("mlp", device="icepi25", target_cycles=1024)
+        session = acc.session = mock.Mock()
+        acc.board = mock.Mock()
+        with self.assertRaises(BudgetError):
+            acc.compile(target_cycles=1)
+        session.close.assert_called_once_with()
+        self.assertIsNone(acc.result)
+        self.assertIsNone(acc.board)
+        self.assertIsNone(acc.session)
+        self.assertEqual(acc.settings, {})
+        with self.assertRaises(NotCompiledError):
+            acc.predict(batch(Fixtures.MLP_SHAPE))
+        with self.assertRaises(NotCompiledError):
+            acc.simulate()
+        acc.compile(strict=False)
+        self.assertEqual(acc.result.folding.bottleneck_cycles, 256)
+
+    def test_bad_option_preserves_compile(self):
+        acc = compiled("mlp")
+        result = acc.result
+        before = (acc.out_dir / "manifest.json").read_bytes()
+        with self.assertRaises(ConfigError):
+            acc.compile(target_cycles=float("nan"))
+        self.assertIs(acc.result, result)
+        self.assertEqual((acc.out_dir / "manifest.json").read_bytes(), before)
+        acc.predict(batch(Fixtures.MLP_SHAPE))
+
+    def test_invalid_samples(self):
+        acc = compiled("mlp")
+        result = acc.result
+        arrays = [np.empty((0, 32)), np.full((1, 32), np.nan),
+                  np.full((1, 32), np.inf), np.full((1, 32), 1j),
+                  np.full((1, 32), "x")]
+        for x in arrays:
+            with self.subTest(dtype=x.dtype, shape=x.shape):
+                with self.assertRaisesRegex(ConfigError, "calibration"):
+                    acc.compile(calibration=x)
+                self.assertIs(acc.result, result)
+                with self.assertRaisesRegex(ConfigError, "predict"):
+                    acc.predict(x)
+        with self.assertRaisesRegex(ConfigError, "rectangular numeric batch"):
+            acc.predict([[1], [1, 2]])
 
     def test_out_of_order(self):
         acc = otf.load(model("mlp"))
@@ -525,6 +588,81 @@ class Errors(unittest.TestCase):
         for error in (BudgetError, ConfigError, ModelError, NotCompiledError,
                       NotDeployedError, ToolchainError, UnsupportedOpError):
             self.assertTrue(issubclass(error, otf.Onnx2FpgaError), error)
+
+
+class CommandLine(unittest.TestCase):
+    def setUp(self):
+        self.root = Fixtures.build_dir("cli_" + self._testMethodName)
+        self.model = self.root / "model.onnx"
+        Fixtures.factory().mlp((4, 8, 2)).save(self.model)
+        np.save(self.root / "calibration.npy", batch((1, 4), count=32))
+        np.save(self.root / "inputs.npy", batch((1, 4), count=8, seed=19))
+
+    def invoke(self, command, *options):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            status = cli.main([command, str(self.model), "--out", str(self.root / "out"),
+                               "--calibration", str(self.root / "calibration.npy"),
+                               "--quiet", *options])
+        return status, out.getvalue(), err.getvalue()
+
+    def test_stream(self):
+        status, _, error = self.invoke("compile", "--target-fps", "1000000", "--strict")
+        self.assertEqual(status, 0, error)
+        self.assertTrue((self.root / "out/rtl/top.sv").is_file())
+        manifest = json.loads((self.root / "out/manifest.json").read_text())
+        self.assertGreaterEqual(manifest["estimated_fps"], 1_000_000)
+
+    def test_bad_options(self):
+        for options, message in ((["--utilisation", "nan"], "utilisation"),
+                                  (["--mult-bits", "0"], "mult_bits"),
+                                  (["--mode", "fixed", "--hdl", "sv"], "hardcaml"),
+                                  (["--calibration", str(self.root / "missing.npy")], "samples")):
+            with self.subTest(options=options):
+                status, _, error = self.invoke("compile", *options)
+                self.assertEqual(status, 1, error)
+                self.assertIn(message, error)
+                self.assertNotIn("Traceback", error)
+
+    def test_strict_target(self):
+        Fixtures.factory().mlp().save(self.model)
+        np.save(self.root / "calibration.npy", batch(Fixtures.MLP_SHAPE))
+        status, _, error = self.invoke("compile", "--device", "icepi25",
+                                       "--target-cycles", "1", "--strict")
+        self.assertEqual(status, 1, error)
+        self.assertIn("out of reach", error)
+        status, _, error = self.invoke("compile", "--device", "icepi25", "--target-cycles", "1")
+        self.assertEqual(status, 0, error)
+
+    @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+    def test_fixed_compile(self):
+        status, _, error = self.invoke("compile", "--mode", "fixed", "--device", "k26",
+                                       "--clock-mhz", "322.265625", "--weights", "reloadable")
+        self.assertEqual(status, 0, error)
+        manifest = json.loads((self.root / "out/manifest.json").read_text())
+        self.assertEqual(manifest["mode"], "fixed")
+        self.assertEqual(manifest["weights"]["mode"], "reloadable")
+        self.assertEqual(manifest["clock_mhz"], 322.265625)
+
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+    def test_stream_simulation(self):
+        status, output, error = self.invoke("simulate", "--inputs", str(self.root / "inputs.npy"),
+                                            "--target-cycles", "32", "--sweep", "--reset")
+        self.assertEqual(status, 0, error)
+        self.assertIn("frame 7 ", output)
+        self.assertIn("reset:", output)
+
+    @unittest.skipIf(Hdl.skip_reason("hardcaml"), Hdl.skip_reason("hardcaml"))
+    @unittest.skipIf(shutil.which("verilator") is None, "verilator not installed")
+    def test_fixed_simulation(self):
+        status, _, error = self.invoke("simulate", "--mode", "fixed", "--device", "k26",
+                                       "--clock-mhz", "322.265625", "--weights", "reloadable",
+                                       "--inputs", str(self.root / "inputs.npy"), "--sweep")
+        self.assertEqual(status, 0, error)
+        manifest = json.loads((self.root / "out/manifest.json").read_text())
+        self.assertEqual(manifest["mode"], "fixed")
+        self.assertEqual(manifest["weights"]["mode"], "reloadable")
+        self.assertEqual(manifest["clock_mhz"], 322.265625)
 
 
 class Keras(unittest.TestCase):

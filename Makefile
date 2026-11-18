@@ -39,7 +39,7 @@ test-unit:
 	  test_run_ddr test_replay_records test_replay_compare \
 	  test_kria_package test_kria_install test_provision_ddr \
 	  test_artix test_compatibility test_corpus_report \
-	  test_cnn.Cnn test_ingest test_numerics \
+	  test_cnn.Cnn test_api.Errors test_api.CommandLine test_ingest test_numerics \
 	  test_pipeline test_determinism test_quantized_import \
 	  test_operators test_characterize test_packaging \
 	  test_synth_script test_hardcaml_backend test_ecp5

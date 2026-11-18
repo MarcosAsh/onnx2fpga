@@ -23,7 +23,7 @@ from .targets.device import Device
 
 
 def add_hdl_option(parser):
-    parser.add_argument("--hdl", default="sv", choices=ProjectWriter.HDLS,
+    parser.add_argument("--hdl", default=None, choices=ProjectWriter.HDLS,
                         help="sv instantiates the hand written library; hardcaml "
                              "elaborates the same units in Hardcaml, which needs "
                              "dune and the hardcaml opam switch")
@@ -39,7 +39,32 @@ def add_model_options(parser):
     parser.add_argument("--quiet", action="store_true")
 
 
-def random_calibration(acc, args):
+def add_compile_options(parser):
+    parser.add_argument("--mode", choices=("stream", "fixed"), default="stream")
+    parser.add_argument("--clock-mhz", type=float)
+    parser.add_argument("--weights", choices=("frozen", "reloadable"), default="frozen")
+    parser.add_argument("--target-fps", type=float)
+    parser.add_argument("--strict", action="store_true", help="fail when the throughput target cannot fit")
+    parser.add_argument("--calibration", type=pathlib.Path, help="npy calibration samples")
+
+
+def sample_file(path):
+    try:
+        data = np.load(path, allow_pickle=False)
+    except (OSError, ValueError) as error:
+        raise ConfigError("cannot read samples %s: %s" % (path, error)) from error
+    if not isinstance(data, np.ndarray):
+        data.close()
+        raise ConfigError("samples must be a .npy array")
+    return data
+
+
+def calibration_data(acc, args):
+    path = getattr(args, "calibration", None)
+    if path is not None:
+        return sample_file(path)
+    if args.samples < 1:
+        raise ConfigError("--samples must be positive")
     samples = calibration_samples(acc.model, args.samples, args.seed)
     return np.concatenate([next(iter(feed.values())) for feed in samples])
 
@@ -53,25 +78,30 @@ def print_folding(acc):
 def build(args, default_out):
     """A Hardcaml build gets its own default directory so backends never mix sources."""
     acc = load(args.model)
-    hdl = getattr(args, "hdl", "sv")
-    if hdl != "sv":
-        default_out = "%s_%s" % (default_out, hdl)
+    mode = getattr(args, "mode", None) or "stream"
+    hdl = getattr(args, "hdl", None) or ("hardcaml" if mode == "fixed" else "sv")
+    suffix = "fixed" if mode == "fixed" else hdl
+    if suffix != "sv":
+        default_out = "%s_%s" % (default_out, suffix)
     out = args.out or pathlib.Path("build") / default_out
     acc.compile(device=args.device, target_cycles=args.target_cycles, hdl=hdl,
-                out_dir=out, verbose=not args.quiet, strict=False,
-                calibration=random_calibration(acc, args))
+                out_dir=out, verbose=not args.quiet, strict=getattr(args, "strict", False),
+                mode=mode, clock_mhz=getattr(args, "clock_mhz", None),
+                weights=getattr(args, "weights", "frozen"),
+                target_fps=getattr(args, "target_fps", None),
+                calibration=calibration_data(acc, args))
     return acc, out
 
 
 def run_compile(args):
-    """strict=False because an unmet target is reported in the log and the balanced design written anyway."""
     acc = load(args.model)
-    calibration = (np.load(args.calibration) if args.calibration
-                   else random_calibration(acc, args))
+    hdl = args.hdl or ("hardcaml" if args.mode == "fixed" else "sv")
     acc.compile(device=args.device, target_cycles=args.target_cycles,
                 utilisation=args.utilisation, mult_bits=args.mult_bits,
-                top=args.top, hdl=args.hdl, out_dir=args.out,
-                calibration=calibration, verbose=not args.quiet, strict=False)
+                top=args.top, hdl=hdl, out_dir=args.out,
+                mode=args.mode, clock_mhz=args.clock_mhz, weights=args.weights,
+                target_fps=args.target_fps, calibration=calibration_data(acc, args),
+                verbose=not args.quiet, strict=args.strict)
     if not args.quiet:
         print_folding(acc)
         print("wrote %s" % args.out)
@@ -84,7 +114,8 @@ def run_simulate(args):
     if not args.quiet:
         print_folding(acc)
     try:
-        report = acc.simulate(sweep=args.sweep)
+        inputs = sample_file(args.inputs) if args.inputs else None
+        report = acc.simulate(inputs, sweep=args.sweep, reset=args.reset)
     except SimulationError as error:
         print(error.stdout[-4000:], file=sys.stderr)
         print(error.stderr[-4000:], file=sys.stderr)
@@ -92,6 +123,10 @@ def run_simulate(args):
     print(report.first.output.strip())
     if not report.first.ok:
         return 1
+    if report.reset:
+        print("reset:" + report.reset.render())
+        if not report.reset.ok:
+            return 1
     if not args.sweep:
         return 0
     print("\nbackpressure sweep")
@@ -155,7 +190,7 @@ def run_bitstream(args):
         acc = load(args.model)
         acc.compile(device=args.device, mode=args.mode or "fixed", hdl="hardcaml",
                     target_cycles=args.target_cycles, out_dir=args.out,
-                    calibration=random_calibration(acc, args))
+                    calibration=calibration_data(acc, args))
         board = board_class(args.out)
         acc.build(board=board)
         print(board.render_report())
@@ -254,12 +289,11 @@ def parser():
                      help="fraction of the device the design may occupy")
     sub.add_argument("--mult-bits", type=int, default=18,
                      help="width of the requantisation multiplier")
-    sub.add_argument("--calibration", type=pathlib.Path, default=None,
-                     help="npy file of calibration samples; random if omitted")
     sub.add_argument("--samples", type=int, default=32)
     sub.add_argument("--seed", type=int, default=0)
     sub.add_argument("--top", default="otf_top")
     add_hdl_option(sub)
+    add_compile_options(sub)
     sub.add_argument("--quiet", action="store_true")
 
     sub = command("simulate",
@@ -267,6 +301,9 @@ def parser():
                   run_simulate)
     add_model_options(sub)
     add_hdl_option(sub)
+    add_compile_options(sub)
+    sub.add_argument("--inputs", type=pathlib.Path, help="npy samples to verify against RTL")
+    sub.add_argument("--reset", action="store_true", help="reset and replay a partial stream frame")
     sub.add_argument("--sweep", action="store_true",
                      help="also run a randomised backpressure sweep, which "
                           "is where stream designs actually fail")

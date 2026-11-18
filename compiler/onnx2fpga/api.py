@@ -235,8 +235,10 @@ class Accelerator:
         if clock_mhz is not None and mode != "fixed":
             raise ConfigError("clock_mhz needs mode='fixed'")
         if clock_mhz is not None and (isinstance(clock_mhz, bool) or not isinstance(
-                clock_mhz, numbers.Real) or clock_mhz <= 0):
-            raise ConfigError("clock_mhz must be a positive number, not %r" % (clock_mhz,))
+                clock_mhz, numbers.Real) or not math.isfinite(clock_mhz) or clock_mhz <= 0):
+            raise ConfigError("clock_mhz must be a positive finite number, not %r" % (clock_mhz,))
+        if clock_mhz is not None:
+            clock_mhz = float(clock_mhz)
         if mode == "fixed":
             self._check_fixed(target, target_fps, target_cycles)
             goal = ("fit", None, None)
@@ -266,7 +268,11 @@ class Accelerator:
             suffix = "fixed" if mode == "fixed" else hdl
             out_dir = pathlib.Path("build") / (self.name if suffix == "sv"
                                                else "%s_%s" % (self.name, suffix))
-        mult_bits = mult_bits or previous.get("mult_bits", 18)
+        mult_bits = mult_bits if mult_bits is not None else previous.get("mult_bits", 18)
+        if (isinstance(mult_bits, bool) or not isinstance(mult_bits, numbers.Integral)
+                or not 2 <= mult_bits <= 32):
+            raise ConfigError("mult_bits must be an integer from 2 to 32")
+        mult_bits = int(mult_bits)
         top = top or previous.get("top", "otf_top")
         cycles = goal[2]
         settings = {"device": device.name, "target": goal[:2], "hdl": hdl,
@@ -285,13 +291,17 @@ class Accelerator:
                              memory=self.layers.memory(),
                              custom_objects=self.custom_objects, mode=mode, weights=weights,
                              clock_mhz=clock_mhz)
+        self.disconnect()
+        self.board = None
+        self.result = None
+        self.settings = {}
+        self._compiled_graph = None
+        self._compiled_revision = None
         with _translated():
             result = compiler.compile(self.model, samples, out_dir)
         if strict and cycles is not None:
             self._check_target(result, goal, utilisation)
 
-        self.disconnect()
-        self.board = None
         self.result = result
         self._compiled_graph = result.hardware_graph
         self.settings = settings
@@ -349,21 +359,29 @@ class Accelerator:
             if value in (None, "fit"):
                 return ("fit", None, None)
             if value == "latency":
-                raise NotImplementedError("target='latency' is not implemented yet")
+                raise ConfigError("use mode='fixed' for fixed-latency inference")
             raise ConfigError("unknown target %r, expected 'fit', target_fps or "
                               "target_cycles" % (value,))
-        if isinstance(value, bool) or not isinstance(value, numbers.Real) or value <= 0:
-            raise ConfigError("%s must be a positive number, not %r" % (kind, value))
+        if (isinstance(value, bool) or not isinstance(value, numbers.Real)
+                or not math.isfinite(value) or value <= 0):
+            raise ConfigError("%s must be a positive finite number, not %r" % (kind, value))
         if kind in ("target_fps", "fps"):
-            cycles = max(1, int(math.floor(device.fmax_mhz * 1e6 / value)))
-            return ("fps", value, cycles)
+            cycles = device.fmax_mhz * 1e6 / value
+            if cycles < 1:
+                raise ConfigError("target_fps exceeds the device clock")
+            if not math.isfinite(cycles):
+                raise ConfigError("target_fps is too small")
+            return ("fps", float(value), int(math.floor(cycles)))
+        if value != int(value):
+            raise ConfigError("target_cycles must be a positive integer, not %r" % value)
         return ("cycles", int(value), int(value))
 
     @staticmethod
     def _utilisation(value):
-        if not 0 < value <= 1:
+        if (isinstance(value, bool) or not isinstance(value, numbers.Real)
+                or not 0 < value <= 1):
             raise ConfigError("utilisation must be between 0 and 1, not %r" % (value,))
-        return value
+        return float(value)
 
     def _check_target(self, result, goal, utilisation):
         reached = result.folding.bottleneck_cycles
@@ -399,9 +417,16 @@ class Accelerator:
                                              "\n".join(reasons), ", ".join(options)))
 
     def _feeds(self, x, purpose):
-        x = np.asarray(x)
+        try:
+            x = np.asarray(x)
+        except (TypeError, ValueError) as error:
+            raise ConfigError("%s needs a rectangular numeric batch" % purpose) from error
         expected = self.input_shape[1:]
         if x.ndim == len(expected) + 1 and tuple(x.shape[1:]) == expected:
+            if len(x) == 0:
+                raise ConfigError("%s needs at least one sample" % purpose)
+            if x.dtype.kind not in "biuf" or not np.isfinite(x).all():
+                raise ConfigError("%s needs finite real values" % purpose)
             return [{self.input_name: x[k:k + 1]} for k in range(x.shape[0])]
         hint = " (missing batch axis? use x[None])" if tuple(x.shape) == expected else ""
         raise ConfigError("%s takes a batch shaped (N, %s), not %s%s"
