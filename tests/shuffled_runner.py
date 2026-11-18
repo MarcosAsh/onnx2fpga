@@ -23,6 +23,8 @@ def main(argv=None):
     parser.add_argument("--verbosity", type=int, default=1)
     args = parser.parse_args(argv)
 
+    # Tests import tools from the checkout root.
+    sys.path.insert(0, str(ROOT))
     discovered = unittest.defaultTestLoader.discover(
         str(ROOT / "tests"), pattern=args.pattern)
     tests = list(flatten(discovered))
