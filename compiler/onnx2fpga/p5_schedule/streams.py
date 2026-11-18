@@ -71,44 +71,64 @@ class AlignBeatWidths(Pass):
     name = "align-widths"
 
     def run(self, graph, context):
+        report = context.artifacts["folding"]
+        limit = report.bottleneck_cycles
         adjusted = []
         for node in graph.topological_order():
             for slot, name in enumerate(node.stream_inputs(graph)):
                 producer = graph.producer(name)
-                if producer is None:
+                if producer is None or self._agree(graph, node, slot):
                     continue
-                supplied = producer.output_beat_elems(graph)[
-                    producer.outputs.index(name)]
-                if compatible_widths(supplied, node.input_beat_elems(graph)[slot]):
-                    continue
-                choice = self._retune(node, graph, slot, supplied, context.device)
+                choice = self._retune(producer, node, graph, slot, context.device, limit)
                 if choice is None:
                     continue
-                before = node.cycles
-                node.apply_folding(choice)
-                adjusted.append("%s %s (%d cycles, was %d)"
-                                % (node.name, choice, node.cycles, before))
+                for unit, option in zip((producer, node), choice):
+                    before = unit.cycles
+                    if option != unit.folding:
+                        unit.apply_folding(option)
+                        adjusted.append("%s %s (%d cycles, was %d)"
+                                        % (unit.name, option, unit.cycles, before))
         if adjusted:
             context.note("align-widths: retuned " + "; ".join(adjusted))
+            report.record(graph)
+            if report.bottleneck_cycles > limit:
+                context.note("align-widths: bottleneck now %d cycles"
+                             % report.bottleneck_cycles)
         graph.infer()
         return graph
 
     @staticmethod
-    def _retune(node, graph, slot, supplied, device):
-        """Cheapest compatible folding no more expensive than the one picked; reducing parallelism is always affordable."""
-        current = dict(node.folding)
-        ceiling = node.resources(device).pressure(device.budget)
-        best, best_cycles = None, None
-        for option in node.allowed_foldings():
-            node.apply_folding(option)
-            width = node.input_beat_elems(graph)[slot]
-            cycles = node.cycles
-            pressure = node.resources(device).pressure(device.budget)
-            node.folding = dict(current)
-            if not compatible_widths(supplied, width) or pressure > ceiling:
+    def _agree(graph, node, slot):
+        name = node.stream_inputs(graph)[slot]
+        producer = graph.producer(name)
+        if producer is None:
+            return True
+        supplied = producer.output_beat_elems(graph)[producer.outputs.index(name)]
+        return compatible_widths(supplied, node.input_beat_elems(graph)[slot])
+
+    @classmethod
+    def _retune(cls, producer, node, graph, slot, device, limit):
+        """Cheapest foldings for both ends of an edge that keep the bottleneck and cost no more together."""
+        def pressure(unit):
+            return unit.resources(device).pressure(device.budget)
+
+        current = dict(producer.folding), dict(node.folding)
+        ceiling = pressure(producer) + pressure(node)
+        best, best_key = None, None
+        for upstream in producer.allowed_foldings():
+            producer.apply_folding(upstream)
+            if not all(cls._agree(graph, producer, s)
+                       for s in range(len(producer.stream_inputs(graph)))):
                 continue
-            if best_cycles is None or cycles < best_cycles:
-                best, best_cycles = dict(option), cycles
+            for option in node.allowed_foldings():
+                node.apply_folding(option)
+                cost = pressure(producer) + pressure(node)
+                if cost > ceiling or not cls._agree(graph, node, slot):
+                    continue
+                key = (max(producer.cycles, node.cycles, limit), cost)
+                if best_key is None or key < best_key:
+                    best, best_key = (dict(upstream), dict(option)), key
+        producer.folding, node.folding = current
         return best
 
 

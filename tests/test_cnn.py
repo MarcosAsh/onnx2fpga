@@ -148,6 +148,18 @@ class Cnn(unittest.TestCase):
                 report = otf.check(path, mode="stream", device="k26")
                 self.assertTrue(report.ok, report.to_dict())
 
+    def test_mnist_schedule(self):
+        with np.load(CORPUS / "mnist.npz") as data:
+            calibration = data["calibration"]
+        acc = otf.load(CORPUS / "mnist.onnx")
+        out = Fixtures.build_dir("mnist_schedule")
+        acc.compile(device="k26", mode="stream", hdl="sv", calibration=calibration, out_dir=out)
+        graph = acc.result.hardware_graph
+        manifest = json.loads((out / "manifest.json").read_text())
+        self.assertEqual(manifest["cycles_per_frame"], 3920)
+        self.assertEqual(max(node.cycles for node in graph.nodes), 3920)
+        self.assertNotRegex((out / "rtl/top.sv").read_text(), r"[( ]/\w")
+
     def test_ort(self):
         try:
             import onnxruntime as ort
@@ -238,6 +250,8 @@ class Simulation(unittest.TestCase):
                 row = report_corpus.report_model(ROOT / "tests/fixtures/cnn" / (name + ".onnx"), args)
                 self.assertEqual(row["status"], "passed", row)
                 self.assertEqual(len(row["simulation"]["runs"]), 16)
+                self.assertLess(row["simulation"]["runs"][0]["mean_completion_interval_cycles"],
+                                1.01 * row["estimates"]["initiation_interval_cycles"])
                 self.assertTrue(all(run["passed"] for run in row["simulation"]["runs"]))
                 for run in row["simulation"]["runs"]:
                     self.assertEqual(run["frames"], 16)
